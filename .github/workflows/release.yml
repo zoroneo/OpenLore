@@ -1,9 +1,22 @@
 name: Release
 
+# Publishes `openlore` to npm with provenance whenever a GitHub Release is
+# published from this repo, using npm Trusted Publishing (OIDC) — no
+# long-lived NPM_TOKEN required. See docs/publishing.md for the one-time
+# setup steps on the npmjs.com side.
+#
+# Manual fallback: `workflow_dispatch` lets a maintainer re-publish a
+# specific tag if a prior automated run failed mid-way.
+
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v2.0.2). Must already exist on origin.'
+        required: true
+        type: string
 
 jobs:
   validate:
@@ -11,6 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On workflow_dispatch, check out the explicitly-named tag.
+          # On release events, the default ref already points at the tag.
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -31,15 +48,27 @@ jobs:
       - name: Build
         run: npm run build
 
-  release:
+  publish:
     name: Publish to npm
     runs-on: ubuntu-latest
     needs: validate
+    # `id-token: write` is required for npm Trusted Publishing (OIDC) and
+    # for `npm publish --provenance` to mint an attestation. We deliberately
+    # do NOT request `contents: write` — the GitHub Release already exists
+    # before this workflow runs, so no release-creation step is needed.
     permissions:
-      contents: write
+      contents: read
       id-token: write
+    # Scopes the OIDC token to a named environment so npm's Trusted
+    # Publisher config can require it. Create this environment under
+    # repo Settings → Environments before enabling Trusted Publishing.
+    environment:
+      name: npm-publish
+      url: https://www.npmjs.com/package/openlore
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -52,14 +81,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      # No NODE_AUTH_TOKEN — npm picks up the OIDC token automatically when
+      # `id-token: write` is set and the package is configured for Trusted
+      # Publishing on npmjs.com. --provenance attaches a signed attestation
+      # linking this build to this repo + this workflow run.
       - name: Publish to npm
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm publish --provenance --access public
