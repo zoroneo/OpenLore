@@ -35,7 +35,7 @@ bash scripts/orient.sh "<task description>"
 
 (On Windows: `powershell -File scripts/orient.ps1 "<task description>"`)
 
-The wrapper shells out to `npx --yes openlore orient --json --task "<task>"` and prints JSON to stdout. Parse these arrays from the result:
+The wrapper tries the direct CLI subcommand first (`npx --yes openlore orient --json --task "<task>"`) and falls back to driving the `openlore mcp` server over stdio JSON-RPC via the sibling `orient-via-mcp.mjs` helper when the CLI subcommand isn't shipped yet. Either path produces real orient JSON on stdout. Parse these arrays from the result:
 
 - **`relevant_functions`** — top scored functions for the task, with file/line, role classification, and a short reason.
 - **`callers`** — depth-1 caller neighbourhood for each top function. This is where "who breaks if I change this" lives.
@@ -44,7 +44,7 @@ The wrapper shells out to `npx --yes openlore orient --json --task "<task>"` and
 
 Always start by reading **`spec_sections`**, then **`callers`**, then jump into source only at the **`insertion_points`** you actually plan to edit.
 
-> **TODO(spec-02-followup):** the `openlore orient` CLI subcommand (with `--task`) is not yet shipped on the npm package. Until a follow-up spec adds it, the shell wrappers will exit non-zero. Use the MCP path above for now. The wrappers are forward-compatible — they will work the moment the CLI subcommand lands.
+> **TODO(spec-02-followup):** the `openlore orient` CLI subcommand (with `--task`) is not yet shipped on the npm package — the wrappers reach the `orient` tool through the MCP server as a fallback. A future spec will add the CLI subcommand and the wrappers will pick it up automatically.
 
 ## What NOT to do
 
@@ -71,7 +71,7 @@ Cold-graph first call may take 2–4s if the on-disk index needs to be loaded; s
 If `orient` returns an empty result or errors:
 
 1. **Empty `relevant_functions` array** — the task description didn't match the graph. Try rephrasing using a known module name, function name, or domain word from the spec. Do not fall back silently — tell the user that `orient` didn't match and you're going to grep.
-2. **Wrapper exits non-zero** — the CLI subcommand isn't shipped yet (see the TODO above), the npm package isn't installed, or the graph hasn't been built. Run `npx openlore analyze` once to seed the graph, then retry. If still failing, surface the failure in your reply: don't pretend `orient` succeeded.
+2. **Wrapper output contains `"error": "No analysis found"`** — the codebase hasn't been analyzed yet. Run `npx openlore analyze` once to seed the graph, then retry. The wrapper itself is healthy in this case; the underlying tool is telling you what's missing.
 3. **Graph is stale (mtime older than recent edits)** — the JSON output will still come back, but the insertion points may be wrong. Re-run `npx openlore analyze` to rebuild.
 
 In all failure cases, the correct fallback is a *targeted* `grep`/file read scoped to a single module — not opening the whole repo. And **always tell the user the skill silently degraded** so they can rebuild the graph if needed.

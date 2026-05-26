@@ -37,14 +37,15 @@ Once OpenLore spec-01's `openlore install --agent claude-code` is shipped on npm
 | File | Purpose |
 |---|---|
 | `SKILL.md` | The manifest + instructions Claude Code reads. Frontmatter declares the skill; body sections describe when/how/what-not-to-do. |
-| `scripts/orient.sh` | POSIX wrapper around `npx --yes openlore orient --json --task "<task>"`. |
+| `scripts/orient.sh` | POSIX wrapper. Prefers `npx openlore orient --json --task ...` (once shipped); falls back to the MCP path. |
 | `scripts/orient.ps1` | PowerShell equivalent for Windows. |
+| `scripts/orient-via-mcp.mjs` | Node helper that drives `openlore mcp` over stdio JSON-RPC. Used by the wrappers as a fallback. Pure Node built-ins, no deps. |
 | `examples/example-orient-output.json` | Real (redacted) output captured from this repo, so a reader can see the JSON shape without us writing a schema doc. |
 | `examples/example-task-prompt.md` | A short worked example of the full loop: task → orient call → output → next step. |
 
 ## Known limitations
 
-The `openlore orient --json --task "..."` CLI subcommand is not yet shipped on npm — `orient` is currently exposed only as an MCP tool. The shell wrappers will exit non-zero until a follow-up spec adds the CLI subcommand. In the meantime, use the MCP path documented inside `SKILL.md`.
+The `openlore orient --json --task "..."` CLI subcommand is not yet shipped on npm — `orient` is currently exposed only as an MCP tool. The shell wrappers transparently fall back to driving `openlore mcp` over stdio JSON-RPC via the bundled [`scripts/orient-via-mcp.mjs`](scripts/orient-via-mcp.mjs) helper, so they work today. A follow-up spec will add the CLI subcommand; once it ships, the wrappers will pick it up automatically and the MCP fallback becomes a no-op.
 
 See `TODO(spec-02-followup)` markers in `SKILL.md` and the wrappers.
 
