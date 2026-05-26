@@ -40,7 +40,7 @@ the block we refuse to overwrite unless you pass `--force`.
 | Surface | Marker | Files written |
 |---------|--------|---------------|
 | `claude-code` | `.claude/` or `CLAUDE.md` | append block to `CLAUDE.md`; `mcpServers.openlore` + `SessionStart` hook in `.claude/settings.json` |
-| `cursor` | `.cursor/` or `.cursorrules` | append block to `.cursorrules`; write `.cursor/rules/openlore.mdc` |
+| `cursor` | `.cursor/` or `.cursorrules` | append block to `.cursorrules`; write `.cursor/rules/openlore.mdc`; `mcpServers.openlore` in `.cursor/mcp.json` |
 | `cline` | `.clinerules` or `.vscode/settings.json` (`cline.*`) | append block to `.clinerules` |
 | `continue` | `.continue/` | add `/orient` entry to `.continue/config.json` (MCP server registration is TODO — see below) |
 | `agents-md` | always applies | append block to `AGENTS.md` (creates if absent) |

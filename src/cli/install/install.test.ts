@@ -142,6 +142,38 @@ describe('openlore install (end-to-end)', () => {
     expect(after._openlore).toBeUndefined();
   });
 
+  it('cursor install writes .cursor/mcp.json with mcpServers.openlore', async () => {
+    await mkdir(join(dir, '.cursor'), { recursive: true });
+    const code = await runInstall({ cwd: dir, agent: 'cursor' });
+    expect(code).toBe(0);
+    const mcp = JSON.parse(await readFile(join(dir, '.cursor/mcp.json'), 'utf8'));
+    expect(mcp.mcpServers.openlore).toEqual({
+      command: 'npx',
+      args: ['--yes', 'openlore', 'mcp'],
+    });
+    expect(mcp._openlore.managed).toBe(true);
+
+    // Uninstall removes the file when it only had our entries.
+    await runInstall({ cwd: dir, agent: 'cursor', uninstall: true });
+    expect(await exists(join(dir, '.cursor/mcp.json'))).toBe(false);
+  });
+
+  it('cursor install preserves pre-existing non-OpenLore mcpServers', async () => {
+    await mkdir(join(dir, '.cursor'), { recursive: true });
+    const existing = { mcpServers: { other: { command: 'foo' } } };
+    await writeFile(join(dir, '.cursor/mcp.json'), JSON.stringify(existing, null, 2));
+
+    await runInstall({ cwd: dir, agent: 'cursor' });
+    const merged = JSON.parse(await readFile(join(dir, '.cursor/mcp.json'), 'utf8'));
+    expect(merged.mcpServers.other).toEqual({ command: 'foo' });
+    expect(merged.mcpServers.openlore.command).toBe('npx');
+
+    await runInstall({ cwd: dir, agent: 'cursor', uninstall: true });
+    const after = JSON.parse(await readFile(join(dir, '.cursor/mcp.json'), 'utf8'));
+    expect(after.mcpServers.other).toEqual({ command: 'foo' });
+    expect(after.mcpServers.openlore).toBeUndefined();
+  });
+
   it('auto-detects multiple surfaces when no --agent passed', async () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
     await mkdir(join(dir, '.cursor'), { recursive: true });
