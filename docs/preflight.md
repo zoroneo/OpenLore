@@ -55,11 +55,16 @@ Staleness:     score 11 (threshold 0)
 Status:        STALE — run `openlore analyze` or re-run with --fix
 
 Changed:
-  - src/core/services/llm-service.ts
-  - src/core/services/chat-agent.ts
-  - src/cli/commands/verify.ts
+  - src/core/services/llm-service.ts  (hub, fan-in 38, weight 6)
+  - src/core/services/chat-agent.ts   (hub, fan-in 14, weight 5)
+  - src/cli/commands/verify.ts        (fan-in 3, weight 2)
+  - src/cli/commands/generate.ts      (weight 1)
   ...
 ```
+
+Lines are sorted by weight (DESC) so the files most likely to invalidate `orient()` answers surface first. New/untracked files are shown with `(new/untracked, weight 0)` and never contribute to the score.
+
+When there are no changed files at all (e.g. a docs-only PR after a fresh analyze), the Status line reads `FRESH — nothing to check` so it's obvious the gate passed because there was nothing to verify, not because everything was verified clean.
 
 ## How the staleness score is computed
 
@@ -101,24 +106,33 @@ When the process detects `GITHUB_ACTIONS=true`, preflight additionally emits per
 
 ## JSON schema (`--json`)
 
-```json
+```jsonc
 {
+  // Required by the spec
   "status": "FRESH" | "STALE" | "ERROR",
   "graph_built_at": "2026-04-12T10:11:08.000Z" | null,
-  "graph_commit": null,
+  "graph_commit": null,                              // TODO(spec-03-followup)
   "working_commit": "7d8e1b4" | null,
-  "changed_files": ["src/foo.ts", ...],
-  "unknown_files": ["new-file.ts", ...],
-  "hub_count": 3,
-  "leaf_count": 4,
+  "changed_files": ["src/foo.ts", "..."],
   "staleness_score": 11,
   "threshold": 0,
-  "mechanism": "git" | "mtime",
-  "warnings": []
+
+  // Additive extras (always emitted)
+  "unknown_files": ["new-file.ts", "..."],           // weight-0 files (new/untracked, docs, etc.)
+  "per_file": [                                      // sorted by weight DESC in human output;
+    { "file": "src/foo.ts",                          // emitted in changed_files order here
+      "weight": 6, "hub": true, "max_fan_in": 38, "unknown": false }
+  ],
+  "hub_count": 3,
+  "leaf_count": 4,
+  "mechanism": "git" | "mtime",                      // how the changed-files list was produced
+  "warnings": []                                     // e.g. "no .git found — falling back to mtime"
 }
 ```
 
 `graph_commit` is currently always `null` — see `TODO(spec-03-followup)` in [`src/cli/preflight/index.ts`](../src/cli/preflight/index.ts). Once `openlore analyze` records the git HEAD at build time, this field becomes populated.
+
+`per_file` lets CI scripts make per-file decisions without re-querying the graph (e.g. "only fail if a hub changed" → `jq '.per_file[] | select(.hub)'`).
 
 ## Edge cases
 

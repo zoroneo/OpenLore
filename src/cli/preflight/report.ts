@@ -7,6 +7,16 @@ import type { ScoreResult } from './score.js';
 
 export type PreflightStatus = 'FRESH' | 'STALE' | 'ERROR';
 
+export interface PerFileEntry {
+  filePath: string;
+  weight: number;
+  hub: boolean;
+  /** Highest fan-in across nodes in the file (for "why is this a hub"). */
+  maxFanIn: number;
+  /** True if the file isn't represented in the graph at all. */
+  unknown: boolean;
+}
+
 export interface PreflightSummary {
   status: PreflightStatus;
   graphBuiltAt: string | null;
@@ -14,6 +24,8 @@ export interface PreflightSummary {
   workingCommit: string | null;
   changedFiles: string[];
   unknownFiles: string[];
+  /** Per-file detail with weight + hub flag. Same order as `changedFiles`. */
+  perFile: PerFileEntry[];
   hubCount: number;
   leafCount: number;
   stalenessScore: number;
@@ -46,6 +58,21 @@ export function buildSummary(input: BuildSummaryInput): PreflightSummary {
     message = 'FRESH';
   }
 
+  // Build per-file detail in the same order as diff.changed so renderers
+  // can show "why" each file matters without re-querying the graph.
+  const scoreByPath = new Map(score.perFile.map((f) => [f.filePath, f]));
+  const unknownSet = new Set(score.unknownFiles);
+  const perFile: PerFileEntry[] = diff.changed.map((p) => {
+    const s = scoreByPath.get(p);
+    return {
+      filePath: p,
+      weight: s?.weight ?? 0,
+      hub: s?.hub ?? false,
+      maxFanIn: s?.maxFanIn ?? 0,
+      unknown: unknownSet.has(p),
+    };
+  });
+
   return {
     status,
     graphBuiltAt,
@@ -53,6 +80,7 @@ export function buildSummary(input: BuildSummaryInput): PreflightSummary {
     workingCommit: diff.workingCommit,
     changedFiles: diff.changed,
     unknownFiles: score.unknownFiles,
+    perFile,
     hubCount: score.hubCount,
     leafCount: score.leafCount,
     stalenessScore: score.totalScore,
@@ -91,21 +119,45 @@ export function renderHuman(s: PreflightSummary): string {
   lines.push(
     `${pad('Staleness:', 15)}score ${s.stalenessScore} (threshold ${s.threshold})`
   );
-  lines.push(`${pad('Status:', 15)}${s.status === 'STALE' ? 'STALE — ' + s.message.replace('STALE — ', '') : s.status}`);
+  // Status line: STALE message wins; otherwise distinguish "FRESH" from the
+  // genuinely-empty "nothing to check" case so users can tell why CI passed.
+  let statusLine: string;
+  if (s.status === 'STALE') {
+    statusLine = 'STALE — ' + s.message.replace('STALE — ', '');
+  } else if (s.changedFiles.length === 0) {
+    statusLine = `FRESH — ${s.message}`;
+  } else {
+    statusLine = 'FRESH';
+  }
+  lines.push(`${pad('Status:', 15)}${statusLine}`);
   if (s.warnings.length) {
     lines.push('');
     for (const w of s.warnings) lines.push(`  warning: ${w}`);
   }
-  if (s.changedFiles.length > 0 && s.changedFiles.length <= 20) {
+  // Per-file breakdown — sorted by weight DESC so hubs surface first.
+  const ranked = [...s.perFile].sort((a, b) => b.weight - a.weight);
+  if (ranked.length > 0) {
     lines.push('');
-    lines.push('Changed:');
-    for (const f of s.changedFiles) lines.push(`  - ${f}`);
-  } else if (s.changedFiles.length > 20) {
-    lines.push('');
-    lines.push(`Changed (showing first 20 of ${s.changedFiles.length}):`);
-    for (const f of s.changedFiles.slice(0, 20)) lines.push(`  - ${f}`);
+    const cap = 20;
+    const header = ranked.length > cap ? `Changed (showing top ${cap} of ${ranked.length}, by weight):` : 'Changed:';
+    lines.push(header);
+    for (const f of ranked.slice(0, cap)) {
+      lines.push(`  - ${formatFileLine(f)}`);
+    }
   }
   return lines.join('\n');
+}
+
+function formatFileLine(f: PerFileEntry): string {
+  if (f.unknown) {
+    return `${f.filePath}  (new/untracked, weight 0)`;
+  }
+  const tags: string[] = [];
+  if (f.hub) tags.push('hub');
+  if (f.maxFanIn > 0 && !f.hub) tags.push(`fan-in ${f.maxFanIn}`);
+  else if (f.hub && f.maxFanIn > 0) tags.push(`fan-in ${f.maxFanIn}`);
+  const tagStr = tags.length ? tags.join(', ') + ', ' : '';
+  return `${f.filePath}  (${tagStr}weight ${f.weight})`;
 }
 
 /**
@@ -140,7 +192,11 @@ function escapeAnnotation(s: string): string {
 }
 
 export function renderJson(s: PreflightSummary): string {
-  // Exclude transient fields that don't belong in the documented schema.
+  // Schema is documented in docs/preflight.md. We deliberately ship more
+  // than the spec's minimum (status / graph_built_at / graph_commit /
+  // working_commit / changed_files / staleness_score / threshold) — the
+  // extras (`unknown_files`, `per_file`, `hub_count`, `leaf_count`,
+  // `mechanism`, `warnings`) are purely additive.
   const payload = {
     status: s.status,
     graph_built_at: s.graphBuiltAt,
@@ -148,6 +204,13 @@ export function renderJson(s: PreflightSummary): string {
     working_commit: s.workingCommit,
     changed_files: s.changedFiles,
     unknown_files: s.unknownFiles,
+    per_file: s.perFile.map((f) => ({
+      file: f.filePath,
+      weight: f.weight,
+      hub: f.hub,
+      max_fan_in: f.maxFanIn,
+      unknown: f.unknown,
+    })),
     hub_count: s.hubCount,
     leaf_count: s.leafCount,
     staleness_score: s.stalenessScore,

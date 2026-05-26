@@ -297,6 +297,66 @@ describe('openlore preflight', () => {
     }
   });
 
+  it('human output shows per-file weight + flags hubs', async () => {
+    // One hub file + one leaf file changed.
+    await rm(join(dir, '.openlore', 'analysis', 'call-graph.db'));
+    await makeGraphDb(join(dir, '.openlore', 'analysis', 'call-graph.db'), [
+      { id: 'src/hub.ts::hub', name: 'hub', file_path: 'src/hub.ts', fan_in: 20, is_hub: 1 },
+      { id: 'src/leaf.ts::leaf', name: 'leaf', file_path: 'src/leaf.ts', fan_in: 0, is_hub: 0 },
+    ]);
+    const after = (GRAPH_MS + 60_000) / 1000;
+    await writeFile(join(dir, 'src/hub.ts'), 'hub change\n');
+    await writeFile(join(dir, 'src/leaf.ts'), 'leaf change\n');
+    await utimes(join(dir, 'src/hub.ts'), after, after);
+    await utimes(join(dir, 'src/leaf.ts'), after, after);
+
+    const { summary } = await runPreflight({ cwd: dir, json: true });
+    const human = renderHuman(summary!);
+
+    // Hub surfaces first (sorted DESC by weight)
+    const hubIdx = human.indexOf('src/hub.ts');
+    const leafIdx = human.indexOf('src/leaf.ts');
+    expect(hubIdx).toBeGreaterThan(-1);
+    expect(leafIdx).toBeGreaterThan(-1);
+    expect(hubIdx).toBeLessThan(leafIdx);
+
+    // Hub line is annotated with `hub` and a weight > leaf weight
+    expect(human).toMatch(/src\/hub\.ts.*hub.*weight 6/);
+    expect(human).toMatch(/src\/leaf\.ts.*weight 1/);
+  });
+
+  it('falls back to mtime + emits warning when no .git directory exists', async () => {
+    // Remove the .git dir entirely; the fixture should now have no git.
+    await rm(join(dir, '.git'), { recursive: true, force: true });
+    const after = (GRAPH_MS + 60_000) / 1000;
+    await writeFile(join(dir, 'src/foo.ts'), 'no git\n');
+    await utimes(join(dir, 'src/foo.ts'), after, after);
+
+    const { code, summary } = await runPreflight({ cwd: dir, json: true });
+    expect(code).toBe(1);
+    expect(summary?.mechanism).toBe('mtime');
+    expect(summary?.warnings.some((w) => /no \.git/.test(w))).toBe(true);
+    // Working commit should be null when there's no git.
+    expect(summary?.workingCommit).toBeNull();
+  });
+
+  it('returns "nothing to check" + exit 0 when no source files have changed', async () => {
+    // Default fixture: foo.ts mtime is pre-graph-build, nothing changed since.
+    const { code, summary } = await runPreflight({ cwd: dir, json: true });
+    expect(code).toBe(0);
+    expect(summary?.status).toBe('FRESH');
+    expect(summary?.changedFiles).toEqual([]);
+    expect(summary?.message).toContain('nothing to check');
+  });
+
+  it('Status line distinguishes "nothing to check" from generic FRESH', async () => {
+    // Default fixture has no changed files (everything pre-dates graph build).
+    const { summary } = await runPreflight({ cwd: dir, json: true });
+    const human = renderHuman(summary!);
+    expect(human).toContain('Status:');
+    expect(human).toContain('nothing to check');
+  });
+
   it('hub files contribute more weight than leaf files', async () => {
     // Replace the DB with one node marked as a hub with high fan-in.
     await rm(join(dir, '.openlore', 'analysis', 'call-graph.db'));
