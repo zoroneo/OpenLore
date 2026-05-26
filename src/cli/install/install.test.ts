@@ -112,6 +112,36 @@ describe('openlore install (end-to-end)', () => {
     expect(await exists(join(dir, 'AGENTS.md'))).toBe(false);
   });
 
+  it('preserves user-defined SessionStart hooks alongside ours', async () => {
+    await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
+    await mkdir(join(dir, '.claude'), { recursive: true });
+    const userHook = {
+      matcher: 'shell',
+      hooks: [{ type: 'command', command: 'echo hello' }],
+    };
+    await writeFile(
+      join(dir, '.claude/settings.json'),
+      JSON.stringify({ hooks: { SessionStart: [userHook] } }, null, 2),
+      'utf8'
+    );
+
+    const code = await runInstall({ cwd: dir, agent: 'claude-code' });
+    expect(code).toBe(0);
+    const settings = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
+    expect(settings.hooks.SessionStart).toHaveLength(2);
+    expect(settings.hooks.SessionStart[0]).toEqual(userHook);
+    expect(settings.hooks.SessionStart[1]._openlore).toBe(true);
+    expect(settings.hooks.SessionStart[1].hooks[0].command).toBe(
+      'npx --yes openlore orient --json'
+    );
+
+    await runInstall({ cwd: dir, agent: 'claude-code', uninstall: true });
+    const after = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
+    expect(after.hooks.SessionStart).toEqual([userHook]);
+    expect(after.mcpServers).toBeUndefined();
+    expect(after._openlore).toBeUndefined();
+  });
+
   it('auto-detects multiple surfaces when no --agent passed', async () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
     await mkdir(join(dir, '.cursor'), { recursive: true });
