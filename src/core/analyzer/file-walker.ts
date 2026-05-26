@@ -63,6 +63,17 @@ const SKIP_DIRECTORIES = new Set([
 ]);
 
 /**
+ * Hidden directories (dot-prefixed) we DO want to traverse — they hold
+ * analysis-relevant config (CI workflows, etc.).
+ */
+const ALLOW_DOT_DIRECTORIES = new Set([
+  '.github',
+  '.gitlab',
+  '.circleci',
+  '.azure',
+]);
+
+/**
  * Directories to skip only when not at root level
  */
 const SKIP_DIRECTORIES_NOT_ROOT = new Set([
@@ -393,8 +404,9 @@ export class FileWalker {
       return true;
     }
 
-    // Skip all hidden directories (dot-prefixed) — never contain analyzable source code
-    if (dirName.startsWith('.')) {
+    // Skip hidden directories (dot-prefixed) — never contain analyzable source code.
+    // Allow-list a few that hold CI/config metadata we DO want to detect.
+    if (dirName.startsWith('.') && !ALLOW_DOT_DIRECTORIES.has(dirName)) {
       return true;
     }
 
