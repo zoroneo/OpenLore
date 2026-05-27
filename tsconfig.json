@@ -20,5 +20,5 @@
     "baseUrl": "."
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "test", "src/viewer/**/*", "!src/viewer/**/*.test.ts", "src/core/scip/fixtures/**/*"]
+  "exclude": ["node_modules", "dist", "test", "src/viewer/**/*", "!src/viewer/**/*.test.ts", "src/core/scip/fixtures/**/*", "src/core/analyzer/iac/fixtures/**/*"]
 }

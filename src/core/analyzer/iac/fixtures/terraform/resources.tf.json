@@ -1,0 +1,32 @@
+{
+  "variable": {
+    "queue_name": {
+      "type": "string"
+    }
+  },
+  "resource": {
+    "aws_sqs_queue": {
+      "jobs": {
+        "name": "${var.queue_name}"
+      }
+    },
+    "aws_sns_topic": {
+      "alerts": {
+        "name": "alerts"
+      }
+    },
+    "aws_sns_topic_subscription": {
+      "jobs_sub": {
+        "topic_arn": "${aws_sns_topic.alerts.arn}",
+        "protocol": "sqs",
+        "endpoint": "${aws_sqs_queue.jobs.arn}",
+        "depends_on": ["aws_sqs_queue.jobs"]
+      }
+    }
+  },
+  "output": {
+    "queue_arn": {
+      "value": "${aws_sqs_queue.jobs.arn}"
+    }
+  }
+}

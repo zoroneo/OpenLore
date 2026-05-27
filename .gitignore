@@ -142,6 +142,9 @@ test-results/
 *.dylib
 *.rlib
 
+# npm pack output (build artifact, not source)
+*.tgz
+
 # --------------------
 # Environment & Secrets
 # --------------------

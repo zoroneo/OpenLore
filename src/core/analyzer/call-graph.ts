@@ -18,6 +18,7 @@ import { FunctionRegistryTrie } from './function-registry-trie.js';
 import type { ImportMap } from './import-resolver-bridge.js';
 import { inferTypesFromSource, resolveViaTypeInference } from './type-inference-engine.js';
 import { extractAllHttpEdges } from './http-route-parser.js';
+import { buildProjectedIac } from './iac/index.js';
 
 // ============================================================================
 // TYPES
@@ -34,7 +35,7 @@ export type EdgeConfidence =
   | 'external';      // unresolved external/stdlib call (synthetic leaf node)
 
 /** Broad relationship kind */
-export type EdgeKind = 'calls' | 'tested_by';
+export type EdgeKind = 'calls' | 'tested_by' | 'references' | 'depends_on';
 
 /** Semantic nature of the call at the call site */
 export type CallType =
@@ -2076,6 +2077,18 @@ export class CallGraphBuilder {
       // HTTP edge extraction is best-effort; don't fail the whole build
     }
 
+    // Pass 2c: Infrastructure-as-Code projection (spec-07).
+    // IaC resources/references project onto the existing node/edge primitives.
+    let iacClasses: ClassNode[] = [];
+    try {
+      const iac = buildProjectedIac(files);
+      for (const n of iac.nodes) if (!allNodes.has(n.id)) allNodes.set(n.id, n);
+      edges.push(...iac.edges);
+      iacClasses = iac.classes;
+    } catch {
+      // IaC extraction is best-effort; never fail the whole build
+    }
+
     // Pass 3: Calculate fanIn / fanOut (count unique caller→callee pairs, not call sites)
     const seenPairs = new Set<string>();
     for (const edge of edges) {
@@ -2286,6 +2299,9 @@ export class CallGraphBuilder {
     // Pass 7: Build class hierarchy (inheritance + grouping)
     const relationships = await extractClassRelationships(files);
     const { classes, inheritanceEdges } = buildClassNodes(allNodes, relationships);
+    // Merge IaC module groupings (deduped by id) into the class set.
+    const classIds = new Set(classes.map(c => c.id));
+    for (const c of iacClasses) if (!classIds.has(c.id)) classes.push(c);
 
     return {
       nodes: allNodes,

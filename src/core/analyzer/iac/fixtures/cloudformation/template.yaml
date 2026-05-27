@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  BucketName:
+    Type: String
+Resources:
+  LogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: LogsBucket
+    Properties:
+      Bucket: !Ref LogsBucket
+      PolicyDocument:
+        Statement:
+          - Resource: !Sub '${LogsBucket.Arn}/*'
+  NestedStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/bucket/nested.yaml
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !ImportValue shared-queue-name
+Outputs:
+  BucketArn:
+    Value: !GetAtt LogsBucket.Arn

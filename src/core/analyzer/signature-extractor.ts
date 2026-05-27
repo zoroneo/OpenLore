@@ -37,6 +37,11 @@ export const STAGE1_MAX_CHARS = 40_000;
 // ============================================================================
 
 export function detectLanguage(filePath: string): string {
+  const lower = filePath.toLowerCase();
+  // Terraform is unambiguous by extension (incl. the *.tf.json variant).
+  if (lower.endsWith('.tf') || lower.endsWith('.tfvars') || lower.endsWith('.tf.json')) {
+    return 'Terraform';
+  }
   const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
   switch (ext) {
     case 'py':           return 'Python';
@@ -672,6 +677,26 @@ function extractGeneric(content: string): ExtractedSignature[] {
 }
 
 // ============================================================================
+// TERRAFORM EXTRACTOR (spec-07)
+// ============================================================================
+
+function extractTerraformSignatures(content: string): ExtractedSignature[] {
+  const entries: ExtractedSignature[] = [];
+  const re = /^\s*(resource|data|module|variable|output|provider)\s+("[^"]+"(?:\s+"[^"]+")?|\w+)/gm;
+  for (const m of content.matchAll(re)) {
+    if (entries.length >= MAX_SIGS_PER_FILE) break;
+    const block = m[1];
+    const labels = m[2].replace(/"/g, '');
+    entries.push({
+      kind: block === 'module' || block === 'provider' ? 'class' : 'const',
+      name: labels.split(/\s+/).join('.'),
+      signature: `${block} ${m[2]}`,
+    });
+  }
+  return entries;
+}
+
+// ============================================================================
 // MAIN EXTRACTOR
 // ============================================================================
 
@@ -704,6 +729,9 @@ export function extractSignatures(filePath: string, content: string): FileSignat
       break;
     case 'Java':
       entries = extractJava(content);
+      break;
+    case 'Terraform':
+      entries = extractTerraformSignatures(content);
       break;
     default:
       entries = extractGeneric(content);

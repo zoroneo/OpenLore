@@ -1112,8 +1112,29 @@ export class AnalysisArtifactGenerator {
     const { CallGraphBuilder, serializeCallGraph } = await import('./call-graph.js');
     const { detectDuplicates } = await import('./duplicate-detector.js');
     const { analyzeForRefactoring } = await import('./refactor-analyzer.js');
+    const { classifyYaml } = await import('./iac/index.js');
 
-    const CALL_GRAPH_LANGS = new Set(['Python', 'TypeScript', 'JavaScript', 'Go', 'Rust', 'Ruby', 'Java', 'C++', 'Swift']);
+    const CALL_GRAPH_LANGS = new Set([
+      'Python', 'TypeScript', 'JavaScript', 'Go', 'Rust', 'Ruby', 'Java', 'C++', 'Swift',
+      // Infrastructure-as-Code (spec-07) — projected onto the same graph primitives.
+      'Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible',
+    ]);
+    // Helm charts: every file under a directory containing Chart.yaml is Helm.
+    const chartDirs = repoMap.allFiles
+      .filter(f => /(^|\/)Chart\.ya?ml$/.test(f.path.replace(/\\/g, '/')))
+      .map(f => f.path.replace(/\\/g, '/').replace(/\/Chart\.ya?ml$/, ''));
+    const isUnderChart = (p: string): boolean => {
+      const posix = p.replace(/\\/g, '/');
+      return chartDirs.some(d => posix === d || posix.startsWith(d + '/'));
+    };
+    /** Resolve an IaC language for ambiguous YAML/JSON via path + content. */
+    const resolveLang = (path: string, content: string): string => {
+      const lang = detectLanguage(path);
+      if (lang !== 'unknown') return lang;
+      if (isUnderChart(path)) return 'Helm';
+      if (/\.(ya?ml|json)$/i.test(path)) return classifyYaml(path, content) ?? 'unknown';
+      return 'unknown';
+    };
     const signatures: import('./signature-extractor.js').FileSignatureMap[] = [];
     const callGraphFiles: Array<{ path: string; content: string; language: string }> = [];
 
@@ -1131,7 +1152,7 @@ export class AnalysisArtifactGenerator {
         }
 
         // Call graph — all supported languages, include test files so tested_by edges are derived
-        const lang = detectLanguage(file.path);
+        const lang = resolveLang(file.path, content);
         if (!isTest && CALL_GRAPH_LANGS.has(lang)) {
           callGraphFiles.push({ path: file.path, content, language: lang });
         }

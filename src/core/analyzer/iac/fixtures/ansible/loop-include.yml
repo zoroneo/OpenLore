@@ -1,0 +1,8 @@
+- name: Loop-driven includes
+  hosts: all
+  tasks:
+    - name: Include each task file
+      include_tasks: "{{ item }}"
+      loop:
+        - tasks/a.yml
+        - tasks/b.yml

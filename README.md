@@ -352,6 +352,8 @@ The manifest captures the public API surface, HTTP routes, stats, dependencies, 
 
 **Languages supported**: TypeScript · JavaScript · Python · Go · Rust · Ruby · Java · C++ · Swift
 
+**Infrastructure-as-Code**: Terraform/HCL · Kubernetes · Helm · CloudFormation · Ansible · Pulumi · AWS CDK · CDKTF — IaC resources and their references are projected onto the same graph as application code, so `orient`, `search_code`, `get_subgraph`, and `analyze_impact` answer "what is the blast radius of changing this security group / ConfigMap / IAM role?" with zero new tooling. See [docs/iac.md](docs/iac.md).
+
 ---
 
 ## Development

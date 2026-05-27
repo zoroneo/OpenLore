@@ -1,0 +1,17 @@
+- name: Configure web servers
+  hosts: web
+  roles:
+    - web
+    - db
+  tasks:
+    - name: Install nginx
+      ansible.builtin.package:
+        name: nginx
+      notify: restart nginx
+    - name: Include extra tasks
+      include_tasks: tasks/extra.yml
+  handlers:
+    - name: restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted

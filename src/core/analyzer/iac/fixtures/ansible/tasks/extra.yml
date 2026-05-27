@@ -1,0 +1,3 @@
+- name: Extra step
+  ansible.builtin.debug:
+    msg: hello

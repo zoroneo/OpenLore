@@ -191,4 +191,10 @@ describe('scipLanguageName', () => {
     expect(scipLanguageName('unknown')).toBe('');
     expect(scipLanguageName('Brainfuck')).toBe('');
   });
+
+  it('maps IaC (spec-07) tags to UnspecifiedLanguage (empty string)', () => {
+    for (const lang of ['Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible', 'Pulumi', 'CDK', 'CDKTF']) {
+      expect(scipLanguageName(lang)).toBe('');
+    }
+  });
 });
