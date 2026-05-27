@@ -93,6 +93,7 @@
     "glob": "^11.0.0",
     "ignore": "^6.0.2",
     "ora": "^8.1.1",
+    "protobufjs": "^8.4.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "tree-sitter": "^0.22.4",

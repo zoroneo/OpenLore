@@ -57,6 +57,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['dist/**', 'node_modules/**', 'examples/**', '*.config.js', '*.config.ts'],
+    ignores: ['dist/**', 'node_modules/**', 'examples/**', '*.config.js', '*.config.ts', 'src/core/scip/fixtures/**'],
   }
 );

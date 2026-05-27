@@ -272,6 +272,19 @@ The graph and the OpenSpec spec layer are co-equal: the graph makes orientation 
 
 ---
 
+## Interop
+
+OpenLore exports [SCIP](https://github.com/sourcegraph/scip) (Source Code Intelligence Protocol). Plug it into Sourcegraph code nav, GitHub stack graphs, Glean importers, or any SCIP-aware tool:
+
+```bash
+openlore analyze            # build the graph (if you haven't already)
+openlore export scip        # writes ./index.scip
+```
+
+The SQLite graph stays canonical; SCIP is a one-way export of the subset SCIP can model (functions → symbols, call edges → occurrences). See [docs/scip-export.md](docs/scip-export.md) for what is and isn't exported and how to consume it.
+
+---
+
 ## Documentation
 
 | Topic | Doc |
@@ -284,6 +297,7 @@ The graph and the OpenSpec spec layer are co-equal: the graph makes orientation 
 | Spec-driven tests + spec digest | [docs/spec-tests.md](docs/spec-tests.md) |
 | CI/CD integration | [docs/ci-cd.md](docs/ci-cd.md) |
 | Preflight CI staleness gate | [docs/preflight.md](docs/preflight.md) |
+| SCIP export (Sourcegraph/Glean interop) | [docs/scip-export.md](docs/scip-export.md) |
 | CLI command reference | [docs/cli-reference.md](docs/cli-reference.md) |
 | Interactive graph viewer | [docs/viewer.md](docs/viewer.md) |
 | Analysis output files | [docs/output.md](docs/output.md) |

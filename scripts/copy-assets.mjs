@@ -4,6 +4,7 @@
  *
  * Currently:
  *   - src/cli/install/templates/*  →  dist/cli/install/templates/*
+ *   - src/core/scip/vendor/*       →  dist/core/scip/vendor/*  (vendored scip.proto, loaded at runtime)
  */
 
 import { cp, mkdir } from 'node:fs/promises';
@@ -17,6 +18,10 @@ const assets = [
   {
     from: resolve(repoRoot, 'src/cli/install/templates'),
     to: resolve(repoRoot, 'dist/cli/install/templates'),
+  },
+  {
+    from: resolve(repoRoot, 'src/core/scip/vendor'),
+    to: resolve(repoRoot, 'dist/core/scip/vendor'),
   },
 ];
 

@@ -27,6 +27,7 @@ import { decisionsCommand } from './commands/decisions.js';
 import { telemetryCommand } from './commands/telemetry.js';
 import { installCommand } from './install/index.js';
 import { preflightCommand } from './preflight/index.js';
+import { exportCommand } from './export/index.js';
 import { configureLogger } from '../utils/logger.js';
 
 // Read version from package.json at runtime so it never drifts from the published version
@@ -141,5 +142,6 @@ program.addCommand(decisionsCommand);
 program.addCommand(telemetryCommand);
 program.addCommand(installCommand);
 program.addCommand(preflightCommand);
+program.addCommand(exportCommand);
 
 program.parse();
