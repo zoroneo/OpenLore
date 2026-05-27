@@ -779,8 +779,10 @@ describe('RIG-19 — MCP e2e integration on real openlore codebase', () => {
     expect(typeof data.metrics.fanIn).toBe('number');
     expect(typeof data.metrics.fanOut).toBe('number');
 
-    // validateDirectory has many callers → upstream chain must be non-empty
-    expect(data.blastRadius.upstream).toBeGreaterThan(5);
+    // validateDirectory is a hub with callers → upstream chain must be non-empty.
+    // (Symbol resolution now prefers the exact match, so this is validateDirectory's
+    // own blast radius, not an inflated union with validateDirectoryImpl/Depth.)
+    expect(data.blastRadius.upstream).toBeGreaterThan(0);
     expect(data.blastRadius.total).toBeGreaterThan(0);
 
     expect(['low', 'medium', 'high', 'critical']).toContain(data.riskLevel);

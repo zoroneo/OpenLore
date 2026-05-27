@@ -693,3 +693,55 @@ describe('handleAnalyzeImpact — edgeStore fast path', () => {
     expect(['low', 'medium', 'high', 'critical']).toContain(result.riskLevel);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Symbol resolution — exact-name match is preferred over fuzzy FTS hits.
+// searchNodes uses an fts5 trigram index, so a query like "auth" substring-matches
+// "authenticate"/"authorize" too. A request for a symbol that DOES exist exactly
+// must resolve to that single node (flat result), not an ambiguous { matches }.
+// ──────────────────────────────────────────────────────────────────────────────
+describe('symbol resolution — exact-match preference', () => {
+  let dir: string;
+  let store: EdgeStore;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'graph-exact-match-test-'));
+    store = EdgeStore.open(join(dir, 'call-graph.db'));
+    store.insertNodes([
+      makeNode({ id: 'src/auth.ts::auth',         fanIn: 3, fanOut: 1 }),
+      makeNode({ id: 'src/auth.ts::authenticate', fanIn: 1, fanOut: 1 }),
+      makeNode({ id: 'src/auth.ts::authorize',    fanIn: 1, fanOut: 0 }),
+    ]);
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('analyze_impact returns the flat exact match (not { matches }) when the symbol exists exactly', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    const result = await handleAnalyzeImpact(dir, 'auth', 2) as { symbol?: string; matches?: unknown[] };
+    expect(result.matches).toBeUndefined();
+    expect(result.symbol).toBe('auth');
+  });
+
+  it('analyze_impact still returns { matches } for an ambiguous query with no exact match', async () => {
+    // "authent" substring-matches "authenticate" and "reauthenticate" but no node
+    // is named exactly "authent", so the result stays a { matches } disambiguation list.
+    store.insertNodes([makeNode({ id: 'src/auth.ts::reauthenticate', fanIn: 0, fanOut: 0 })]);
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    const result = await handleAnalyzeImpact(dir, 'authent', 2) as { symbol?: string; matches?: Array<{ symbol: string }> };
+    expect(result.matches).toBeDefined();
+    expect(result.matches!.length).toBeGreaterThan(1);
+    expect(result.matches!.map(m => m.symbol)).toContain('authenticate');
+    expect(result.matches!.map(m => m.symbol)).toContain('reauthenticate');
+  });
+
+  it('get_subgraph resolves the exact symbol when fuzzy hits also exist', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    const result = await handleGetSubgraph(dir, 'auth', 'downstream', 2) as { matches?: unknown[]; nodes?: Array<{ name: string }> };
+    expect(result.matches).toBeUndefined();
+    expect(result.nodes?.map(n => n.name)).toContain('auth');
+  });
+});

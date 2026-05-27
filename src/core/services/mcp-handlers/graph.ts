@@ -275,6 +275,12 @@ export async function handleGetSubgraph(
   const lower = functionName.toLowerCase();
   let seeds = ctx.edgeStore.searchNodes(lower);
 
+  // searchNodes is a fuzzy FTS match, so a unique symbol can come back alongside
+  // incidental hits. Prefer exact name matches so a known symbol resolves to a
+  // single deterministic result instead of an ambiguous { matches } list.
+  const exact = seeds.filter(s => s.name.toLowerCase() === lower);
+  if (exact.length > 0) seeds = exact;
+
   // Semantic search fallback when no name match
   if (seeds.length === 0) {
     try {
@@ -394,6 +400,12 @@ export async function handleAnalyzeImpact(
 
   const lower = symbol.toLowerCase();
   let seeds = ctx.edgeStore.searchNodes(lower);
+
+  // searchNodes is a fuzzy FTS match, so a unique symbol can come back alongside
+  // incidental hits. Prefer exact name matches so a known symbol resolves to a
+  // single deterministic result instead of an ambiguous { matches } list.
+  const exact = seeds.filter(s => s.name.toLowerCase() === lower);
+  if (exact.length > 0) seeds = exact;
 
   // Semantic search fallback when no name match
   if (seeds.length === 0) {

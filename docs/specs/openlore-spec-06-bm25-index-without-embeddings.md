@@ -205,7 +205,14 @@ The existing "publish a Release by hand" and `workflow_dispatch` paths still wor
 created by the workflow with `GITHUB_TOKEN` does not re-trigger the workflow. `docs/publishing.md`
 is updated to match. Files: `.github/workflows/release.yml`, `docs/publishing.md`.
 
-### Remaining follow-ups (out of scope here)
+### analyze_impact / get_subgraph symbol resolution (follow-up now closed)
 
-- The `analyze_impact` FTS multi-match shape (`{ matches }`) vs. flat result is a separate
-  handler/test contract question worth revisiting.
+`searchNodes` uses an fts5 **trigram** index, so a query substring-matches unrelated names (e.g.
+`auth` also hits `authenticate`/`authorize`), and a request for a symbol that exists *exactly* used
+to come back as an ambiguous `{ matches }` list. `handleAnalyzeImpact` and `handleGetSubgraph` now
+prefer exact name matches: when any FTS hit's name equals the query (case-insensitive), the seed set
+narrows to those, so a known symbol resolves to a single deterministic (flat) result. Genuinely
+ambiguous queries with no exact match still return `{ matches }`. Locked by unit tests in
+`graph.test.ts` ("symbol resolution — exact-match preference"). Files: `graph.ts`, `graph.test.ts`.
+
+All spec-06 follow-ups are now closed.
