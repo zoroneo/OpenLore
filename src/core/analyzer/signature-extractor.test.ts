@@ -760,3 +760,24 @@ public class Repo {
     expect(names).toContain('byId');
   });
 });
+
+describe('extractSignatures — spec-08 additional languages (Stage-1, best-effort)', () => {
+  const cases: Array<[string, string, string, string[]]> = [
+    ['C#', 'A.cs', 'public class Svc {\n  public void Run() {}\n}', ['Svc', 'Run']],
+    ['Kotlin', 'A.kt', 'class Svc {\n  fun run() {}\n}\nfun String.shout() {}', ['Svc', 'run', 'shout']],
+    ['PHP', 'a.php', '<?php\nclass Svc {\n  function run() {}\n}\nfunction boot() {}', ['Svc', 'run', 'boot']],
+    ['Scala', 'A.scala', 'object Svc {\n  def run(): Int = 1\n}', ['Svc', 'run']],
+    ['Elixir', 'a.ex', 'defmodule Svc do\n  def run do :ok end\n  defp helper do :ok end\nend', ['Svc', 'run', 'helper']],
+    ['Lua', 'a.lua', 'local function helper() end\nfunction M.run() end', ['helper', 'M.run']],
+    ['Bash', 'a.sh', 'helper() {\n  echo hi\n}\nfunction run {\n  helper\n}', ['helper', 'run']],
+    ['C', 'a.c', 'int add(int a, int b) {\n  return a + b;\n}', ['add']],
+  ];
+  for (const [language, file, src, expectedNames] of cases) {
+    it(`extracts ${language} declarations for search`, () => {
+      const { entries, language: detected } = extractSignatures(file, src);
+      const names = entries.map(e => e.name);
+      for (const n of expectedNames) expect(names).toContain(n);
+      expect(detected).toBe(language);
+    });
+  }
+});

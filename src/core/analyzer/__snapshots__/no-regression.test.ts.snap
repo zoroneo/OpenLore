@@ -1,0 +1,75 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`spec-08 no-regression — TypeScript extraction is unperturbed > matches the committed TypeScript graph snapshot 1`] = `
+{
+  "classes": [
+    {
+      "id": "external",
+      "methodIds": [
+        "external::repo.add",
+      ],
+      "name": "[external]",
+    },
+    {
+      "id": "regression/sample.ts",
+      "methodIds": [
+        "regression/sample.ts::bootstrap",
+        "regression/sample.ts::createRepo",
+      ],
+      "name": "[sample]",
+    },
+    {
+      "id": "regression/sample.ts::Repository",
+      "methodIds": [
+        "regression/sample.ts::Repository.add",
+        "regression/sample.ts::Repository.findAll",
+        "regression/sample.ts::Repository.load",
+        "regression/sample.ts::Repository.validate",
+      ],
+      "name": "Repository",
+    },
+  ],
+  "edges": [
+    "regression/sample.ts::bootstrap -> external::repo.add",
+    "regression/sample.ts::bootstrap -> regression/sample.ts::createRepo",
+  ],
+  "nodes": [
+    {
+      "className": null,
+      "id": "regression/sample.ts::bootstrap",
+      "language": "TypeScript",
+      "name": "bootstrap",
+    },
+    {
+      "className": null,
+      "id": "regression/sample.ts::createRepo",
+      "language": "TypeScript",
+      "name": "createRepo",
+    },
+    {
+      "className": "Repository",
+      "id": "regression/sample.ts::Repository.add",
+      "language": "TypeScript",
+      "name": "add",
+    },
+    {
+      "className": "Repository",
+      "id": "regression/sample.ts::Repository.findAll",
+      "language": "TypeScript",
+      "name": "findAll",
+    },
+    {
+      "className": "Repository",
+      "id": "regression/sample.ts::Repository.load",
+      "language": "TypeScript",
+      "name": "load",
+    },
+    {
+      "className": "Repository",
+      "id": "regression/sample.ts::Repository.validate",
+      "language": "TypeScript",
+      "name": "validate",
+    },
+  ],
+}
+`;

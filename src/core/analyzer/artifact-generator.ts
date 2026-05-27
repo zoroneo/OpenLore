@@ -1108,7 +1108,7 @@ export class AnalysisArtifactGenerator {
     // Signature extraction + call graph for ALL analyzed files
     // Read each file once and reuse the content for both operations.
     // All dynamic imports grouped here; CALL_GRAPH_LANGS hoisted out of the loop.
-    const { extractSignatures, detectLanguage } = await import('./signature-extractor.js');
+    const { extractSignatures, detectLanguage, resolveHeaderLanguage } = await import('./signature-extractor.js');
     const { CallGraphBuilder, serializeCallGraph } = await import('./call-graph.js');
     const { detectDuplicates } = await import('./duplicate-detector.js');
     const { analyzeForRefactoring } = await import('./refactor-analyzer.js');
@@ -1116,6 +1116,8 @@ export class AnalysisArtifactGenerator {
 
     const CALL_GRAPH_LANGS = new Set([
       'Python', 'TypeScript', 'JavaScript', 'Go', 'Rust', 'Ruby', 'Java', 'C++', 'Swift',
+      // Additional general-purpose languages (spec-08).
+      'C#', 'Kotlin', 'PHP', 'C', 'Scala', 'Dart', 'Lua', 'Elixir', 'Bash',
       // Infrastructure-as-Code (spec-07) — projected onto the same graph primitives.
       'Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible',
     ]);
@@ -1127,9 +1129,16 @@ export class AnalysisArtifactGenerator {
       const posix = p.replace(/\\/g, '/');
       return chartDirs.some(d => posix === d || posix.startsWith(d + '/'));
     };
-    /** Resolve an IaC language for ambiguous YAML/JSON via path + content. */
+    // .h disambiguation (spec-08): default is C++, but a project with .c files and
+    // no C++ sources means its headers are C. Bias toward C++ (superset) otherwise.
+    const exts = new Set(repoMap.allFiles.map(f => (f.path.split('.').pop() ?? '').toLowerCase()));
+    const hasCppSources = exts.has('cpp') || exts.has('cc') || exts.has('cxx') || exts.has('hpp');
+    const hasCSources = exts.has('c');
+    const headerLang = resolveHeaderLanguage(hasCSources, hasCppSources);
+    /** Resolve a language: extension first, then IaC YAML disambiguation, then .h heuristic. */
     const resolveLang = (path: string, content: string): string => {
       const lang = detectLanguage(path);
+      if (lang === 'C++' && /\.h$/i.test(path)) return headerLang;
       if (lang !== 'unknown') return lang;
       if (isUnderChart(path)) return 'Helm';
       if (/\.(ya?ml|json)$/i.test(path)) return classifyYaml(path, content) ?? 'unknown';

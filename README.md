@@ -350,7 +350,7 @@ The manifest captures the public API surface, HTTP routes, stats, dependencies, 
   Or use a CLI-based provider (`claude-code`, `gemini-cli`, `mistral-vibe`, `cursor-agent`) — no API key, just the CLI on your PATH.
 - `analyze`, `drift`, `mcp`, and `init` require no API key
 
-**Languages supported**: TypeScript · JavaScript · Python · Go · Rust · Ruby · Java · C++ · Swift
+**Languages supported**: TypeScript · JavaScript · Python · Go · Rust · Ruby · Java · C++ · Swift · C# · Kotlin · PHP · C · Scala · Dart · Lua · Elixir · Bash — call graphs ride the same node/edge primitives for every language. See [docs/languages.md](docs/languages.md) for per-language extraction limits and the `.h` C/C++ rule.
 
 **Infrastructure-as-Code**: Terraform/HCL · Kubernetes · Helm · CloudFormation · Ansible · Pulumi · AWS CDK · CDKTF — IaC resources and their references are projected onto the same graph as application code, so `orient`, `search_code`, `get_subgraph`, and `analyze_impact` answer "what is the blast radius of changing this security group / ConfigMap / IAM role?" with zero new tooling. See [docs/iac.md](docs/iac.md).
 

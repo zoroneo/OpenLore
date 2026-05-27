@@ -22,7 +22,8 @@ export interface ExtractedSignature {
 
 export interface FileSignatureMap {
   path: string;        // relative path
-  language: string;    // 'Python', 'TypeScript', 'JavaScript', 'Go', 'Rust', 'Ruby', 'Swift', 'unknown'
+  language: string;    // 'Python', 'TypeScript', 'JavaScript', 'Go', 'Rust', 'Ruby', 'Java', 'C++', 'Swift',
+                       // 'C#', 'Kotlin', 'PHP', 'C', 'Scala', 'Dart', 'Lua', 'Elixir', 'Bash', IaC tags, or 'unknown'
   entries: ExtractedSignature[];
 }
 
@@ -51,14 +52,28 @@ export function detectLanguage(filePath: string): string {
     case 'rs':           return 'Rust';
     case 'rb':           return 'Ruby';
     case 'java':         return 'Java';
-    case 'kt':           return 'Kotlin';
-    case 'php':          return 'PHP';
+    case 'kt': case 'kts': return 'Kotlin';
+    case 'php': case 'phtml': return 'PHP';
     case 'cs':           return 'C#';
     case 'cpp': case 'cc': case 'cxx': case 'h': case 'hpp': return 'C++';
     case 'c':            return 'C';
     case 'swift':        return 'Swift';
+    case 'scala': case 'sc': return 'Scala';
+    case 'dart':         return 'Dart';
+    case 'lua':          return 'Lua';
+    case 'ex': case 'exs': return 'Elixir';
+    case 'sh': case 'bash': return 'Bash';
     default:             return 'unknown';
   }
+}
+
+/**
+ * Resolve the language of a `.h` header (spec-08). `.h` is claimed by both C and
+ * C++. Rule: a project with `.c` files and no C++ sources → C; otherwise C++
+ * (the default / superset, which parses C headers acceptably).
+ */
+export function resolveHeaderLanguage(hasCSources: boolean, hasCppSources: boolean): 'C' | 'C++' {
+  return (!hasCppSources && hasCSources) ? 'C' : 'C++';
 }
 
 // ============================================================================
@@ -697,6 +712,69 @@ function extractTerraformSignatures(content: string): ExtractedSignature[] {
 }
 
 // ============================================================================
+// ADDITIONAL GENERAL-PURPOSE LANGUAGES (spec-08) — best-effort Stage-1 regexes
+// ============================================================================
+//
+// Lightweight declaration regexes so these languages are searchable via BM25
+// even when their tree-sitter grammar fails to load (graceful degradation). The
+// call graph is the authoritative source when the grammar IS available.
+
+interface SigPattern { re: RegExp; kind: ExtractedSignature['kind']; }
+
+const EXTRA_LANG_PATTERNS: Record<string, SigPattern[]> = {
+  'C#': [
+    { re: /^\s*(?:public|private|protected|internal|static|sealed|abstract|partial|\s)*\b(?:class|interface|struct|record|enum)\s+(\w+)/gm, kind: 'class' },
+    { re: /^\s*(?:public|private|protected|internal|static|async|virtual|override|\s)+[\w<>[\],?]+\s+(\w+)\s*\(/gm, kind: 'method' },
+  ],
+  Kotlin: [
+    { re: /^\s*(?:public|private|internal|open|abstract|sealed|data|\s)*\b(?:class|object|interface)\s+(\w+)/gm, kind: 'class' },
+    { re: /^\s*(?:public|private|internal|open|override|suspend|\s)*\bfun\s+(?:[\w.<>]+\.)?(\w+)\s*\(/gm, kind: 'function' },
+  ],
+  PHP: [
+    { re: /^\s*(?:abstract|final|\s)*\b(?:class|trait|interface|enum)\s+(\w+)/gm, kind: 'class' },
+    { re: /^\s*(?:public|private|protected|static|abstract|final|\s)*\bfunction\s+(\w+)\s*\(/gm, kind: 'function' },
+  ],
+  C: [
+    { re: /^[A-Za-z_][\w\s*]*\b(\w+)\s*\([^;{]*\)\s*\{/gm, kind: 'function' },
+  ],
+  Scala: [
+    { re: /^\s*(?:case\s+)?\b(?:object|class|trait)\s+(\w+)/gm, kind: 'class' },
+    { re: /^\s*(?:override|implicit|private|protected|\s)*\bdef\s+(\w+)/gm, kind: 'function' },
+  ],
+  Dart: [
+    { re: /^\s*(?:abstract\s+)?\b(?:class|mixin|extension|enum)\s+(\w+)/gm, kind: 'class' },
+    { re: /^\s*(?:[\w<>,?]+\s+)?(\w+)\s*\([^;{]*\)\s*(?:async\s*)?\{/gm, kind: 'function' },
+  ],
+  Lua: [
+    { re: /^\s*(?:local\s+)?function\s+([\w.:]+)/gm, kind: 'function' },
+  ],
+  Elixir: [
+    { re: /^\s*defmodule\s+([\w.]+)/gm, kind: 'class' },
+    { re: /^\s*def(?:p|macro|macrop)?\s+(\w+)/gm, kind: 'function' },
+  ],
+  Bash: [
+    { re: /^\s*(?:function\s+(\w+)|(\w+)\s*\(\s*\))/gm, kind: 'function' },
+  ],
+};
+
+function extractExtraLangSignatures(language: string, content: string): ExtractedSignature[] {
+  const patterns = EXTRA_LANG_PATTERNS[language];
+  if (!patterns) return [];
+  const entries: ExtractedSignature[] = [];
+  const seen = new Set<string>();
+  for (const { re, kind } of patterns) {
+    for (const m of content.matchAll(re)) {
+      if (entries.length >= MAX_SIGS_PER_FILE) break;
+      const name = m[1] ?? m[2];
+      if (!name || seen.has(`${kind}:${name}`)) continue;
+      seen.add(`${kind}:${name}`);
+      entries.push({ kind, name, signature: m[0].trim().replace(/\s+/g, ' ').slice(0, 120) });
+    }
+  }
+  return entries;
+}
+
+// ============================================================================
 // MAIN EXTRACTOR
 // ============================================================================
 
@@ -732,6 +810,17 @@ export function extractSignatures(filePath: string, content: string): FileSignat
       break;
     case 'Terraform':
       entries = extractTerraformSignatures(content);
+      break;
+    case 'C#':
+    case 'Kotlin':
+    case 'PHP':
+    case 'C':
+    case 'Scala':
+    case 'Dart':
+    case 'Lua':
+    case 'Elixir':
+    case 'Bash':
+      entries = extractExtraLangSignatures(language, content);
       break;
     default:
       entries = extractGeneric(content);
