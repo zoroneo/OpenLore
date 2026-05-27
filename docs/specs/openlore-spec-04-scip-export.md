@@ -16,8 +16,22 @@ Branch: `openlore-spec-04-scip-export`. Export-only shipped; import deferred per
 - [x] Tests + 3-file fixture (`src/core/scip/` — tests are co-located per repo convention; `test/` is gitignored): round-trip parse, byte-determinism (SHA-256), exact counts (3 docs / 4 symbols / 8 occurrences / 4 definitions), include/exclude, external-node exclusion, missing-range throw
 - [x] Docs: `docs/scip-export.md` + README "Interop" section
 - [x] `lint`, `typecheck`, `test:run` (2789 pass), `build` (proto copied to dist; built CLI verified) all green — incl. CI fix: exclude `src/core/scip/fixtures/**` from ESLint typed-linting (fixtures are excluded from tsconfig, so `parserOptions.project` couldn't resolve them)
-- [ ] `TODO(spec-04-followup): scip import`
-- [ ] `TODO(spec-04-followup): column ranges in analyzer`
+
+**In-scope spec is 100% complete.** PR #89 is mergeable and self-contained as a SCIP *export*. Downstream-impact review passed: vendored proto ships in the npm package (`dist/core/scip/vendor/scip.proto`, 33.7kB — no runtime `ENOENT`), fixtures/test files are excluded from the package, `protobufjs` adds ~7ms load + one transitive dep (`long`), and no graph-schema/MCP/`orient` surfaces were touched.
+
+### Deferred follow-ups (NOT in this PR — documented for a later session)
+
+Both were explicitly fenced off by this spec ("Out of scope for this PR"). They are paused by owner decision (2026-05-27); capturing the analysis here so a future session can pick them up without re-deriving it.
+
+1. **`column ranges in analyzer`** — today the analyzer records line numbers but not columns, so SCIP occurrences are emitted as zero-width ranges at column 0 (with a one-time warning). Making them faithful requires:
+   - Definitions: derivable now — `FunctionNode.startIndex` is a byte offset and the builder already holds file contents, so `column = startIndex − lastNewlineBefore(startIndex)`.
+   - Call sites: NOT free — `RawEdge` carries only `line`; the AST walk in [call-graph.ts](../../src/core/analyzer/call-graph.ts) would need to capture each call expression's start column and thread it through to `CallEdge`.
+   - **Tension to resolve:** this adds column fields to `FunctionNode`/`CallEdge`, i.e. it *changes the internal graph schema* — exactly what this spec's scope contract said the PR must NOT do, and it touches the repo's highest-fan-out hub (regression risk across all 7 languages). Recommend doing it as its own spec/PR with additive optional fields and per-language tests. The exporter already falls back gracefully, so this is a fidelity upgrade, not a fix.
+
+2. **`scip import`** — consume an external `index.scip` into a "read-only OpenLore view." Underspecified; two interpretations surfaced:
+   - *Light:* `openlore import scip <file>` parses an index and prints/returns a summary (documents, symbols, occurrences, sample monikers). Self-contained, no writes to the canonical graph, round-trip-testable against the export. Matches "read-only view" literally. **Recommended starting point.**
+   - *Heavy:* reconstruct a call graph from the SCIP index and write it into the SQLite/llm-context store so MCP tools/`orient` can query imported symbols — much larger, and risks touching MCP/`orient`, which the scope contract forbids.
+   - Decision needed before implementing: which interpretation, and which PR.
 
 ---
 
