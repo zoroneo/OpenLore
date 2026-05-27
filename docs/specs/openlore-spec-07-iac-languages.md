@@ -209,3 +209,58 @@ All IaC ecosystems above ship in this one PR. The following are explicitly defer
 ## When you are done
 
 Reply with: PR URL, summary, follow-ups, files changed. Nothing else.
+
+---
+
+## Implementation log (2026-05-27)
+
+Status: **complete** — all six ecosystems shipped in one branch
+(`openlore-spec-07-iac-languages`), one PR.
+
+### Architectural decisions made
+
+1. **IaC projects onto existing graph primitives; no schema/MCP changes.**
+   A normalized resource graph (`IacResource` / `IacReference` / `IacModule`)
+   is produced per ecosystem, then a single projector
+   ([src/core/analyzer/iac/project.ts](../../src/core/analyzer/iac/project.ts))
+   maps it onto `FunctionNode` / `CallEdge` / `ClassNode`. Edge direction is
+   dependent → dependency. The only schema touch is additive: two new
+   `EdgeKind` values (`references`, `depends_on`).
+2. **Terraform uses a hand-rolled, pure-JS HCL scanner — not `tree-sitter-hcl`.**
+   Rationale: tree-sitter-hcl is a native addon (extra build/install surface),
+   and extraction only needs block boundaries + dotted-reference detection, not
+   a full AST. **No new runtime dependency was added** (the existing `yaml`
+   dependency covers K8s/CFN/Helm/Ansible). This keeps the install clean and
+   the build deterministic.
+3. **YAML disambiguation is a small pure function** (`classifyYaml`) plus a
+   chart-directory check in the analyze pipeline. Unsure → `null` (`unknown`),
+   so generic config (CI, compose, app config) is never misclassified.
+4. **Pulumi is a framework detector over existing TS/JS/Python source**, not a
+   new grammar; the normal call graph for those files is untouched.
+
+### Wiring points
+
+- `detectLanguage` → Terraform by extension
+  ([signature-extractor.ts](../../src/core/analyzer/signature-extractor.ts)).
+- Content-based YAML/JSON classification + chart-dir detection +
+  `CALL_GRAPH_LANGS` extension in
+  [artifact-generator.ts](../../src/core/analyzer/artifact-generator.ts).
+- IaC projection pass (Pass 2c) in
+  [call-graph.ts](../../src/core/analyzer/call-graph.ts) `build()`.
+- Terraform Stage-1 signatures in `signature-extractor.ts`.
+
+### Verified acceptance criteria
+
+All ten functional criteria + `lint`/`typecheck`/`test:run`/`build` green.
+Co-located tests under `src/core/analyzer/iac/*.test.ts` with fixtures under
+`src/core/analyzer/iac/fixtures/` (excluded from tsconfig + eslint, mirroring
+`src/core/scip/fixtures`). SCIP export maps IaC tags to `UnspecifiedLanguage`
+(`''`); the spec-05 manifest `languages[]` picks up IaC tags automatically from
+`FunctionNode.language` — both verified, no code change required in either.
+
+### Follow-ups (`TODO(spec-07-followup)`)
+
+- Terraform: refs to resource types without an underscore; structural `*.tf.json` parse.
+- Helm: `.Values.x` → `values.yaml` key resolution.
+- Ansible: dynamic (templated) include targets.
+- Pulumi: Go programs; CDK/CDKTF (out of scope, structurally similar).
