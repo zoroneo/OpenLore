@@ -186,9 +186,18 @@ Status: **Phase 1 and Phase 2 both complete.** Branch `openlore-spec-06-bm25-ind
 prints `✓ Built keyword (BM25) search index (N functions)` and writes
 `vector-index-meta.json` / `spec-index-meta.json` with `hasEmbeddings:false`.
 
-### Follow-ups (left as TODOs, out of scope here)
+### CI regression guard (follow-up now closed)
 
-- `TODO(spec-06-followup): exercise BM25 search path in CI` — integration tests are still excluded
-  from the CI Unit Tests job, which is how this bug originally shipped.
+`TODO(spec-06-followup): exercise BM25 search path in CI` is **done**. The MCP e2e integration
+suite is excluded from CI (the reason this bug shipped), so a plain unit test that DOES run in the
+CI Unit Tests job now builds a BM25-only index for a tiny fixture and asserts the real `orient`,
+`search_code`, and `suggest_insertion_points` handlers return ranked results with no embedder:
+`src/core/services/mcp-handlers/bm25-no-embeddings.test.ts`. This makes a silent re-regression
+impossible without a failing CI check.
+
+### Remaining follow-ups (out of scope here)
+
 - The `analyze_impact` FTS multi-match shape (`{ matches }`) vs. flat result is a separate
   handler/test contract question worth revisiting.
+- Tag-triggered release automation (push `vX.Y.Z` → auto GitHub Release → npm publish) is being
+  handled in a **separate PR**, not here — it is a release-workflow change unrelated to the BM25 index.

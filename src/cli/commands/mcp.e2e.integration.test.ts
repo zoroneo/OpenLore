@@ -20,11 +20,10 @@
  *
  * The suite auto-skips when the analysis cache is missing.
  *
- * TODO(spec-06-followup): exercise the BM25 search path in CI. These integration
- * tests are excluded from the CI Unit Tests job, which is how the
- * "embeddings required" regression originally shipped. A minimal CI step that
- * builds a BM25-only index for a tiny fixture and asserts orient returns
- * results would prevent a silent re-regression.
+ * Note: this suite is excluded from the CI Unit Tests job, which is how the
+ * "embeddings required" regression (spec-06) originally shipped. The BM25
+ * search path is now also guarded by a plain unit test that DOES run in CI —
+ * see mcp-handlers/bm25-no-embeddings.test.ts.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
