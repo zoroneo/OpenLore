@@ -1290,12 +1290,30 @@ interface McpServerOptions {
 }
 
 async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
+  // The MCP stdio transport uses stdout EXCLUSIVELY for the JSON-RPC stream.
+  // Any stray write to stdout — e.g. logger.success("Successfully validated
+  // directory…") from validateDirectory(), which runs on nearly every tool
+  // call — corrupts the protocol and can break strict clients. Route all
+  // console diagnostics to stderr. The SDK transport writes protocol messages
+  // via process.stdout.write directly, so it is unaffected, and logger.error
+  // already uses console.error (stderr).
+  const toStderr = (...args: unknown[]): void => {
+    process.stderr.write(args.map(a => (typeof a === 'string' ? a : String(a))).join(' ') + '\n');
+  };
+  console.log = toStderr;
+  console.info = toStderr;
+  console.warn = toStderr;
+  console.debug = toStderr;
+
   const activeTools = options.minimal
     ? TOOL_DEFINITIONS.filter(t => MINIMAL_TOOLS.has(t.name))
     : TOOL_DEFINITIONS;
 
+  // Report the real package version in the MCP initialize handshake rather
+  // than a stale hardcoded string.
+  const { version: pkgVersion } = _require('../../../package.json') as { version: string };
   const server = new Server(
-    { name: 'openlore', version: '1.0.0' },
+    { name: 'openlore', version: pkgVersion },
     { capabilities: { tools: {} } }
   );
 

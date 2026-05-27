@@ -1,6 +1,6 @@
 {
   "name": "openlore",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Reverse-engineer OpenSpec specifications from existing codebases",
   "type": "module",
   "main": "dist/api/index.js",
@@ -69,6 +69,7 @@
     "src/viewer",
     "examples",
     "stubs",
+    "schemas",
     "README.md",
     "LICENSE"
   ],

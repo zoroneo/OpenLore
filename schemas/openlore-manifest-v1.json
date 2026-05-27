@@ -1,0 +1,191 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/clay-good/OpenLore/main/schemas/openlore-manifest-v1.json",
+  "title": "OpenLore Federation Manifest",
+  "description": "Public, deterministic self-description of an OpenLore-instrumented repository, published at .well-known/openlore.json. Consumed by future OpenLore federation indices. Schema version 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "openlore_manifest_version",
+    "generated_at",
+    "generator",
+    "repo",
+    "languages",
+    "stats",
+    "exports",
+    "imports",
+    "specs",
+    "links"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "openlore_manifest_version": { "const": 1 },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO-8601 timestamp. Derived from the HEAD commit date (not wall-clock) so the manifest is byte-stable per commit."
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "repo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "git_remote", "git_commit", "default_branch"],
+      "properties": {
+        "name": { "type": "string" },
+        "git_remote": { "type": ["string", "null"] },
+        "git_commit": { "type": ["string", "null"] },
+        "default_branch": { "type": ["string", "null"] }
+      }
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "files", "functions"],
+        "properties": {
+          "name": { "type": "string" },
+          "files": { "type": "integer" },
+          "functions": { "type": "integer" }
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["functions", "files", "modules", "avg_mccabe", "clusters"],
+      "properties": {
+        "functions": { "type": "integer" },
+        "files": { "type": "integer" },
+        "modules": { "type": "integer" },
+        "avg_mccabe": { "type": "number" },
+        "clusters": { "type": "integer" }
+      }
+    },
+    "exports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "public_symbols",
+        "http_routes",
+        "rpc_endpoints",
+        "events_emitted",
+        "events_consumed"
+      ],
+      "properties": {
+        "truncated": { "type": "boolean" },
+        "public_symbols": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind", "file", "line"],
+            "properties": {
+              "name": { "type": "string" },
+              "kind": { "type": "string" },
+              "file": { "type": "string" },
+              "line": { "type": "integer" }
+            }
+          }
+        },
+        "http_routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["method", "path", "handler"],
+            "properties": {
+              "method": { "type": "string" },
+              "path": { "type": "string" },
+              "handler": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "rpc_endpoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "service", "method", "handler"],
+            "properties": {
+              "kind": { "type": "string" },
+              "service": { "type": "string" },
+              "method": { "type": "string" },
+              "handler": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "events_emitted": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "emitter"],
+            "properties": {
+              "name": { "type": "string" },
+              "schema_ref": { "type": ["string", "null"] },
+              "emitter": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "events_consumed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "handler"],
+            "properties": {
+              "name": { "type": "string" },
+              "handler": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "imports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_packages"],
+      "properties": {
+        "external_packages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "version_range"],
+            "properties": {
+              "name": { "type": "string" },
+              "version_range": { "type": ["string", "null"] },
+              "first_use": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "specs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "drift_state"],
+      "properties": {
+        "count": { "type": "integer" },
+        "drift_state": { "type": "string", "enum": ["clean", "drifted", "unverified"] }
+      }
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "docs"],
+      "properties": {
+        "repo": { "type": ["string", "null"] },
+        "docs": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
