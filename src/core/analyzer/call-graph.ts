@@ -1519,7 +1519,6 @@ interface GrammarHandle {
 }
 
 const _grammarHandleCache = new Map<string, GrammarHandle | null>();
-let _wtsInit: Promise<unknown> | undefined;
 
 function warnUnavailable(language: string, err: unknown): null {
   if (!_warnedUnavailable.has(language)) {
@@ -1583,16 +1582,21 @@ async function loadWasmGrammarSoft(
     // Load the wasm bytes ourselves and hand web-tree-sitter a Uint8Array, so it
     // never does its own `require("fs/promises")` (which breaks under ESM/vitest).
     const wasmBytes = new Uint8Array(await readFile(wasmPath));
-    const TS = (await import('web-tree-sitter')) as unknown as Record<string, unknown>;
+    // CRITICAL: each WASM grammar gets its OWN web-tree-sitter module instance.
+    // web-tree-sitter is a singleton emscripten module with a shared heap; loading
+    // two different grammars into one instance corrupts parsing (a Dart parse
+    // silently breaks subsequent Lua parses). Busting the require cache before each
+    // grammar yields an isolated runtime + heap per grammar, so they never interfere.
+    for (const k of Object.keys(req.cache)) {
+      if (k.includes('web-tree-sitter')) delete req.cache[k];
+    }
+    const TS = req('web-tree-sitter') as Record<string, unknown>;
     const ParserCtor = (TS.default ?? TS.Parser ?? TS) as {
       new (): { setLanguage(l: unknown): void; parse(s: string): { rootNode: TsNodeLike } };
       init?: () => Promise<void>;
       Language?: { load(p: Uint8Array): Promise<{ query(src: string): { matches(root: TsNodeLike): TsMatch[] } }> };
     };
-    if (typeof ParserCtor.init === 'function') {
-      _wtsInit ??= ParserCtor.init();
-      await _wtsInit;
-    }
+    if (typeof ParserCtor.init === 'function') await ParserCtor.init();
     const LanguageNs = (TS.Language ?? ParserCtor.Language) as { load(p: Uint8Array): Promise<{ query(src: string): { matches(root: TsNodeLike): TsMatch[] } }> };
     const lang = await LanguageNs.load(wasmBytes) as {
       query(src: string): { matches(root: TsNodeLike): TsMatch[]; delete?: () => void };
@@ -1848,14 +1852,15 @@ const QUERY_LANG_SPECS: Record<string, QueryLangSpec> = {
   'Scala': SCALA_SPEC, 'Lua': LUA_SPEC, 'Bash': BASH_SPEC,
 };
 
-// ── Dart (via shipped WASM + web-tree-sitter) ────────────────────────────────
+// ── Dart (via portable WASM + web-tree-sitter) ───────────────────────────────
 //
-// No ABI-compatible native tree-sitter-dart build exists for the pinned host
-// binding, but the grammar ships a portable `.wasm`. We load it through
-// web-tree-sitter (ABI-agnostic, pure JS/WASM, builds on every platform) so
-// Dart graphs everywhere. Dart's grammar places the `function_body` as a
-// SIBLING of `function_signature` (not a child), so a generic query extractor
-// would attribute no calls — hence a custom walk that spans signature+body.
+// No ABI-compatible native Dart grammar exists for the pinned host binding, so
+// Dart loads the portable `tree-sitter-wasms` WASM through web-tree-sitter
+// (ABI-agnostic, pure JS/WASM, builds on every platform) — each WASM grammar in
+// its own module instance (see loadWasmGrammarSoft). Dart's grammar places the
+// `function_body` as a SIBLING of `function_signature` (not a child), so a
+// generic query extractor would attribute no calls — hence a custom walk that
+// spans signature+body.
 
 const DART_CLASS_TYPES = new Set(['class_definition', 'mixin_declaration', 'extension_declaration', 'enum_declaration']);
 

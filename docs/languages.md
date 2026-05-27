@@ -66,8 +66,11 @@ no native build compatible with the pinned host `tree-sitter` binding (they ship
 only ABI-15 builds), so they load a **portable WASM grammar** (`tree-sitter-wasms`)
 through `web-tree-sitter` instead — pure JS/WASM, no native compile, works on
 every platform. The graph output is identical regardless of backend; the choice
-is invisible to every downstream tool. If even the WASM backend is unavailable,
-both still degrade gracefully (detection + search indexing, no graph).
+is invisible to every downstream tool. Each WASM grammar loads in its own module
+instance, so a repo using both Lua and Dart graphs both correctly (a shared
+web-tree-sitter runtime would otherwise let one grammar corrupt the other). If
+even the WASM backend is unavailable, both still degrade gracefully (detection +
+search indexing, no graph).
 
 ## Out of scope
 
