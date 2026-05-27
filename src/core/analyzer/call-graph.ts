@@ -1864,11 +1864,17 @@ export class CallGraphBuilder {
    * @param files       Source files with path, content, and language
    * @param layers      Optional layer map { layerName: [path prefix, ...] }
    * @param importMap   Optional per-file import map (from ImportResolverBridge)
+   * @param resolutionNodes  Optional pre-existing nodes used only to seed the
+   *   call-resolution trie (not added to the returned nodes/edges). An
+   *   incremental subset rebuild passes the full set of known nodes so calls
+   *   into files outside the re-parsed subset resolve to their real node
+   *   instead of degrading to a synthetic `external::` leaf.
    */
   async build(
     files: Array<{ path: string; content: string; language: string }>,
     layers?: Record<string, string[]>,
     importMap?: ImportMap,
+    resolutionNodes?: FunctionNode[],
   ): Promise<CallGraphResult> {
     const allNodes = new Map<string, FunctionNode>();
     const allRawEdges: RawEdge[] = [];
@@ -1928,6 +1934,14 @@ export class CallGraphBuilder {
     // Pass 2: Resolve raw edges — multi-strategy resolution
     const trie = new FunctionRegistryTrie();
     for (const node of allNodes.values()) trie.insert(node);
+    // Seed resolution with pre-existing nodes (incremental subset rebuilds) so
+    // cross-file calls outside the re-parsed subset still resolve internally.
+    // These are NOT added to allNodes, so they never appear in the output.
+    if (resolutionNodes) {
+      for (const node of resolutionNodes) {
+        if (!allNodes.has(node.id) && !node.isExternal) trie.insert(node);
+      }
+    }
 
     // Build per-function-body content slices for type inference (keyed by functionId)
     const fileContents = new Map<string, string>();

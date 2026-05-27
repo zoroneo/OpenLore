@@ -96,6 +96,36 @@ describe('CallGraphBuilder — TypeScript', () => {
     expect(result.nodes.get(mainEdge!.calleeId)?.filePath).toBe('a.ts');
   });
 
+  it('seeds resolution with pre-existing nodes so a subset rebuild does not degrade cross-file calls to external', async () => {
+    const builder = new CallGraphBuilder();
+
+    // The callee lives in utils.ts.
+    const full = await builder.build([{
+      path: 'src/utils.ts', language: 'TypeScript',
+      content: `export function validateThing() {}`,
+    }]);
+    const utilsNode = Array.from(full.nodes.values()).find(n => n.name === 'validateThing')!;
+
+    // Incremental subset rebuild of ONLY the caller file — utils.ts is not in the subset.
+    const callerOnly = [{
+      path: 'src/caller.ts', language: 'TypeScript',
+      content: `function handle() { validateThing(); }`,
+    }];
+
+    // Without seeds: the call degrades to a synthetic external leaf (the bug).
+    const degraded = await builder.build(callerOnly);
+    const dEdge = degraded.edges.find(e => degraded.nodes.get(e.callerId)?.name === 'handle');
+    expect(dEdge!.calleeId).toBe('external::validateThing');
+
+    // With seeds: the call resolves to the real internal node id, and the seed
+    // node is NOT added to the subset's output nodes.
+    const fixed = await builder.build(callerOnly, undefined, undefined, [utilsNode]);
+    const fEdge = fixed.edges.find(e => fixed.nodes.get(e.callerId)?.name === 'handle');
+    expect(fEdge!.calleeId).toBe('src/utils.ts::validateThing');
+    expect(fEdge!.confidence).not.toBe('external');
+    expect(Array.from(fixed.nodes.keys())).not.toContain('src/utils.ts::validateThing');
+  });
+
   it('extracts arrow functions assigned to variables', async () => {
     const builder = new CallGraphBuilder();
     const result = await builder.build([{

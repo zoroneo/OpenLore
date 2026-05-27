@@ -256,6 +256,17 @@ export class EdgeStore {
     ).map(rawToFunctionNode);
   }
 
+  /**
+   * All internal (non-external) nodes. Used to seed cross-file call resolution
+   * during an incremental subset rebuild, so calls into files outside the
+   * re-parsed subset still resolve to their real node instead of `external::`.
+   */
+  getAllInternalNodes(): FunctionNode[] {
+    return (
+      this.db.prepare('SELECT * FROM nodes WHERE is_external = 0').all() as unknown as RawNode[]
+    ).map(rawToFunctionNode);
+  }
+
   /** Case-insensitive substring search on node name. FTS5 trigram for ≥3 chars, LIKE fallback otherwise. */
   searchNodes(pattern: string, limit = 50): FunctionNode[] {
     if (pattern.length >= 3) {

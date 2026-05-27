@@ -215,4 +215,23 @@ narrows to those, so a known symbol resolves to a single deterministic (flat) re
 ambiguous queries with no exact match still return `{ matches }`. Locked by unit tests in
 `graph.test.ts` ("symbol resolution — exact-match preference"). Files: `graph.ts`, `graph.test.ts`.
 
+### Incremental call-graph edge degradation (deeper bug found while testing the above — fixed)
+
+While verifying `analyze_impact`, `validateDirectory` reported `fanIn: 45` but only **5** upstream
+callers in the depth-2 BFS. Root cause: the **incremental watch rebuild** (`McpWatcher` →
+`buildGraphSubset`) constructed a `CallGraphBuilder` over only the changed file plus its direct
+caller files, so the resolver's symbol trie was missing every other file. When a caller file was
+re-parsed, its calls into files outside that subset (e.g. `validateDirectory` in `utils.ts`) failed
+name resolution and degraded to synthetic `external::<name>` edges — which `bfsFromDB` skips. Over
+time, incremental updates silently hollowed out the call graph's cross-file edges (a clean
+`analyze --force` always resolved all 45 correctly, confirming the build logic itself was sound).
+
+Fix: `CallGraphBuilder.build` takes an optional `resolutionNodes` argument that seeds the resolution
+trie with pre-existing nodes **without** adding them to the output. `McpWatcher` passes
+`EdgeStore.getAllInternalNodes()`, so a subset rebuild resolves cross-file calls to their real node
+instead of `external::`. Full builds are unaffected (the param is omitted). Locked by a
+`call-graph.test.ts` case proving a subset rebuild degrades to `external::` without seeds and
+resolves internally with them. Files: `call-graph.ts`, `edge-store.ts` (`getAllInternalNodes`),
+`mcp-watcher.ts`, `call-graph.test.ts`.
+
 All spec-06 follow-ups are now closed.
