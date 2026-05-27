@@ -69,6 +69,7 @@
     "src/viewer",
     "examples",
     "stubs",
+    "schemas",
     "README.md",
     "LICENSE"
   ],

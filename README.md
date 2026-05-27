@@ -285,6 +285,19 @@ The SQLite graph stays canonical; SCIP is a one-way export of the subset SCIP ca
 
 ---
 
+## Federation (cross-repo)
+
+The hardest agent-orientation questions cross repo boundaries: who calls `BillingService.refund`, where is event `X` consumed, how does data flow from service A to service B. OpenLore's answer is "SBOM-of-cognition" — every repo publishes a small, public, deterministic manifest describing what it exposes:
+
+```bash
+openlore manifest emit        # writes ./.well-known/openlore.json
+openlore manifest validate .well-known/openlore.json
+```
+
+The manifest captures the public API surface, HTTP routes, stats, dependencies, and spec state in a [versioned schema](schemas/openlore-manifest-v1.json). A future OpenLore federation index will read these manifests across many repos to answer cross-repo `orient()` questions, staying a thin merger rather than a giant analyzer. See [docs/federation.md](docs/federation.md).
+
+---
+
 ## Documentation
 
 | Topic | Doc |
@@ -298,6 +311,7 @@ The SQLite graph stays canonical; SCIP is a one-way export of the subset SCIP ca
 | CI/CD integration | [docs/ci-cd.md](docs/ci-cd.md) |
 | Preflight CI staleness gate | [docs/preflight.md](docs/preflight.md) |
 | SCIP export (Sourcegraph/Glean interop) | [docs/scip-export.md](docs/scip-export.md) |
+| Federation manifest (cross-repo) | [docs/federation.md](docs/federation.md) |
 | CLI command reference | [docs/cli-reference.md](docs/cli-reference.md) |
 | Interactive graph viewer | [docs/viewer.md](docs/viewer.md) |
 | Analysis output files | [docs/output.md](docs/output.md) |
