@@ -234,7 +234,7 @@ export const analyzeCommand = new Command('analyze')
   )
   .option(
     '--no-embed',
-    'Skip vector index build (overrides default --embed)'
+    'Build a keyword-only (BM25) index instead of semantic embeddings — orient still works, just without semantic search'
   )
   .option(
     '--reindex-specs',
@@ -260,7 +260,7 @@ Examples:
   $ openlore analyze --output ./my-analysis
                                      Custom output location
   $ openlore analyze --force         Force re-analysis
-  $ openlore analyze --no-embed      Skip vector index build
+  $ openlore analyze --no-embed      Build keyword-only (BM25) index, no embeddings
   $ openlore analyze --reindex-specs Re-index specs only (no full re-analysis)
 
 Output files:
@@ -315,13 +315,9 @@ After analysis, run 'openlore generate' to create OpenSpec files.
         return;
       }
 
-      // Auto-enable --embed when embedding is configured but flag wasn't passed explicitly.
-      if (!options.embed) {
-        const embedConfigured =
-          !!process.env.EMBED_BASE_URL ||
-          !!EmbeddingService.fromConfig(openloreConfig);
-        if (embedConfigured) opts.embed = true;
-      }
+      // The index is ALWAYS built (so orient works); opts.embed only controls
+      // whether we attempt semantic embeddings. --no-embed → keyword-only BM25.
+      const keywordOnly = options.embed === false;
 
       logger.info('Project', openloreConfig.projectType);
       logger.info('Output', opts.output);
@@ -371,10 +367,9 @@ After analysis, run 'openlore generate' to create OpenSpec files.
             logger.info('Architecture', repoStructure.architecture.pattern);
             logger.blank();
 
-            // If embed is requested, run the embed step (incremental: only re-embeds changed functions)
-            if (opts.embed) {
-              await runEmbedStep(rootPath, outputPath, openloreConfig, opts.force ?? false, null);
-            }
+            // Always (re)build the search index — incremental, so it only
+            // re-embeds changed functions. keywordOnly forces a BM25 index.
+            await runEmbedStep(rootPath, outputPath, openloreConfig, opts.force ?? false, null, keywordOnly);
 
             // If --ai-configs is requested, generate them even from cached analysis
             if (opts.aiConfigs) {
@@ -713,11 +708,11 @@ After analysis, run 'openlore generate' to create OpenSpec files.
       console.log('');
 
       // ========================================================================
-      // PHASE 5 (optional): BUILD VECTOR INDEX
+      // PHASE 5: BUILD SEARCH INDEX
       // ========================================================================
-      if (opts.embed) {
-        await runEmbedStep(rootPath, outputPath, openloreConfig, opts.force ?? false, result.artifacts.llmContext);
-      }
+      // Always build an index so orient() works. With embeddings when available,
+      // otherwise (or with --no-embed) a keyword-only BM25 index.
+      await runEmbedStep(rootPath, outputPath, openloreConfig, opts.force ?? false, result.artifacts.llmContext, keywordOnly);
 
       // Duration
       const totalDuration = Date.now() - startTime;
@@ -752,20 +747,24 @@ async function runEmbedStep(
   openloreConfig: OpenLoreConfig | null,
   force: boolean,
   llmContext: import('../../core/analyzer/artifact-generator.js').LLMContext | null,
+  keywordOnly = false,
 ): Promise<void> {
-  console.log('  Building semantic vector index...');
+  console.log(keywordOnly ? '  Building keyword (BM25) search index...' : '  Building semantic vector index...');
   try {
     const { EmbeddingService } = await import('../../core/analyzer/embedding-service.js');
     const { VectorIndex } = await import('../../core/analyzer/vector-index.js');
 
-    // Resolve embedding service — best-effort. When none is configured we build
-    // a keyword-only (BM25) index rather than aborting the whole index build.
+    // Resolve embedding service — best-effort. When --no-embed was passed
+    // (keywordOnly) or none is configured we build a keyword-only (BM25) index
+    // rather than aborting the whole index build.
     let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-    try {
-      embedSvc = EmbeddingService.fromEnv();
-    } catch {
-      const cfg = openloreConfig ?? await readOpenLoreConfig(rootPath);
-      embedSvc = cfg ? EmbeddingService.fromConfig(cfg) : null;
+    if (!keywordOnly) {
+      try {
+        embedSvc = EmbeddingService.fromEnv();
+      } catch {
+        const cfg = openloreConfig ?? await readOpenLoreConfig(rootPath);
+        embedSvc = cfg ? EmbeddingService.fromConfig(cfg) : null;
+      }
     }
 
     // Load context from disk if not provided (cache hit path)
@@ -827,7 +826,7 @@ async function runEmbedStep(
     }
 
     // Also index specs if they exist
-    await runSpecIndexing(rootPath, outputPath, openloreConfig);
+    await runSpecIndexing(rootPath, outputPath, openloreConfig, keywordOnly);
   } catch (embedErr) {
     console.log(`    ✗ Vector index failed: ${(embedErr as Error).message}`);
   }
@@ -846,20 +845,24 @@ async function runEmbedStep(
 async function runSpecIndexing(
   rootPath: string,
   outputPath: string,
-  openloreConfig: OpenLoreConfig | null
+  openloreConfig: OpenLoreConfig | null,
+  keywordOnly = false
 ): Promise<void> {
   const { join: pathJoin } = await import('node:path');
   const { SpecVectorIndex } = await import('../../core/analyzer/spec-vector-index.js');
   const { readOpenLoreConfig } = await import('../../core/services/config-manager.js');
 
-  // Resolve embedding service — best-effort. When none is configured we build
-  // a keyword-only (BM25) spec index rather than skipping spec search entirely.
+  // Resolve embedding service — best-effort. When --no-embed was passed
+  // (keywordOnly) or none is configured we build a keyword-only (BM25) spec
+  // index rather than skipping spec search entirely.
   let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-  try {
-    embedSvc = EmbeddingService.fromEnv();
-  } catch {
-    const cfg = openloreConfig ?? await readOpenLoreConfig(rootPath);
-    embedSvc = cfg ? EmbeddingService.fromConfig(cfg) : null;
+  if (!keywordOnly) {
+    try {
+      embedSvc = EmbeddingService.fromEnv();
+    } catch {
+      const cfg = openloreConfig ?? await readOpenLoreConfig(rootPath);
+      embedSvc = cfg ? EmbeddingService.fromConfig(cfg) : null;
+    }
   }
 
   // Locate specs directory

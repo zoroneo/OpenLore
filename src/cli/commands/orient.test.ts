@@ -1,0 +1,144 @@
+/**
+ * Tests for the `openlore orient` CLI command.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('../../utils/logger.js', () => ({
+  logger: {
+    error: vi.fn(), info: vi.fn(), section: vi.fn(), success: vi.fn(),
+    warning: vi.fn(), discovery: vi.fn(), blank: vi.fn(), debug: vi.fn(),
+  },
+}));
+
+vi.mock('../../core/services/mcp-handlers/orient.js', () => ({
+  handleOrient: vi.fn(),
+}));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, existsSync: vi.fn().mockReturnValue(false) };
+});
+
+import { orientCommand } from './orient.js';
+import { handleOrient } from '../../core/services/mcp-handlers/orient.js';
+import { existsSync } from 'node:fs';
+
+const mockHandleOrient = vi.mocked(handleOrient);
+const mockExistsSync = vi.mocked(existsSync);
+
+describe('orient command', () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    mockHandleOrient.mockReset();
+    mockExistsSync.mockReset().mockReturnValue(false);
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue('/fake/proj');
+    process.exitCode = undefined;
+    // orientCommand is a module-level singleton; commander retains option
+    // values between parseAsync() calls, so reset them so one test's flags
+    // (e.g. --limit 0) don't bleed into the next.
+    for (const opt of ['task', 'directory', 'limit', 'json']) {
+      orientCommand.setOptionValue(opt, undefined);
+    }
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+    cwdSpy.mockRestore();
+    process.exitCode = undefined;
+  });
+
+  function output(): string {
+    return consoleSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+  }
+
+  describe('command configuration', () => {
+    it('has correct name and description', () => {
+      expect(orientCommand.name()).toBe('orient');
+      expect(orientCommand.description().toLowerCase()).toContain('insertion');
+    });
+
+    it('exposes --task, --json, --directory and --limit options', () => {
+      const longs = orientCommand.options.map(o => o.long);
+      expect(longs).toContain('--task');
+      expect(longs).toContain('--json');
+      expect(longs).toContain('--directory');
+      expect(longs).toContain('--limit');
+    });
+  });
+
+  describe('no-task primer (used by the install SessionStart hook)', () => {
+    it('prints a primer and does NOT call handleOrient when no task is given', async () => {
+      await orientCommand.parseAsync([], { from: 'user' });
+      expect(mockHandleOrient).not.toHaveBeenCalled();
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it('--json primer emits parseable JSON with openlore status', async () => {
+      mockExistsSync.mockReturnValue(false);
+      await orientCommand.parseAsync(['--json'], { from: 'user' });
+      const parsed = JSON.parse(output());
+      expect(parsed.openlore).toBe('no-analysis');
+    });
+
+    it('--json primer reports "ready" when analysis exists', async () => {
+      mockExistsSync.mockReturnValue(true);
+      await orientCommand.parseAsync(['--json'], { from: 'user' });
+      const parsed = JSON.parse(output());
+      expect(parsed.openlore).toBe('ready');
+    });
+  });
+
+  describe('with a task', () => {
+    it('passes task, directory and limit through to handleOrient', async () => {
+      mockHandleOrient.mockResolvedValue({ task: 't', searchMode: 'bm25_fallback', relevantFunctions: [] });
+      await orientCommand.parseAsync(['--task', 'add rate limiting', '--limit', '7'], { from: 'user' });
+      expect(mockHandleOrient).toHaveBeenCalledWith('/fake/proj', 'add rate limiting', 7);
+    });
+
+    it('--json emits the full result object as JSON', async () => {
+      mockHandleOrient.mockResolvedValue({ task: 'x', searchMode: 'hybrid', relevantFunctions: [] });
+      await orientCommand.parseAsync(['--json', '--task', 'x'], { from: 'user' });
+      const parsed = JSON.parse(output());
+      expect(parsed.searchMode).toBe('hybrid');
+    });
+
+    it('rejects a non-positive --limit', async () => {
+      await orientCommand.parseAsync(['--task', 'x', '--limit', '0'], { from: 'user' });
+      expect(process.exitCode).toBe(1);
+      expect(mockHandleOrient).not.toHaveBeenCalled();
+    });
+
+    it('sets exitCode=1 and emits JSON error when handleOrient throws (--json)', async () => {
+      mockHandleOrient.mockRejectedValue(new Error('boom'));
+      await orientCommand.parseAsync(['--json', '--task', 'x'], { from: 'user' });
+      expect(process.exitCode).toBe(1);
+      const parsed = JSON.parse(output());
+      expect(parsed.error).toBe('boom');
+    });
+
+    it('--json keeps stdout pure JSON even when the handler logs to stdout', async () => {
+      // handleOrient → validateDirectory writes "[ok] Successfully validated…"
+      // to stdout via console.log. In --json mode that must be routed away so
+      // wrapper scripts get parseable JSON. Simulate the stray write.
+      mockHandleOrient.mockImplementation(async () => {
+        console.log('[ok] Successfully validated directory: /fake/proj');
+        return { task: 'x', searchMode: 'bm25_fallback', relevantFunctions: [] };
+      });
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      await orientCommand.parseAsync(['--json', '--task', 'x'], { from: 'user' });
+      // The stray line must NOT be on the captured console.log stdout…
+      expect(output()).not.toContain('Successfully validated');
+      // …and what IS on stdout must be valid JSON.
+      const parsed = JSON.parse(output());
+      expect(parsed.searchMode).toBe('bm25_fallback');
+      // The stray line was redirected to stderr instead.
+      const stderrText = stderrSpy.mock.calls.map(c => String(c[0])).join('');
+      expect(stderrText).toContain('Successfully validated');
+      stderrSpy.mockRestore();
+    });
+  });
+});

@@ -11,6 +11,7 @@ import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { initCommand } from './commands/init.js';
 import { analyzeCommand } from './commands/analyze.js';
+import { orientCommand } from './commands/orient.js';
 import { generateCommand } from './commands/generate.js';
 import { verifyCommand } from './commands/verify.js';
 import { driftCommand } from './commands/drift.js';
@@ -127,6 +128,7 @@ Learn more: https://github.com/Fission-AI/OpenSpec
 // Register subcommands
 program.addCommand(initCommand);
 program.addCommand(analyzeCommand);
+program.addCommand(orientCommand);
 program.addCommand(generateCommand);
 program.addCommand(verifyCommand);
 program.addCommand(driftCommand);

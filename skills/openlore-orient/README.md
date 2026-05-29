@@ -45,7 +45,7 @@ Once OpenLore spec-01's `openlore install --agent claude-code` is shipped on npm
 
 ## Known limitations
 
-The `openlore orient --json --task "..."` CLI subcommand is not yet shipped on npm — `orient` is currently exposed only as an MCP tool. The shell wrappers transparently fall back to driving `openlore mcp` over stdio JSON-RPC via the bundled [`scripts/orient-via-mcp.mjs`](scripts/orient-via-mcp.mjs) helper, so they work today. A follow-up spec will add the CLI subcommand; once it ships, the wrappers will pick it up automatically and the MCP fallback becomes a no-op.
+The `openlore orient --json --task "..."` CLI subcommand is shipped, and `orient` is also exposed as an MCP tool. The shell wrappers prefer the CLI subcommand and transparently fall back to driving `openlore mcp` over stdio JSON-RPC via the bundled [`scripts/orient-via-mcp.mjs`](scripts/orient-via-mcp.mjs) helper on older openlore versions that predate the subcommand.
 
 See `TODO(spec-02-followup)` markers in `SKILL.md` and the wrappers.
 

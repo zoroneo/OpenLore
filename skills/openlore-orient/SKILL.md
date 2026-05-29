@@ -35,7 +35,7 @@ bash scripts/orient.sh "<task description>"
 
 (On Windows: `powershell -File scripts/orient.ps1 "<task description>"`)
 
-The wrapper tries the direct CLI subcommand first (`npx --yes openlore orient --json --task "<task>"`) and falls back to driving the `openlore mcp` server over stdio JSON-RPC via the sibling `orient-via-mcp.mjs` helper when the CLI subcommand isn't shipped yet. Either path produces real orient JSON on stdout. Parse these arrays from the result:
+The wrapper tries the direct CLI subcommand first (`npx --yes openlore orient --json --task "<task>"`) and falls back to driving the `openlore mcp` server over stdio JSON-RPC via the sibling `orient-via-mcp.mjs` helper on older openlore versions that predate the CLI subcommand. Either path produces real orient JSON on stdout. Parse these arrays from the result:
 
 - **`relevant_functions`** — top scored functions for the task, with file/line, role classification, and a short reason.
 - **`callers`** — depth-1 caller neighbourhood for each top function. This is where "who breaks if I change this" lives.
@@ -44,7 +44,7 @@ The wrapper tries the direct CLI subcommand first (`npx --yes openlore orient --
 
 Always start by reading **`spec_sections`**, then **`callers`**, then jump into source only at the **`insertion_points`** you actually plan to edit.
 
-> **TODO(spec-02-followup):** the `openlore orient` CLI subcommand (with `--task`) is not yet shipped on the npm package — the wrappers reach the `orient` tool through the MCP server as a fallback. A future spec will add the CLI subcommand and the wrappers will pick it up automatically.
+> **Note:** the `openlore orient --json --task` CLI subcommand is available, so the wrappers use it directly. The MCP fallback in the wrappers only kicks in on older openlore versions that predate the subcommand.
 
 ## What NOT to do
 

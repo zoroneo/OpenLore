@@ -3,14 +3,10 @@
 #
 # Strategy (in order):
 #   1. `npx --yes openlore orient --json --task "<task>"` — preferred path,
-#      activates as soon as the orient CLI subcommand is shipped (TODO below).
+#      uses the orient CLI subcommand.
 #   2. Drive the existing `openlore mcp` server over stdio JSON-RPC via the
-#      sibling orient-via-mcp.mjs helper — works today against the current
-#      shipped surface.
-#
-# TODO(spec-02-followup): once the `openlore orient --json --task` CLI
-# subcommand lands on the npm package, path #2 becomes unnecessary. The
-# wrapper picks #1 automatically.
+#      sibling orient-via-mcp.mjs helper — fallback for older openlore versions
+#      that predate the CLI subcommand.
 
 param(
   [Parameter(Mandatory=$false, Position=0)]
