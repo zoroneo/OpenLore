@@ -45,11 +45,38 @@ export interface McpWatcherOptions {
 const SOURCE_EXTENSIONS = /\.(ts|tsx|js|jsx|py|go|rs|rb|java|kt|php|cs|cpp|cc|cxx|h|hpp|c|swift)$/;
 
 // String-segment checks evaluated before kqueue/inotify FDs are opened — avoids
-// EMFILE on macOS when chokidar opens FDs for all directories before applying globs.
-const IGNORED_SEGMENTS = ['/node_modules/', '/.openlore/', '/dist/', '/.git/'];
+// EMFILE on macOS when chokidar opens FDs for all directories before applying
+// globs. Build-output and dependency directories can hold hundreds of thousands
+// of files (e.g. a Rust `target/` is routinely tens of GB), so watching them is
+// both wasteful and a hard EMFILE/ENOSPC trigger on the first tool call.
+const IGNORED_SEGMENTS = [
+  // VCS / openlore
+  '/.git/', '/.hg/', '/.svn/', '/.openlore/',
+  // JS/TS
+  '/node_modules/', '/dist/', '/build/', '/.next/', '/.nuxt/', '/.svelte-kit/',
+  '/.turbo/', '/.parcel-cache/', '/.cache/', '/coverage/', '/.vite/',
+  // Rust
+  '/target/',
+  // Python
+  '/.venv/', '/venv/', '/__pycache__/', '/.mypy_cache/', '/.pytest_cache/',
+  '/.tox/', '/.ruff_cache/',
+  // Go / vendored deps
+  '/vendor/',
+  // JVM
+  '/.gradle/',
+  // .NET
+  '/obj/',
+  // Editor metadata
+  '/.idea/',
+];
 const IGNORED_SUFFIXES = ['.test.ts', '.test.js', '.spec.ts', '.spec.js'];
 
-function isIgnoredPath(filePath: string): boolean {
+/**
+ * True if a path should never be watched. Evaluated as a cheap string-segment
+ * check before any FD is opened, so it must stay allocation-light. Exported for
+ * testing.
+ */
+export function isIgnoredPath(filePath: string): boolean {
   for (const seg of IGNORED_SEGMENTS) {
     if (filePath.includes(seg)) return true;
   }

@@ -1608,6 +1608,7 @@ export const mcpCommand = new Command('mcp')
   .description('Start openlore as an MCP server (stdio transport, for Cline/Claude Code)')
   .option('--watch <directory>', 'Watch a project directory and incrementally re-index signatures on file changes')
   .option('--watch-auto', 'Auto-detect the project directory from the first tool call and start watching', true)
+  .option('--no-watch-auto', 'Disable auto-watch (use for one-shot tool calls, e.g. the orient skill wrapper)')
   .option('--watch-debounce <ms>', 'Debounce delay in ms before re-indexing after a file change (default: 400)', '400')
   .option('--minimal', 'Expose only core 5 tools (orient, search_code, record_decision, detect_changes, check_spec_drift). Pair with alwaysLoad: true in Claude Code for always-visible core tools.')
   .action((options: McpServerOptions) => startMcpServer(options));

@@ -11,7 +11,7 @@
  * prints the result, and exits.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
 const task = process.argv[2];
@@ -22,7 +22,25 @@ if (!task) {
   process.exit(2);
 }
 
-const child = spawn('npx', ['--yes', 'openlore', 'mcp'], {
+// This is a one-shot call (initialize → orient → exit), so the MCP server must
+// NOT start its file watcher: auto-watch recursively watches the whole repo —
+// including huge build dirs like Rust's target/ — and EMFILEs before we ever
+// get a response. Pass --no-watch-auto, but only if this openlore build
+// supports it: older versions error on unknown options. Detect via `mcp --help`.
+const mcpArgs = ['--yes', 'openlore', 'mcp'];
+try {
+  const help = spawnSync('npx', ['--yes', 'openlore', 'mcp', '--help'], {
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  if ((help.stdout ?? '').includes('--no-watch-auto')) {
+    mcpArgs.push('--no-watch-auto');
+  }
+} catch {
+  // If detection fails, fall through without the flag (safe default).
+}
+
+const child = spawn('npx', mcpArgs, {
   stdio: ['pipe', 'pipe', 'inherit'],
 });
 

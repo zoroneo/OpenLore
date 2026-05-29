@@ -544,3 +544,53 @@ describe('McpWatcher start/stop', () => {
     await expect(watcher.stop()).resolves.not.toThrow();
   });
 });
+
+describe('isIgnoredPath — build/dependency dirs are never watched (EMFILE guard)', () => {
+  // These dirs can hold hundreds of thousands of files; watching them recursively
+  // EMFILEs on the first tool call. Regression guard for the proxilion (Rust,
+  // 75GB target/) first-run failure.
+  const ignored = [
+    '/repo/target/debug/build/foo.rs',          // Rust
+    '/repo/node_modules/pkg/index.js',          // JS deps
+    '/repo/dist/bundle.js',                     // JS build
+    '/repo/build/output.js',
+    '/repo/.next/server/page.js',               // Next.js
+    '/repo/coverage/lcov.info',
+    '/repo/.venv/lib/python3.12/site.py',       // Python venv
+    '/repo/__pycache__/mod.cpython-312.pyc',
+    '/repo/.mypy_cache/x.json',
+    '/repo/vendor/golang.org/x/net/http.go',    // Go vendored
+    '/repo/.gradle/caches/x.jar',               // JVM
+    '/repo/obj/Debug/app.dll',                  // .NET
+    '/repo/.git/objects/ab/cdef',               // VCS
+    '/repo/.openlore/analysis/llm-context.json',
+  ];
+
+  const watched = [
+    '/repo/src/main.rs',
+    '/repo/crates/proxy/src/forwarder/siem.rs',
+    '/repo/src/index.ts',
+    '/repo/lib/handler.py',
+    '/repo/pkg/server.go',
+  ];
+
+  it('ignores known build/dependency/cache/VCS directories', async () => {
+    const { isIgnoredPath } = await import('./mcp-watcher.js');
+    for (const p of ignored) {
+      expect(isIgnoredPath(p), `${p} should be ignored`).toBe(true);
+    }
+  });
+
+  it('still watches genuine source files', async () => {
+    const { isIgnoredPath } = await import('./mcp-watcher.js');
+    for (const p of watched) {
+      expect(isIgnoredPath(p), `${p} should be watched`).toBe(false);
+    }
+  });
+
+  it('ignores test-file suffixes', async () => {
+    const { isIgnoredPath } = await import('./mcp-watcher.js');
+    expect(isIgnoredPath('/repo/src/foo.test.ts')).toBe(true);
+    expect(isIgnoredPath('/repo/src/foo.spec.js')).toBe(true);
+  });
+});
