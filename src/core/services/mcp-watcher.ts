@@ -44,44 +44,57 @@ export interface McpWatcherOptions {
 
 const SOURCE_EXTENSIONS = /\.(ts|tsx|js|jsx|py|go|rs|rb|java|kt|php|cs|cpp|cc|cxx|h|hpp|c|swift)$/;
 
-// String-segment checks evaluated before kqueue/inotify FDs are opened — avoids
-// EMFILE on macOS when chokidar opens FDs for all directories before applying
-// globs. Build-output and dependency directories can hold hundreds of thousands
-// of files (e.g. a Rust `target/` is routinely tens of GB), so watching them is
-// both wasteful and a hard EMFILE/ENOSPC trigger on the first tool call.
-const IGNORED_SEGMENTS = [
+// Directory NAMES that must never be watched. Build-output and dependency
+// directories can hold hundreds of thousands of files (a Rust `target/` is
+// routinely tens of GB), so watching them is both wasteful and a hard EMFILE
+// trigger on the first tool call.
+//
+// Matched against root-RELATIVE path segments (see isIgnoredRelPath), which is
+// what makes this robust:
+//   • The ignored directory ITSELF matches (not just its children), so chokidar
+//     prunes the whole subtree and never opens FDs inside it — the actual EMFILE
+//     fix. A naive `path.includes('/target/')` check only matches descendants,
+//     so chokidar still descends into target/ and readdir-storms before pruning.
+//   • Only segments BELOW the watch root are considered, so a repo that happens
+//     to live under e.g. /home/user/dist/myapp is not wrongly ignored.
+const IGNORED_DIR_NAMES = new Set([
   // VCS / openlore
-  '/.git/', '/.hg/', '/.svn/', '/.openlore/',
-  // JS/TS
-  '/node_modules/', '/dist/', '/build/', '/.next/', '/.nuxt/', '/.svelte-kit/',
-  '/.turbo/', '/.parcel-cache/', '/.cache/', '/coverage/', '/.vite/',
+  '.git', '.hg', '.svn', '.openlore',
+  // JS / TS
+  'node_modules', 'dist', 'build', '.next', '.nuxt', '.svelte-kit',
+  '.turbo', '.parcel-cache', '.cache', 'coverage', '.vite',
   // Rust
-  '/target/',
+  'target',
   // Python
-  '/.venv/', '/venv/', '/__pycache__/', '/.mypy_cache/', '/.pytest_cache/',
-  '/.tox/', '/.ruff_cache/',
+  '.venv', 'venv', '__pycache__', '.mypy_cache', '.pytest_cache',
+  '.tox', '.ruff_cache',
   // Go / vendored deps
-  '/vendor/',
+  'vendor',
   // JVM
-  '/.gradle/',
+  '.gradle',
   // .NET
-  '/obj/',
+  'obj',
   // Editor metadata
-  '/.idea/',
-];
+  '.idea',
+]);
 const IGNORED_SUFFIXES = ['.test.ts', '.test.js', '.spec.ts', '.spec.js'];
 
 /**
- * True if a path should never be watched. Evaluated as a cheap string-segment
- * check before any FD is opened, so it must stay allocation-light. Exported for
- * testing.
+ * True if a root-relative path should never be watched. Evaluated as a cheap
+ * segment scan before any FD is opened, so it stays allocation-light. A path is
+ * ignored if ANY of its segments is a known build/dependency/VCS directory
+ * name, or it has a test-file suffix. Exported for testing.
+ *
+ * @param relPath path relative to the watch root (forward- or back-slashed)
  */
-export function isIgnoredPath(filePath: string): boolean {
-  for (const seg of IGNORED_SEGMENTS) {
-    if (filePath.includes(seg)) return true;
+export function isIgnoredRelPath(relPath: string): boolean {
+  if (!relPath || relPath === '.') return false;
+  const segments = relPath.split(/[/\\]/);
+  for (const seg of segments) {
+    if (IGNORED_DIR_NAMES.has(seg)) return true;
   }
   for (const suf of IGNORED_SUFFIXES) {
-    if (filePath.endsWith(suf)) return true;
+    if (relPath.endsWith(suf)) return true;
   }
   return false;
 }
@@ -111,10 +124,16 @@ export class McpWatcher {
   async start(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const extraIgnore = this.extraIgnore;
-      this.fsWatcher = chokidar.watch(this.rootPath, {
-        ignored: (filePath: string) =>
-          isIgnoredPath(filePath) ||
-          extraIgnore.some((p) => filePath.includes(p)),
+      const rootPath = this.rootPath;
+      this.fsWatcher = chokidar.watch(rootPath, {
+        // Resolve each candidate to a root-relative path first, then prune by
+        // directory name. This prunes the ignored directory itself (chokidar
+        // never opens FDs inside it — the EMFILE fix) without false-matching on
+        // parent path components above the watch root.
+        ignored: (filePath: string) => {
+          const rel = relative(rootPath, filePath);
+          return isIgnoredRelPath(rel) || extraIgnore.some((p) => rel.includes(p));
+        },
         persistent: true,
         ignoreInitial: true,
         followSymlinks: false,

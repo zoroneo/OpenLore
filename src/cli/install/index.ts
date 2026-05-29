@@ -54,6 +54,57 @@ export interface InstallOptions {
   force?: boolean;
   uninstall?: boolean;
   cwd?: string;
+  /**
+   * After configuring agent surfaces, build the index so orient() works on the
+   * very first session (init if needed, then analyze). Default true; set false
+   * via `--no-analyze`. Skipped for --dry-run and --uninstall.
+   */
+  analyze?: boolean;
+}
+
+/**
+ * Build the openlore index so the freshly-wired orient() returns results on the
+ * user's first session instead of "No analysis found".
+ *
+ * Drives the real `init` and `analyze` CLI commands (not the programmatic API):
+ * the searchable BM25 index that orient depends on is built by analyze's embed
+ * step, which only the CLI command runs. Both commands read process.cwd(), so
+ * we chdir into the target for the duration. Failures are non-fatal — the
+ * surfaces are already wired, so we warn and tell the user to run analyze
+ * themselves rather than failing the whole install.
+ */
+async function buildIndex(cwd: string): Promise<void> {
+  const prevCwd = process.cwd();
+  // init/analyze print their own multi-line CLI output ("Next step: run
+  // generate", etc.) via console.log — noise inside install. Capture it to
+  // stderr so install shows its own concise summary; logger.error still surfaces.
+  const origLog = console.log;
+  const toStderr = (...args: unknown[]): void => {
+    process.stderr.write(args.map(a => (typeof a === 'string' ? a : String(a))).join(' ') + '\n');
+  };
+  try {
+    process.chdir(cwd);
+    const { initCommand } = await import('../commands/init.js');
+    const { analyzeCommand } = await import('../commands/analyze.js');
+
+    logger.discovery('Building search index (BM25; no network required)…');
+    console.log = toStderr;
+    // init is idempotent (skips if config already exists); analyze builds the
+    // BM25 index orient() reads — no embedding endpoint needed.
+    await initCommand.parseAsync([], { from: 'user' });
+    await analyzeCommand.parseAsync([], { from: 'user' });
+    console.log = origLog;
+    logger.success('Index built — orient() will return results in your next session.');
+  } catch (err) {
+    console.log = origLog;
+    logger.warning(
+      `Could not build the index automatically: ${(err as Error).message}`
+    );
+    logger.info('Next step', 'Run "openlore analyze" so orient() works in your next session');
+  } finally {
+    console.log = origLog;
+    process.chdir(prevCwd);
+  }
 }
 
 export async function runInstall(opts: InstallOptions): Promise<number> {
@@ -106,6 +157,16 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     );
     return 1;
   }
+
+  // One-command setup: build the index so orient() works on the first session.
+  // Opt out with --no-analyze; never runs for dry-run or uninstall.
+  const shouldAnalyze = opts.analyze !== false && !opts.dryRun && !opts.uninstall;
+  if (shouldAnalyze) {
+    await buildIndex(cwd);
+  } else if (!opts.dryRun && !opts.uninstall) {
+    logger.info('Next step', 'Run "openlore analyze" so orient() works in your next session');
+  }
+
   return 0;
 }
 
@@ -146,11 +207,31 @@ function printSummary(
 }
 
 export const installCommand = new Command('install')
-  .description('Auto-configure agent surfaces to call orient() (Claude Code, Cursor, Cline, Continue, AGENTS.md).')
+  .description(
+    'One-command setup: configure agent surfaces (Claude Code, Cursor, Cline, Continue, AGENTS.md) ' +
+    'to call orient(), then build the index so orient works on your first session.'
+  )
   .option('--agent <name>', 'Install only for a specific surface (claude-code, cursor, cline, continue, agents-md)')
   .option('--dry-run', 'Print the planned changes without writing any files', false)
   .option('--force', 'Overwrite OpenLore-managed blocks even if hand-edited', false)
   .option('--uninstall', 'Remove OpenLore-managed blocks and entries', false)
+  .option('--analyze', 'Build the index after configuring surfaces (default: true)', true)
+  .option('--no-analyze', 'Configure surfaces only; do not run init/analyze (run "openlore analyze" yourself later)')
+  .addHelpText(
+    'after',
+    `
+Examples:
+  $ openlore install                 Detect agents, wire them up, build the index
+  $ openlore install --agent claude-code
+  $ openlore install --no-analyze    Wire up surfaces only (skip index build)
+  $ openlore install --dry-run       Preview changes without writing
+  $ openlore install --uninstall     Remove OpenLore-managed entries
+
+After install, orient() is available immediately — the configured MCP server
+(\`openlore mcp\`) starts automatically when your agent launches, and the index
+stays fresh as you edit (disable the file watcher with \`openlore mcp --no-watch-auto\`).
+`
+  )
   .action(async (opts: InstallOptions) => {
     const code = await runInstall(opts);
     if (code !== 0) process.exit(code);

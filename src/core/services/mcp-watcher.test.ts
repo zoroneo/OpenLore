@@ -545,52 +545,104 @@ describe('McpWatcher start/stop', () => {
   });
 });
 
-describe('isIgnoredPath — build/dependency dirs are never watched (EMFILE guard)', () => {
+describe('isIgnoredRelPath — build/dependency dirs are never watched (EMFILE guard)', () => {
   // These dirs can hold hundreds of thousands of files; watching them recursively
   // EMFILEs on the first tool call. Regression guard for the proxilion (Rust,
-  // 75GB target/) first-run failure.
+  // 75GB target/) first-run failure. Paths are RELATIVE to the watch root.
   const ignored = [
-    '/repo/target/debug/build/foo.rs',          // Rust
-    '/repo/node_modules/pkg/index.js',          // JS deps
-    '/repo/dist/bundle.js',                     // JS build
-    '/repo/build/output.js',
-    '/repo/.next/server/page.js',               // Next.js
-    '/repo/coverage/lcov.info',
-    '/repo/.venv/lib/python3.12/site.py',       // Python venv
-    '/repo/__pycache__/mod.cpython-312.pyc',
-    '/repo/.mypy_cache/x.json',
-    '/repo/vendor/golang.org/x/net/http.go',    // Go vendored
-    '/repo/.gradle/caches/x.jar',               // JVM
-    '/repo/obj/Debug/app.dll',                  // .NET
-    '/repo/.git/objects/ab/cdef',               // VCS
-    '/repo/.openlore/analysis/llm-context.json',
+    'target',                                   // the dir itself must match
+    'target/debug/build/foo.rs',                // Rust
+    'node_modules/pkg/index.js',                // JS deps
+    'dist/bundle.js',                           // JS build
+    'build/output.js',
+    '.next/server/page.js',                     // Next.js
+    'coverage/lcov.info',
+    '.venv/lib/python3.12/site.py',             // Python venv
+    '__pycache__/mod.cpython-312.pyc',
+    '.mypy_cache/x.json',
+    'vendor/golang.org/x/net/http.go',          // Go vendored
+    '.gradle/caches/x.jar',                      // JVM
+    'obj/Debug/app.dll',                        // .NET
+    '.git/objects/ab/cdef',                     // VCS
+    '.openlore/analysis/llm-context.json',
+    'crates/proxy/target/debug/x.rs',           // nested target/ deep in the tree
   ];
 
   const watched = [
-    '/repo/src/main.rs',
-    '/repo/crates/proxy/src/forwarder/siem.rs',
-    '/repo/src/index.ts',
-    '/repo/lib/handler.py',
-    '/repo/pkg/server.go',
+    'src/main.rs',
+    'crates/proxy/src/forwarder/siem.rs',
+    'src/index.ts',
+    'lib/handler.py',
+    'pkg/server.go',
+    'src/my-target-helper.rs',                  // 'target' as a substring, not a segment
+    'src/build-config.ts',                      // 'build' as a substring, not a segment
   ];
 
-  it('ignores known build/dependency/cache/VCS directories', async () => {
-    const { isIgnoredPath } = await import('./mcp-watcher.js');
+  it('ignores known build/dependency/cache/VCS directories (incl. the dir itself + nested)', async () => {
+    const { isIgnoredRelPath } = await import('./mcp-watcher.js');
     for (const p of ignored) {
-      expect(isIgnoredPath(p), `${p} should be ignored`).toBe(true);
+      expect(isIgnoredRelPath(p), `${p} should be ignored`).toBe(true);
     }
   });
 
-  it('still watches genuine source files', async () => {
-    const { isIgnoredPath } = await import('./mcp-watcher.js');
+  it('still watches genuine source files (no substring false-positives)', async () => {
+    const { isIgnoredRelPath } = await import('./mcp-watcher.js');
     for (const p of watched) {
-      expect(isIgnoredPath(p), `${p} should be watched`).toBe(false);
+      expect(isIgnoredRelPath(p), `${p} should be watched`).toBe(false);
     }
+    // The watch root itself ('' or '.') must not be ignored.
+    expect(isIgnoredRelPath('')).toBe(false);
+    expect(isIgnoredRelPath('.')).toBe(false);
   });
 
   it('ignores test-file suffixes', async () => {
-    const { isIgnoredPath } = await import('./mcp-watcher.js');
-    expect(isIgnoredPath('/repo/src/foo.test.ts')).toBe(true);
-    expect(isIgnoredPath('/repo/src/foo.spec.js')).toBe(true);
+    const { isIgnoredRelPath } = await import('./mcp-watcher.js');
+    expect(isIgnoredRelPath('src/foo.test.ts')).toBe(true);
+    expect(isIgnoredRelPath('src/foo.spec.js')).toBe(true);
+  });
+
+  it('handles windows-style separators', async () => {
+    const { isIgnoredRelPath } = await import('./mcp-watcher.js');
+    expect(isIgnoredRelPath('target\\debug\\x.rs')).toBe(true);
+    expect(isIgnoredRelPath('src\\main.rs')).toBe(false);
+  });
+});
+
+describe('McpWatcher — real chokidar prunes build dirs (does not FD-storm target/)', () => {
+  // The real EMFILE fix: chokidar must PRUNE an ignored directory subtree, not
+  // descend into it and open FDs for every file before pruning. Uses the real
+  // chokidar (not the module mock above) via a fresh dynamic import in an
+  // isolated module registry.
+  it('watches source but never opens target/ children', async () => {
+    const { mkdtemp, writeFile, mkdir } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join: pjoin } = await import('node:path');
+
+    const root = await mkdtemp(pjoin(tmpdir(), 'mcp-prune-'));
+    await mkdir(pjoin(root, 'src'), { recursive: true });
+    await mkdir(pjoin(root, 'target', 'debug', 'deps'), { recursive: true });
+    await writeFile(pjoin(root, 'src', 'main.rs'), 'fn main() {}');
+    for (let i = 0; i < 40; i++) {
+      await writeFile(pjoin(root, 'target', 'debug', 'deps', `f${i}.rs`), '// gen');
+    }
+
+    // Use the real chokidar + the real ignore predicate, not the vi.mock.
+    const chokidarMod = await vi.importActual<typeof import('chokidar')>('chokidar');
+    const chokidar = chokidarMod.default;
+    const { isIgnoredRelPath } = await import('./mcp-watcher.js');
+    const { relative: prel, sep } = await import('node:path');
+
+    const seen: string[] = [];
+    const w = chokidar.watch(root, {
+      ignored: (p: string) => isIgnoredRelPath(prel(root, p)),
+      ignoreInitial: false,
+      persistent: true,
+    });
+    w.on('add', (p: string) => seen.push(p));
+    await new Promise<void>((res) => w.on('ready', () => res()));
+    await w.close();
+
+    expect(seen.some((p) => p.endsWith('main.rs'))).toBe(true);
+    expect(seen.some((p) => p.includes(`${sep}target${sep}`))).toBe(false);
   });
 });

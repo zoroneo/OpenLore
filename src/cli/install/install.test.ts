@@ -53,7 +53,7 @@ describe('openlore install (end-to-end)', () => {
   });
 
   it('agent-md install creates AGENTS.md with managed block', async () => {
-    const code = await runInstall({ cwd: dir, agent: 'agents-md' });
+    const code = await runInstall({ cwd: dir, agent: 'agents-md', analyze: false });
     expect(code).toBe(0);
     const md = await readFile(join(dir, 'AGENTS.md'), 'utf8');
     expect(md).toContain('BEGIN OPENLORE');
@@ -62,7 +62,7 @@ describe('openlore install (end-to-end)', () => {
 
   it('claude-code install creates settings.json with SessionStart + mcpServers', async () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
-    const code = await runInstall({ cwd: dir, agent: 'claude-code' });
+    const code = await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
     expect(code).toBe(0);
     const settings = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
     expect(settings.mcpServers.openlore).toEqual({
@@ -77,34 +77,34 @@ describe('openlore install (end-to-end)', () => {
 
   it('re-running install is a no-op (no writes, exit 0)', async () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
-    await runInstall({ cwd: dir, agent: 'claude-code' });
+    await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
     const mdBefore = await readFile(join(dir, 'CLAUDE.md'), 'utf8');
     const settingsBefore = await readFile(join(dir, '.claude/settings.json'), 'utf8');
 
-    const code = await runInstall({ cwd: dir, agent: 'claude-code' });
+    const code = await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
     expect(code).toBe(0);
     expect(await readFile(join(dir, 'CLAUDE.md'), 'utf8')).toBe(mdBefore);
     expect(await readFile(join(dir, '.claude/settings.json'), 'utf8')).toBe(settingsBefore);
   });
 
   it('refuses to overwrite hand-edited block without --force', async () => {
-    await runInstall({ cwd: dir, agent: 'agents-md' });
+    await runInstall({ cwd: dir, agent: 'agents-md', analyze: false });
     const md = await readFile(join(dir, 'AGENTS.md'), 'utf8');
     const tampered = md.replace('orient()', 'OOPS-EDITED');
     await writeFile(join(dir, 'AGENTS.md'), tampered, 'utf8');
 
-    const code = await runInstall({ cwd: dir, agent: 'agents-md' });
+    const code = await runInstall({ cwd: dir, agent: 'agents-md', analyze: false });
     expect(code).toBe(1);
     expect(await readFile(join(dir, 'AGENTS.md'), 'utf8')).toBe(tampered);
   });
 
   it('--force overwrites hand-edited block', async () => {
-    await runInstall({ cwd: dir, agent: 'agents-md' });
+    await runInstall({ cwd: dir, agent: 'agents-md', analyze: false });
     const md = await readFile(join(dir, 'AGENTS.md'), 'utf8');
     const tampered = md.replace('orient()', 'OOPS-EDITED');
     await writeFile(join(dir, 'AGENTS.md'), tampered, 'utf8');
 
-    const code = await runInstall({ cwd: dir, agent: 'agents-md', force: true });
+    const code = await runInstall({ cwd: dir, agent: 'agents-md', force: true, analyze: false });
     expect(code).toBe(0);
     const after = await readFile(join(dir, 'AGENTS.md'), 'utf8');
     expect(after).not.toContain('OOPS-EDITED');
@@ -114,7 +114,7 @@ describe('openlore install (end-to-end)', () => {
   it('--uninstall restores a pre-existing CLAUDE.md byte-for-byte', async () => {
     const original = '# my project\n\nsome notes\n';
     await writeFile(join(dir, 'CLAUDE.md'), original);
-    await runInstall({ cwd: dir, agent: 'claude-code' });
+    await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
     expect(await readFile(join(dir, 'CLAUDE.md'), 'utf8')).not.toBe(original);
 
     const code = await runInstall({ cwd: dir, agent: 'claude-code', uninstall: true });
@@ -125,7 +125,7 @@ describe('openlore install (end-to-end)', () => {
   });
 
   it('--uninstall removes AGENTS.md when it was OpenLore-only', async () => {
-    await runInstall({ cwd: dir, agent: 'agents-md' });
+    await runInstall({ cwd: dir, agent: 'agents-md', analyze: false });
     expect(await exists(join(dir, 'AGENTS.md'))).toBe(true);
     await runInstall({ cwd: dir, agent: 'agents-md', uninstall: true });
     expect(await exists(join(dir, 'AGENTS.md'))).toBe(false);
@@ -144,7 +144,7 @@ describe('openlore install (end-to-end)', () => {
       'utf8'
     );
 
-    const code = await runInstall({ cwd: dir, agent: 'claude-code' });
+    const code = await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
     expect(code).toBe(0);
     const settings = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
     expect(settings.hooks.SessionStart).toHaveLength(2);
@@ -163,7 +163,7 @@ describe('openlore install (end-to-end)', () => {
 
   it('cursor install writes .cursor/mcp.json with mcpServers.openlore', async () => {
     await mkdir(join(dir, '.cursor'), { recursive: true });
-    const code = await runInstall({ cwd: dir, agent: 'cursor' });
+    const code = await runInstall({ cwd: dir, agent: 'cursor', analyze: false });
     expect(code).toBe(0);
     const mcp = JSON.parse(await readFile(join(dir, '.cursor/mcp.json'), 'utf8'));
     expect(mcp.mcpServers.openlore).toEqual({
@@ -182,7 +182,7 @@ describe('openlore install (end-to-end)', () => {
     const existing = { mcpServers: { other: { command: 'foo' } } };
     await writeFile(join(dir, '.cursor/mcp.json'), JSON.stringify(existing, null, 2));
 
-    await runInstall({ cwd: dir, agent: 'cursor' });
+    await runInstall({ cwd: dir, agent: 'cursor', analyze: false });
     const merged = JSON.parse(await readFile(join(dir, '.cursor/mcp.json'), 'utf8'));
     expect(merged.mcpServers.other).toEqual({ command: 'foo' });
     expect(merged.mcpServers.openlore.command).toBe('npx');
@@ -196,7 +196,7 @@ describe('openlore install (end-to-end)', () => {
   it('auto-detects multiple surfaces when no --agent passed', async () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
     await mkdir(join(dir, '.cursor'), { recursive: true });
-    const code = await runInstall({ cwd: dir });
+    const code = await runInstall({ cwd: dir, analyze: false });
     expect(code).toBe(0);
     expect(await exists(join(dir, '.claude/settings.json'))).toBe(true);
     expect(await exists(join(dir, '.cursor/rules/openlore.mdc'))).toBe(true);

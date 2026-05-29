@@ -58,18 +58,27 @@ Traditional coding agents reconstruct architecture from repeated file reads ever
 
 ## 5-Minute Quickstart
 
-> **Minimum to see value — no API key needed:**
+> **One command, no API key needed:**
 
 ```bash
 npm install -g openlore
 cd /path/to/your-project
 
-openlore analyze          # build call graph, clusters, CODEBASE.md
-openlore install          # auto-configure your agent (Claude Code, Cursor, …)
-openlore mcp              # start MCP server
+openlore install          # detect your agent, wire it up, AND build the index
 ```
 
-`openlore install` auto-detects which agent surfaces are present (Claude Code, Cursor, Cline, Continue, AGENTS.md) and wires each one to call `orient()` automatically — no manual `CLAUDE.md` editing needed. See [docs/install.md](docs/install.md).
+That single command:
+
+1. **Auto-detects** which agent surfaces are present (Claude Code, Cursor, Cline, Continue, AGENTS.md) and wires each one to call `orient()` — no manual `CLAUDE.md` editing.
+2. **Registers the MCP server** so it starts automatically when your agent launches (you don't run `openlore mcp` yourself).
+3. **Builds the index** (`init` + `analyze` → a keyword/BM25 graph, no network needed) so `orient()` returns real results in your very first session — no separate `analyze` step.
+
+```bash
+openlore install --no-analyze   # wire surfaces only; build the index later
+openlore install --dry-run      # preview every change without writing
+```
+
+See [docs/install.md](docs/install.md). The MCP server keeps the index fresh as you edit (file watcher on by default — large build dirs like `target/`, `node_modules/`, `dist/` are pruned automatically; disable entirely with `openlore mcp --no-watch-auto`).
 
 Then ask your agent: **`orient("add a new payment method")`**
 
@@ -329,7 +338,7 @@ The manifest captures the public API surface, HTTP routes, stats, dependencies, 
 
 ## Known Limitations
 
-- **Incremental call graph updates are depth-1 only**: `--watch-auto` re-indexes signatures and edges on save for the changed file and its direct callers. Transitive callers (A→B→C, C changes, A stays stale) are only refreshed by the next `analyze --force`. For hub files with 100+ callerFiles, re-parse may take several seconds.
+- **Incremental call graph updates are depth-1 only**: the MCP file watcher (`--watch-auto`, on by default) re-indexes signatures and edges on save for the changed file and its direct callers. Transitive callers (A→B→C, C changes, A stays stale) are only refreshed by the next `analyze --force`. For hub files with 100+ callerFiles, re-parse may take several seconds. The watcher prunes build/dependency directories (`target/`, `node_modules/`, `dist/`, `.venv/`, `vendor/`, …) so it stays light even on large repos; turn it off entirely with `openlore mcp --no-watch-auto`.
 - **Static analysis only**: dynamic dispatch, runtime metaprogramming, and `eval`-based patterns are not captured in the call graph.
 - **LLM spec quality varies**: generated specs reflect the model's understanding. Review sections covering complex business logic before treating them as authoritative.
 - **Embedding is optional**: plain `openlore analyze` (no `--embed`, no `EMBED_*`) builds a keyword (BM25) search index out of the box, so `orient`, `search_code`, `suggest_insertion_points`, and `search_specs` work immediately. Configure an embedding endpoint (`EMBED_BASE_URL`/`EMBED_MODEL` or an `embedding` block in `.openlore/config.json`) to upgrade to hybrid dense+BM25 search, which is more accurate for semantic queries.
@@ -361,7 +370,7 @@ The manifest captures the public API surface, HTTP routes, stats, dependencies, 
 ```bash
 npm install
 npm run build
-npm test          # 2660+ unit tests
+npm test          # 2900+ unit tests
 npm run typecheck
 ```
 
