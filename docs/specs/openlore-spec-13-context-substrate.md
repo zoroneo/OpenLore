@@ -152,7 +152,7 @@ third-party blog tagline / per-repo best, not its headline average — do not mi
 **The redundancy risk is therefore the #1 risk, and it lands hardest in the narrow lane.**
 If OpenLore ships "another local code-graph MCP," it loses a knife fight on traction and
 published evidence. The only escape is to compete where these tools **do not play at all**
-(see "True North" below) and to publish our own benchmark (see roadmap step 1).
+(see "Recommended Direction" below) and to publish our own benchmark (see roadmap step 1).
 
 ---
 
@@ -206,7 +206,7 @@ on 2026-05-30.
 
 ---
 
-## The True North
+## Recommended Direction
 
 > **OpenLore is the always-fresh, deterministic *structural substrate beneath* agentic search —
 > it answers who-calls / what-breaks / call-path in one sub-millisecond MCP call against a typed
@@ -353,6 +353,6 @@ Repo facts: file:line references inline above, verified 2026-05-30.
 ## Appendix — the reasoning trail
 
 This spec is the durable output of a brainstorming session plus two multi-agent research
-workflows (landscape + candidate true-norths; then verification + adversarial stress-test +
+workflows (landscape + candidate directions; then verification + adversarial stress-test +
 synthesis). The verification pass is what corrected the first draft's overstatements. A future
 session can re-run the same shape to re-validate as the market moves.
