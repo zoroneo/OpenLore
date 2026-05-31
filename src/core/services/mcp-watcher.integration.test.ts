@@ -7,12 +7,14 @@
  * No embedding server required.  No mocks.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LLMContext } from '../analyzer/artifact-generator.js';
 import { McpWatcher } from './mcp-watcher.js';
+import * as utils from './mcp-handlers/utils.js';
+import { readCachedContext, _resetContextCacheForTesting } from './mcp-handlers/utils.js';
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 //   stabilityThreshold 100ms  +  debounce 100ms  +  processing slack 200ms
@@ -125,6 +127,42 @@ describe('McpWatcher — real fs watcher', () => {
     // No duplicate entries for the same file
     expect(after2.signatures?.filter(s => s.path === 'service.ts')).toHaveLength(1);
   }, 15_000);
+
+  it('G1: a real save primes the read cache — the next tool-call read is a HIT, not a cold re-parse', async () => {
+    // The root-cause #2 fix (Spec 13.1): the watcher's write used to bump
+    // llm-context.json's mtime and force the NEXT MCP tool call to re-parse the
+    // whole ~2 MB file cold. persistContext now hands the patched context to the
+    // shared read cache (primeContextCache) so the next read is served from
+    // memory. The unit tests prove primeContextCache→hit in isolation; this proves
+    // the REAL chokidar → handleBatch → persistContext → primeContextCache chain,
+    // then proves the next read returns that exact primed object (reference
+    // identity ⇒ no disk re-parse).
+    const { rootPath } = await setupProject(); // standard .openlore/analysis layout
+    _resetContextCacheForTesting();
+    const primeSpy = vi.spyOn(utils, 'primeContextCache');
+
+    const srcFile = join(rootPath, 'svc.ts');
+    await writeFile(srcFile, 'export function before() {}', 'utf-8');
+
+    const watcher = new McpWatcher({ rootPath, debounceMs: DEBOUNCE_MS }); // no outputPath → standard layout
+    watchers.push(watcher);
+    await watcher.start();
+
+    await writeFile(srcFile, 'export function after() {}', 'utf-8');
+    await wait(WAIT_MS);
+
+    // The real event path handed the patched context to the read cache.
+    expect(primeSpy, 'watcher must prime the read cache after a save').toHaveBeenCalled();
+    const primed = primeSpy.mock.calls.at(-1)![1] as LLMContext;
+    // Freshness (G6) landed in the primed object itself.
+    const entry = primed.signatures?.find((s) => s.path === 'svc.ts');
+    expect(entry?.entries.some((e) => e.name === 'after'), 'primed context reflects the edit').toBe(true);
+
+    // G1: the next tool-call read is served from that primed object — a cold
+    // re-parse would return a different object reference.
+    const afterRead = await readCachedContext(rootPath);
+    expect(afterRead, 'post-save read must be the primed object, not a fresh disk parse').toBe(primed);
+  }, 10_000);
 
   it('ignores .test.ts files', async () => {
     const { rootPath, outputPath, contextPath } = await setupProject();

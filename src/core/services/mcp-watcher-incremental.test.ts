@@ -127,6 +127,37 @@ describe('McpWatcher — Spec 13.1 freshness', () => {
     for (const f of files) expect(paths.has(f)).toBe(true);
   });
 
+  it("G1: the watcher's flush primes the cache so the next read is a HIT (same object), not a cold re-parse", async () => {
+    // Root-cause #2 (Spec 13.1): the watcher's write used to bump llm-context.json's
+    // mtime and force the NEXT tool call to re-parse the whole file cold. The other
+    // G1 test proves primeContextCache→hit when called directly; this proves the
+    // WATCHER's own flush path (enqueue → flush → handleBatch → persistContext)
+    // hands the patched context to the read cache, and that the next readCachedContext
+    // returns that exact object — reference identity ⇒ no disk re-parse.
+    await writeContext([]);
+    await readCachedContext(root); // cold-prime the cache at the original mtime
+
+    const fooAbs = join(root, 'svc.ts');
+    await writeFile(fooAbs, 'export function after() {}\n', 'utf-8');
+
+    const utils = await import('./mcp-handlers/utils.js');
+    const primeSpy = vi.spyOn(utils, 'primeContextCache');
+
+    const watcher = new McpWatcher({ rootPath: root, embed: false, debounceMs: 20, maxBatchMs: 1000 });
+    (watcher as unknown as { enqueue(p: string): void }).enqueue(fooAbs);
+    await new Promise((r) => setTimeout(r, 150));
+
+    // The flush handed the patched context to the read cache exactly once.
+    expect(primeSpy).toHaveBeenCalledTimes(1);
+    const primed = primeSpy.mock.calls[0][1] as { signatures: Array<{ path: string; entries: Array<{ name: string }> }> };
+    expect(primed.signatures.find((s) => s.path === 'svc.ts')?.entries.some((e) => e.name === 'after')).toBe(true);
+
+    // The next tool-call read is served from that primed object — a cold re-parse
+    // would return a different object reference.
+    const afterRead = await readCachedContext(root);
+    expect(afterRead).toBe(primed);
+  });
+
   it('G3: a batch ≥ BULK_THRESHOLD is reported as a single coalesced refresh', async () => {
     await writeContext([]);
     const files = ['x.ts', 'y.ts', 'z.ts'];
