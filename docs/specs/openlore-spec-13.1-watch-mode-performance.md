@@ -24,11 +24,19 @@ Branch: `openlore-spec-13.1-watch-mode-performance` (proposed). Root cause confi
       ceiling; `handleChange(path)` delegates to `handleBatch([path])`.
 - [x] **Step 2** — Make the `llm-context.json` update cheap and stop busting the read cache.
       Implemented 2a: `primeContextCache` (new export in `mcp-handlers/utils.ts`) hands the
-      patched context to the read cache so the next tool call is a HIT (0 ms vs ~19 ms cold),
-      and the ~2.7 MB disk write is write-behind (deferred + coalesced via `maxBatchMs`).
+      patched context to the read cache so the next tool call is a HIT (in-memory) instead of a
+      full cold re-parse of the multi-MB artifact. The watcher loads its base from disk *ground
+      truth* (never the shared cache) so it can't patch a stale object and drop signatures a
+      concurrent `analyze` wrote; it then primes the cache with the result. The per-burst disk
+      write is already coalesced by Step 1 (one flush per batch), so an explicit write-behind
+      timer was dropped as needless crash-risk for negligible gain.
 - [x] **Step 3** — Make the vector-index update a real incremental row op (no full-table rewrite).
-      New `VectorIndex.updateFiles()` does `delete("filePath" IN …) + add(rows)` for the changed
-      files only and patches the BM25 corpus cache in place; the cold `build()` path is untouched.
+      New `VectorIndex.updateFiles()` does a row-level ``delete(`filePath` IN …) + add(rows)`` for
+      the changed files only and patches the BM25 corpus cache in place; the cold `build()` path is
+      untouched. **Caught in E2E testing:** the predicate column MUST be backtick-quoted —
+      LanceDB's datafusion parses a *double-quoted* identifier as a string literal, so
+      `"filePath" IN (…)` silently matches nothing and deletes no rows (a no-op that would have
+      shipped stale duplicates into the index). Guarded by `vector-index-updatefiles.test.ts`.
 - [x] **Step 4** — Decouple embedding freshness from signature freshness (signatures land instantly).
       Signatures persist synchronously first; the vector update runs on a separate lower-priority
       embed lane. Added `--watch-no-embed` + auto-degrade above `WATCH_EMBED_FILE_CEILING` (5000).
@@ -44,6 +52,24 @@ Branch: `openlore-spec-13.1-watch-mode-performance` (proposed). Root cause confi
 - [x] **Step 8** — Watch-mode microbenchmark + regression tests.
       `scripts/bench-watch.ts` (+ `npm run bench:watch`, recorded in `scripts/BENCHMARKS.md`) plus
       `mcp-watcher-incremental.test.ts` and `vector-index-updatefiles.test.ts`.
+- [x] **E2E field-config reproduction** (`scripts/e2e-watch-latency.mjs`, `npm run e2e:watch`).
+      Spawns the **built** `openlore mcp` server with **no flags** (the exact field config — so
+      `--watch-auto` arms on the first tool call) against a real analyzed repo (the openlore repo
+      itself: 4.6 MB `llm-context.json`, 4.3 MB call-graph.db, BM25 vector index), fires a 30-file
+      save burst, and measures tool-call round-trip latency *during the re-index window* + total
+      watcher stderr. Run against PRE-FIX (`0368d90`) vs FIXED (`0b6d188`):
+
+      | Metric | PRE-FIX | FIXED |
+      |---|---|---|
+      | Post-burst tool latency (max) | **1190 ms** | **3 ms** |
+      | Post-burst tool latency (median) | 2 ms | 1 ms |
+      | Watcher stderr lines (whole run) | **206** | 16 (1 from watcher) |
+      | Just-saved symbol visible to `search_code` | yes | yes |
+
+      The PRE-FIX **1.19 s blocking tool call** during the storm is the field's "batched
+      result-delivery latency" reproduced and measured; the fix collapses it to 3 ms and removes
+      the 206-line stderr flood. The before/after also proves the harness can detect the
+      regression — a green-only result would be meaningless without it.
 
 **Measured (`npm run bench:watch`, synthetic 4.03 MB context, signatures-only):** single-save
 flush **4.5 ms**; next-call read after save **0.02 ms** (in-memory cache HIT) vs **4.4 ms** cold

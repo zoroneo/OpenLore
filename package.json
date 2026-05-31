@@ -28,6 +28,7 @@
     "bench": "tsx scripts/bench.ts",
     "bench:mcp": "tsx scripts/bench-mcp.ts",
     "bench:watch": "tsx scripts/bench-watch.ts",
+    "e2e:watch": "node scripts/e2e-watch-latency.mjs",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
