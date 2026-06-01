@@ -280,6 +280,12 @@ The system SHALL support a --preset navigation flag on the MCP server that expos
 
 > Decision recorded: c04f2b0c
 > Date: 2026-06-01
+### Requirement: SerializeDecisionConsolidationWithACrossprocessFileLock
+
+The system SHALL serialize concurrent decision consolidation processes using a cross-process advisory file lock to prevent draft loss.
+
+> Decision recorded: 412817d2
+> Date: 2026-06-01
 
 ## Technical Notes
 
@@ -306,3 +312,13 @@ openlore emits SCIP for interop with external indexers but never imports it; the
 The spec-14 agent benchmark showed that loading all ~45 MCP tool definitions is per-request overhead that erased openlore latency wins, while the lean --minimal preset omitted the graph-traversal tools deep questions need. A dedicated --preset navigation (orient, search_code, get_subgraph, trace_execution_path, analyze_impact, suggest_insertion_points, get_function_skeleton) is the measured sweet spot — it flipped the benchmark to a net win (-7% cost, -26% tool-calls on deep tasks).
 
 **Consequences:** Agents configuring openlore for code navigation should use --preset navigation; the full surface remains available but is not the default recommendation for navigation.
+
+### Serialize decision consolidation with a cross-process file lock
+
+**Status:** Approved
+**Date:** 2026-06-01
+**ID:** 412817d2
+
+record_decision spawns a detached decisions --consolidate per call; concurrent consolidations did load-mutate-save of pending.json and clobbered each other, silently losing decisions. A cross-process advisory lock (acquireDecisionsLock) serializes consolidation and re-reads the store inside the lock so no draft is lost.
+
+**Consequences:** Consolidations queue rather than race; a stale lock from a crashed holder is stolen after a timeout; the read-modify-write of pending.json is safe under concurrency.

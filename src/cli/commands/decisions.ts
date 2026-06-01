@@ -29,6 +29,7 @@ import {
   INACTIVE_STATUSES,
 } from '../../core/decisions/store.js';
 import { consolidateDrafts } from '../../core/decisions/consolidator.js';
+import { acquireDecisionsLock } from '../../core/decisions/lock.js';
 import { extractFromDiff } from '../../core/decisions/extractor.js';
 import { verifyDecisions } from '../../core/decisions/verifier.js';
 import { syncApprovedDecisions } from '../../core/decisions/syncer.js';
@@ -486,7 +487,8 @@ Examples:
       return;
     }
     // ── Load store (always needed) ───────────────────────────────────────────
-    const store = await loadDecisionStore(rootPath);
+    // `let` so the consolidate branch can re-read fresh state inside its lock.
+    let store = await loadDecisionStore(rootPath);
 
     // ── Approve ──────────────────────────────────────────────────────────────
     if (options.approve) {
@@ -573,6 +575,14 @@ Examples:
         process.exitCode = 1;
         return;
       }
+
+      // Serialize consolidation across the detached `--consolidate` processes
+      // that record_decision spawns: hold the lock for the whole
+      // load → consolidate → save, and re-read the store INSIDE it so concurrent
+      // records don't get clobbered (spec-15 dogfood fix).
+      const releaseConsolidateLock = await acquireDecisionsLock(rootPath);
+      try {
+        store = await loadDecisionStore(rootPath);
 
       const drafts = getDecisionsByStatus(store, 'draft');
       const hasDrafts = drafts.length > 0;
@@ -769,6 +779,9 @@ Examples:
         process.exitCode = 1;
       }
       return;
+      } finally {
+        await releaseConsolidateLock();
+      }
     }
 
     // ── Gate only (no consolidation — consolidation happens on record_decision) ──

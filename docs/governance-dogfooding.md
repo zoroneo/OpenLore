@@ -45,21 +45,27 @@ After `openlore decisions --approve <id>` + `--sync`, the same commit **passes**
 
 ## Rough edges surfaced (dogfooding findings)
 
-Dogfooding is supposed to find these, so they are recorded rather than hidden:
+Dogfooding is supposed to find these. Two were real bugs (now **fixed in this PR**); one turned
+out to be intended behavior.
 
-1. **Concurrent `record_decision` calls race on `pending.json`.** Recording several decisions in
-   quick succession triggers overlapping background consolidations that rewrite the single store
-   file and clobber each other (decisions were silently lost). Workaround used here: record
-   sequentially, waiting for each to reach `verified` before the next. *Fix candidate:* serialize
-   background consolidation or use per-decision draft files.
-2. **Synced ADRs were gitignored.** `--sync` writes ADRs to `openspec/decisions/`, but a blanket
-   `openspec/` rule in `.gitignore` silently excluded them — the system's own output couldn't be
-   committed. Fixed here by narrowing the rule to keep `openspec/decisions/` committable. *Fix
-   candidate:* `openlore setup` should ensure synced-output paths are not gitignored.
-3. **`--sync` empties the decision store.** After syncing, `openlore decisions --list` shows
-   "No decisions recorded yet" — the consolidated history is consumed into the specs/ADRs and
-   removed from the store, so the list no longer reflects what was decided. *Fix candidate:* keep
-   synced decisions with a `synced` status instead of deleting them.
+1. **Concurrent `record_decision` calls raced on `pending.json` — FIXED.** Each `record_decision`
+   spawns a detached `decisions --consolidate`; under rapid recording, overlapping consolidations
+   each did a load → mutate → save and the later save clobbered the earlier, silently losing
+   decisions (5 rapid records → only 3 stored). Fixed with a cross-process lock
+   ([`src/core/decisions/lock.ts`](../../src/core/decisions/lock.ts)) that serializes consolidation
+   and **re-reads the store inside the lock**, so no draft is lost. Verified by re-running the
+   repro: 5 rapid records now yield 5/5 stored. Covered by `lock.test.ts`.
+2. **Synced ADRs were gitignored — FIXED.** `--sync` writes ADRs to `openspec/decisions/`, but a
+   blanket `openspec/` rule in `.gitignore` silently excluded them — the system's own output
+   couldn't be committed. Fixed by narrowing the rule to keep `openspec/decisions/` committable.
+   *Follow-up candidate:* `openlore setup` could assert its synced-output paths aren't gitignored.
+3. **`--sync` empties the active store — this is by design, not a bug.** After syncing,
+   `openlore decisions --list` shows nothing because synced decisions are intentionally purged from
+   the working store (`purgeInactiveDecisions` treats `synced` as inactive, with explicit tests):
+   the permanent record is the synced spec section + ADR, not the store. The store is a *pending*
+   queue, not an audit log. Worth noting as a UX sharp edge (you must read the specs/ADRs to see
+   what was decided); a future `--history` view could surface synced decisions without changing the
+   purge semantics.
 
 ## Reproduce
 
