@@ -1288,7 +1288,7 @@ const MINIMAL_TOOLS = new Set([
 // traversal tools a "how does X reach Y" task actually needs — which `minimal`
 // (orient + search + governance) omits. CodeGraph wins its benchmark with a
 // surface like this; openlore's was either too lean (no traversal) or all ~45.
-const TOOL_PRESETS: Record<string, Set<string>> = {
+export const TOOL_PRESETS: Record<string, Set<string>> = {
   minimal: MINIMAL_TOOLS,
   // Graph-navigation core: orient to enter, then traverse/trace/impact + compact
   // symbol bodies — no governance tools, no inventories.
@@ -1297,6 +1297,25 @@ const TOOL_PRESETS: Record<string, Set<string>> = {
     'analyze_impact', 'suggest_insertion_points', 'get_function_skeleton',
   ]),
 };
+
+/**
+ * Resolve which tools an MCP session exposes (Spec 14). `--preset` wins over the
+ * legacy `--minimal` (= the 'minimal' preset); no selector = all tools. Throws on
+ * an unknown preset so a typo fails loudly instead of silently exposing all 45.
+ * Pure + exported for unit testing.
+ */
+export function selectActiveTools<T extends { name: string }>(
+  allTools: T[],
+  opts: { minimal?: boolean; preset?: string },
+): T[] {
+  const presetName = opts.preset ?? (opts.minimal ? 'minimal' : undefined);
+  if (!presetName) return allTools;
+  const preset = TOOL_PRESETS[presetName];
+  if (!preset) {
+    throw new Error(`Unknown --preset "${presetName}". Known presets: ${Object.keys(TOOL_PRESETS).join(', ')}.`);
+  }
+  return allTools.filter(t => preset.has(t.name));
+}
 
 interface McpServerOptions {
   watch?: string;
@@ -1323,15 +1342,7 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
   console.warn = toStderr;
   console.debug = toStderr;
 
-  // --preset takes precedence over --minimal (which is the 'minimal' preset).
-  const presetName = options.preset ?? (options.minimal ? 'minimal' : undefined);
-  if (presetName && !TOOL_PRESETS[presetName]) {
-    throw new Error(`Unknown --preset "${presetName}". Known presets: ${Object.keys(TOOL_PRESETS).join(', ')}.`);
-  }
-  const presetTools = presetName ? TOOL_PRESETS[presetName] : undefined;
-  const activeTools = presetTools
-    ? TOOL_DEFINITIONS.filter(t => presetTools.has(t.name))
-    : TOOL_DEFINITIONS;
+  const activeTools = selectActiveTools(TOOL_DEFINITIONS, { minimal: options.minimal, preset: options.preset });
 
   // Report the real package version in the MCP initialize handshake rather
   // than a stale hardcoded string.

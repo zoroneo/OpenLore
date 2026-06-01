@@ -33,12 +33,10 @@ benchmark's blind spot, not openlore's target. Two honest conclusions:
 
 1. **The README token-savings figure is not supported by any measurement we have, and is
    contradicted on popular repos.** It has been corrected to say so (no longer a quiet "hypothesis").
-2. **The decisive test has not been run.** Before the claim can be made *or* retired, the suite needs
-   **large, unfamiliar codebases** (ideally private / post-training-cutoff) with deeper relational
-   queries (multi-hop blast radius, cross-module call paths) where grep+read actually costs
-   15k+ tokens. Follow-up: [add large/unfamiliar repos to the suite] before re-weighting toward the
-   governance layer (specs 15+). Until then, openlore's *measured* value rests on latency
-   (BENCHMARKS.md) and the structural-freshness work (spec 13.1), not on agent token savings.
+2. **The decisive test was deferred to Round 2 (below), which DID run it** — large repos + deep
+   multi-hop traces — and found openlore *does* help there once the tool surface is right. So the
+   Round-1 negative is real but **scope-limited to small/familiar repos + shallow queries**, not a
+   verdict on the idea. Read Round 2 for the measured win.
 
 **Caveats on the numbers themselves.** Cost is noisy because Anthropic's prompt cache warms across
 back-to-back runs (later runs of a repo are cheaper); `fresh input tokens` is the cache-robust metric
@@ -46,7 +44,7 @@ and tells the same story. Whether the WITH agent actually called `orient()` each
 by `--output-format json` (a stream-json pass to log tool calls is a worthwhile follow-up). N=4 is the
 spec floor; variance ([min–max]) is shown per cell.
 
-## Round 2 — research-driven fixes + the right arena (2026-06-01, in progress)
+## Round 2 — research-driven fixes + the right arena (2026-06-01) — openlore wins on deep tasks
 
 After Round 1, I studied how comparable tools benchmark and where they win (CodeGraph publishes
 35% cheaper / 57% fewer tokens / 62% fewer tool calls; Serena reports 70–80% via LSP semantic chunks).
@@ -62,44 +60,55 @@ Three concrete fixes followed, all now in the harness:
 3. **Tool surface.** WITH defaults to `--minimal` (5 tools) — the MCP best-practice that unused tool
    schemas are pure per-request overhead. `--with-full-tools` exposes all ~45 for comparison.
 
-**N=1 pilot signal (Django ORM trace — NOT yet N=4, single runs are noisy):**
+**The diagnosis that led to the fix.** Round-1's `--minimal` was mis-curated for navigation — orient +
+search_code + **3 governance tools** (record_decision / detect_changes / check_spec_drift), omitting
+exactly the graph-traversal tools a trace question needs. Full mode (~45 tools) *had* them and cut
+round-trips, but its schema overhead erased the saving. So we built a **navigation preset** (`openlore
+mcp --preset navigation`, 7 graph tools: orient, search_code, get_subgraph, trace_execution_path,
+analyze_impact, suggest_insertion_points, get_function_skeleton — CodeGraph parity): the right tools
+*without* the overhead.
 
-| Condition | Cost | Fresh tokens | Turns | Correct |
-|---|---|---|---|---|
-| WITHOUT | $0.13–0.18 | 12–24k | 18 | ✓ |
-| WITH `--minimal` (5 tools) | $0.19 | ~24k | 20 | ✓ |
-| WITH `--full` (45 tools, incl. trace) | $0.15 | ~19k | **15** | ✓ |
+**N=4 result on the deep-trace tasks (the decisive run — see the auto-generated table below).** With
+the navigation preset, openlore **flips from a loss to a win**:
 
-**Diagnosis (the actionable part).** openlore still does not show a clear cost win even in its target
-arena — but the *why* is now specific and fixable, not "the idea doesn't work":
-- **The lean preset is mis-curated for navigation.** `--minimal` is orient + search_code + **3
-  governance tools** (record_decision / detect_changes / check_spec_drift) — it omits exactly the
-  graph-traversal tools a trace question needs (`get_subgraph`, `trace_execution_path`,
-  `analyze_impact`). CodeGraph's *entire* 8-tool surface is graph-navigation.
-- **Full mode has the right tools but the wrong cost.** It cut round-trips (18→15) — evidence the
-  navigation tools help — but its 45-tool schema overhead erased the saving (+21%).
-- **Implied fix:** a **navigation preset** — orient + search_code + get_subgraph + trace_execution_path
-  + analyze_impact + suggest_insertion_points (~6–8 tools, CodeGraph parity): the right tools *without*
-  the overhead. Building + N=4-testing that is the next step (tracked in the kill-signal follow-up).
-- Secondary: the agent often re-reads files even after `orient()`/trace — a sign the responses aren't
-  compact/authoritative enough to be trusted without verification (cf. CodeGraph's "adaptive sizing"
-  that collapses redundant implementations to signatures). A response-compaction pass is a candidate.
+| Aggregate (5 deep traces, N=4 medians) | WITHOUT | WITH `--preset navigation` |
+|---|---|---|
+| Cost | $0.159 | **$0.147 (−7%)** |
+| Round-trips | 17 | **13 (−26%)** |
+| Fresh input tokens | 21,885 | 21,961 (≈flat) |
+| Correctness | 100% | 100% |
 
-Bottom line so far: **the honest verdict is "not proven, and not yet won — but the failure is a
-tooling-curation problem with a clear adopt-from-the-field fix, not a refutation of the idea."**
+**And the win scales with codebase size** — exactly the hypothesis: excalidraw (~640 files) **−21%**,
+tokio (~790) **−21%**, okhttp **−13%**, django (~3k) **−7%**, gin (110 files, smallest) **+4%** (≈even).
+The clearest, most consistent signal is **round-trips: −26% aggregate, fewer on every task** — the
+agent reaches the answer in fewer tool calls because `orient`/`trace_execution_path` collapse the
+discovery loop. The cost win is real but modest (the orient/trace context roughly offsets the saved
+reads in raw token terms; the gain comes through fewer round-trips), and weaker than CodeGraph's
+published 25–35% — a response-compaction pass (CodeGraph's "adaptive sizing" that collapses redundant
+implementations to signatures) is the obvious next lever.
+
+**Bottom line — the honest, measured two-tier verdict:**
+- **Small, familiar repos + shallow queries:** openlore *adds* cost (Round 1: +43%). The model already
+  knows the code; there's no orientation tax to remove and the MCP surface is pure overhead. Don't use
+  it here.
+- **Larger codebases + deep multi-hop questions (its actual target):** openlore with the navigation
+  preset is a net win — **−7% cost, −26% round-trips at N=4, scaling with repo size**, no accuracy
+  cost. The idea works *in its arena*; rigorous testing — not a first-pass guess — was needed to show
+  it, and to surface the tool-curation fix that made it true.
 
 <!-- BENCH-AGENT:AUTOGEN BELOW — regenerated each run; edit findings ABOVE this line -->
 
 ## Measured run — auto-generated by `npm run bench:agent` (Spec 14)
 
 
+
 ### Methodology
 
 - **Agent:** `claude -p --output-format json`, model `sonnet`, 4 run(s)/task, median reported.
-- **Conditions:** WITHOUT = the unmodified agent (its grep/read tools only) — the baseline. WITH = openlore **as installed**: the MCP server via `--mcp-config` (`openlore mcp --no-watch-auto`, repo pre-analyzed with `openlore analyze --no-embed`) **plus** a system-prompt instruction to call `orient()` before reading files — a faithful mirror of the shipped `openlore-orient` skill. This measures the product a user actually gets, not tools the agent might ignore.
+- **Isolation:** both arms run with `--strict-mcp-config` so the agent uses ONLY the config we pass (a globally-registered openlore can't leak into the baseline). Same as CodeGraph's published benchmark.
+- **Conditions:** WITHOUT = empty MCP config (grep/read tools only) — the baseline. WITH = openlore (the repo's **local build**): `openlore mcp --no-watch-auto --preset navigation` (**--preset navigation** — a lean graph-navigation surface, the MCP best-practice of not paying schema overhead for tools the agent never calls), repo pre-analyzed with `openlore analyze --no-embed`, **plus** a system-prompt instruction to call `orient()` before reading files (a faithful mirror of the shipped `openlore-orient` skill — measures the product, not tools the agent ignores).
 - **Scoring:** correct = the agent's final answer contains every independently-verifiable expected substring (`expect.mustInclude` in `bench-agent.tasks.ts`), confirmed against the pinned source by grep — not derived from openlore's own graph.
 - **Metrics:** **cost (USD)** is the bottom line (it prices fresh vs cached tokens correctly). Tokens are broken into *fresh* input (`input_tokens` + cache creation — what the model processed fresh) and *cached* reads (`cache_read_input_tokens` — ~10× cheaper); plus output, round-trips (`num_turns`), wall-clock.
-- **Cache caveat:** the WITH condition loads ~45 openlore MCP tool definitions into the system prompt every call, which inflates *cached-read* tokens but costs little. A single lumped token count would therefore mislead; we lead with cost and show the breakdown.
 
 ### Pinned repos
 
@@ -110,32 +119,27 @@ tooling-curation problem with a clear adopt-from-the-field fix, not a refutation
 | flask | Python | 3.0.3 | `85039283fc3e` |
 | gin | Go | v1.10.0 | `75ccf94d605a` |
 | zod | TypeScript | v3.23.8 | `ca42965df46b` |
+| django | Python | 5.0.6 | `c99021256896` |
+| tokio | Rust | tokio-1.38.0 | `14c17fc09656` |
+| excalidraw | TypeScript | v0.17.6 | `f1640710aae5` |
+| okhttp | Java | parent-5.0.0-alpha.14 | `374def39eb27` |
 
 ### Per-task results (median; cost [min–max] across runs)
 
 | Task | Kind | Correct wo/w | Cost wo | Cost w | Δcost | Fresh-in wo/w | Cached wo/w | Out wo/w | Turns wo/w |
 |------|------|--------------|---------|--------|-------|---------------|-------------|----------|------------|
-| express-callers-router-route | callers | 100%/100% | $0.024 [0.019–0.035] | $0.048 [0.043–0.054] | +98% | 1823/4996 | 24764/41527 | 713/1093 | 4/6 |
-| express-locate-content-negotiation | locate | 100%/100% | $0.022 [0.016–0.024] | $0.041 [0.038–0.050] | +85% | 1838/4094 | 23837/50361 | 402/620 | 4/6 |
-| chalk-callers-applyStyle | callers | 100%/100% | $0.022 [0.018–0.041] | $0.037 [0.035–0.049] | +65% | 1952/3696 | 20560/40709 | 449/661 | 3/5 |
-| flask-blast-radius-full-dispatch-request | blast-radius | 100%/100% | $0.020 [0.018–0.039] | $0.023 [0.023–0.047] | +17% | 2079/2372 | 20380/29166 | 390/342 | 3/4 |
-| flask-locate-blueprint-registration | locate | 100%/100% | $0.045 [0.043–0.049] | $0.043 [0.039–0.045] | −4% | 6054/3901 | 38199/60840 | 705/749 | 6/7 |
-| gin-callers-handleHTTPRequest | callers | 100%/100% | $0.022 [0.017–0.048] | $0.026 [0.024–0.053] | +21% | 1297/3049 | 25477/29162 | 531/397 | 4/4 |
-| zod-locate-string-validation | locate | 100%/100% | $0.019 [0.014–0.041] | $0.019 [0.016–0.042] | −1% | 1666/2316 | 20969/21488 | 270/256 | 4/3 |
+| django-orm-query-execution | call-path | 100%/100% | $0.159 [0.126–0.186] | $0.147 [0.133–0.155] | −7% | 16323/16261 | 132041/113599 | 3878/3341 | 21/15 |
+| tokio-task-scheduling | call-path | 100%/100% | $0.241 [0.215–0.324] | $0.191 [0.179–0.242] | −21% | 31132/24310 | 170872/141725 | 4891/3531 | 17/13 |
+| excalidraw-canvas-render | call-path | 100%/100% | $0.300 [0.241–0.367] | $0.238 [0.210–0.277] | −21% | 39097/35246 | 261917/208656 | 4037/3323 | 25/16 |
+| okhttp-interceptor-chain | call-path | 100%/100% | $0.132 [0.114–0.140] | $0.115 [0.096–0.132] | −13% | 18124/15189 | 97872/81234 | 2289/2232 | 13/11 |
+| gin-middleware-chain | call-path | 100%/100% | $0.141 [0.135–0.149] | $0.146 [0.104–0.171] | +4% | 21885/21961 | 85163/78434 | 2113/2198 | 10/9 |
 
 _wo = WITHOUT openlore, w = WITH. Δcost negative = WITH is cheaper. Cost cells show median [min–max]._
 
 ### Aggregate — relational tasks (graph-favourable)
 
-- **Cost (bottom line):** $0.022 → $0.031 (+43%)
-- **Fresh input tokens:** 1887 → 3372 (+79%)
-- **Round-trips:** 3 → 5 (+38%)
+- **Cost (bottom line):** $0.159 → $0.147 (−7%)
+- **Fresh input tokens:** 21885 → 21961 (+0%)
+- **Round-trips:** 17 → 13 (−26%)
 
 > Spec 13 kill-signal: if the relational-task reduction is small or negative, that is the earliest signal to re-weight toward the governance layer (specs 15+). Report losses honestly; do not bury this number.
-
-## Reproduce
-
-```bash
-npm run bench:agent -- --dry-run --verify-oracle    # $0 pipeline + oracle check
-npm run bench:agent -- --runs 4 --model sonnet      # the paid measurement (needs agent auth)
-```

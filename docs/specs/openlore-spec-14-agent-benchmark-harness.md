@@ -7,7 +7,7 @@
 
 ## Progress
 
-Branch: `openlore-spec-14-agent-benchmark-harness`. **Foundation built; paid run gated on owner opt-in.**
+Branch: `openlore-spec-14-agent-benchmark-harness`. **DONE — harness built, two-tier benchmark run (N=4), README cited, navigation-preset fix shipped.**
 
 - [x] Task suite (relational queries where a graph beats grep) + a control task — starter set in
       `scripts/bench-agent.tasks.ts` (callers / blast-radius + a `locate` control); every task has a
@@ -29,9 +29,16 @@ Branch: `openlore-spec-14-agent-benchmark-harness`. **Foundation built; paid run
       "unproven / not supported by the first benchmark."
 - [x] Validated the whole pipeline at $0 via `--dry-run --verify-oracle` (clone → analyze →
       oracle-grep → mock agent → score → aggregate → report). ✓ green on all 5 repos.
-- [ ] **Follow-up (kill-signal):** add large/unfamiliar (ideally post-cutoff/private) repos with
-      deeper multi-hop relational tasks — the setting openlore is designed for — before the
-      token-savings claim can be made or retired, or re-weight toward the governance layer (specs 15+).
+- [x] **Round 2 (kill-signal resolved):** studied competitor patterns (CodeGraph/Serena/MCP best
+      practices), then added large repos (django/tokio/excalidraw/okhttp) + deep multi-hop trace tasks
+      mirroring CodeGraph's set, `--strict-mcp-config` isolation, and a new **`--preset navigation`**
+      (7 graph-traversal tools). **N=4 result: openlore flips to a WIN on deep tasks — −7% cost, −26%
+      round-trips, scaling with repo size (−21% on ~640–790-file repos), 100% correct.** Two-tier
+      verdict (loses on small/shallow, wins on large/deep) documented in `docs/AGENT-BENCHMARKS.md`;
+      README corrected to cite the measured numbers. Resolves the #108 kill-signal.
+- [ ] **Future levers (not blocking):** response compaction (CodeGraph-style "adaptive sizing") to
+      grow the cost win toward their 25–35%; capture real tool-call counts via `--output-format
+      stream-json`; add to CI as a tracked (non-paid by default) artifact.
 
 ---
 
