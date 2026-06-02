@@ -173,6 +173,27 @@ One graph query replaces most exploratory file reads. The agent knows exactly wh
 
 ---
 
+## Agent Cheat Sheet
+
+The full surface is 45 tools, but day-to-day work needs a handful. Reach for the right one by situation:
+
+| Situation | Tool |
+|-----------|------|
+| Starting any task | `orient(task)` — functions, callers, specs, insertion points in one call |
+| "Which file/function handles X?" | `search_code` |
+| Call topology across many files | `get_subgraph` / `analyze_impact` |
+| "What's the blast radius if I change this?" | `analyze_impact` — risk score + up/downstream chain + **governing decisions** |
+| "What decisions constrain this code?" | `analyze_impact` / `get_subgraph` → `governingDecisions` (Spec 16) |
+| Planning where to add a feature | `suggest_insertion_points` |
+| "How does request X reach function Y?" | `trace_execution_path` |
+| Recording an architectural choice | `record_decision` **before** writing the code |
+| Reading / checking a spec | `get_spec` · `search_specs` · `check_spec_drift` |
+| Ranking what changed by risk | `detect_changes` |
+
+Everything else (read a file, grep, list files) uses your native tools. Full reference: [docs/mcp-tools.md](docs/mcp-tools.md).
+
+---
+
 ## Use OpenLore as a Claude Code Skill
 
 OpenLore ships a canonical [Claude Code Skill](https://docs.claude.com/en/docs/claude-code/skills) at [`skills/openlore-orient/`](skills/openlore-orient/). Install it once and Claude Code will automatically call `orient()` at the start of every task — no `CLAUDE.md` editing required.
@@ -247,6 +268,8 @@ When fresh, injection is zero-overhead. Calling `orient()` resets the tracker. U
 
 Agents call `record_decision` before writing code. Consolidation runs immediately in the background. At commit time, a pre-commit hook gates the commit until all verified decisions are reviewed and written back as requirements in `spec.md` files. Decisions are classified by scope (`local / component / cross-domain / system`); only `cross-domain` and `system` decisions produce ADR files, keeping the decision log signal-dense.
 
+Decisions are also **first-class graph nodes**. At analyze time the active decision store is projected — the same parser→projector split that puts Infrastructure-as-Code on the graph — into `decision::<id>` nodes joined to the files they govern by `affects` edges. The relationship is stored, not recomputed: `analyze_impact` and `get_subgraph` return the governing decisions of a symbol and its blast radius as typed neighbors (`nodeType: "decision"`), and `orient` reports which relevant files each decision governs. This turns "what architectural decisions constrain this code, and what does changing it implicate?" into a deterministic graph query — the join no code-navigation competitor offers. The JSON store stays authoritative; the projection is derived and rebuilt on every analyze. See [docs/specs/openlore-spec-16-decisions-as-graph-nodes.md](docs/specs/openlore-spec-16-decisions-as-graph-nodes.md).
+
 **Telemetry** (opt-in, no API key)
 
 Cognitive telemetry for empirical measurement of EpistemicLease behavior. Gated by `OPENLORE_TELEMETRY=1` — disabled by default. Writes append-only JSONL to `.openlore/telemetry/` per domain. Agent identity is captured from the MCP `initialize` handshake, enabling per-agent behavioral comparison.
@@ -274,25 +297,66 @@ Key metrics: **obstinacy index** (tool calls after stale before orient — measu
 
 OpenSpec provides semantic intent and workflow structure. openlore maintains the evolving implementation as a continuously queryable architectural graph for agents.
 
-```
-Codebase
-   │
-   ▼
-openlore analyze ──► SQLite graph store (.openlore/analysis/call-graph.db)
-                          │                      │
-                          │              MCP tools (orient, BFS, search…)
-                          │                      │
-                     Artifact Generator        Agent
-                          │
-                    ┌─────┴──────┐
-                    ▼            ▼
-              CODEBASE.md   (optional)
-                         openlore generate ──► openspec/specs/*.md
-                         openlore drift   ──► drift report
-                         openlore decisions ► ADR gates
+```mermaid
+flowchart TD
+    Code[Codebase] --> Analyze[openlore analyze<br/>tree-sitter · pure static analysis]
+    Analyze --> DB[(SQLite graph store<br/>.openlore/analysis/call-graph.db)]
+    Analyze --> Digest[CODEBASE.md<br/>~600-token structural digest]
+
+    subgraph shared["Projected onto shared node + edge primitives"]
+      direction LR
+      CodeNodes[functions + call edges]
+      Iac[IaC resources + references]
+      Dec[decisions + affects edges]
+    end
+    Analyze --> CodeNodes
+    Analyze --> Iac
+    Analyze -. active decision store .-> Dec
+    CodeNodes --> DB
+    Iac --> DB
+    Dec --> DB
+
+    DB --> MCP[45 MCP tools<br/>orient · BFS · search · analyze_impact]
+    MCP --> Agent((Coding Agent))
+
+    Code -. optional, API key .-> Gen[openlore generate]
+    Gen --> Specs[openspec/specs/*.md<br/>RFC 2119 living specs]
+    Code --> Drift[openlore drift<br/>spec/code drift, ms, no API]
+    Agent -. record_decision .-> Gate[decisions pre-commit gate]
+    Gate --> Specs
 ```
 
-The graph and the OpenSpec spec layer are co-equal: the graph makes orientation fast, the specs make it semantically grounded. Drift detection and decision gates connect both. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full pipeline diagram.
+The graph and the OpenSpec spec layer are co-equal: the graph makes orientation fast, the specs make it semantically grounded. Drift detection and decision gates connect both. Crucially, application code, Infrastructure-as-Code, and architectural **decisions** all project onto one shared set of node/edge primitives — so a single traversal answers questions that span all three. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full pipeline diagram.
+
+**Decisions on the graph** (Spec 16) — a decision becomes a node joined to the files it governs by `affects` edges, so impact analysis returns governance as a neighbor:
+
+```mermaid
+flowchart LR
+    D["decision::c6d1ad07<br/>North-star substrate"]:::dec
+    D -- affects --> F1[src/cli/export/scip.ts]
+    D -- affects --> F2[src/core/analyzer/iac/project.ts]
+    F1 -- calls --> G[exportScip]
+    classDef dec fill:#6f42c1,stroke:#4b2e83,color:#fff
+```
+
+---
+
+## Design Decisions
+
+OpenLore dogfoods its own decision system. These ADRs were recorded with `record_decision`, gated at commit, and synced into `openspec/specs/` — and (per Spec 16) are now projected onto the graph itself. They are the load-bearing constraints behind the architecture above:
+
+| Decision | Rationale | Where |
+|----------|-----------|-------|
+| **North star is a deterministic structural context substrate** | Local-first plumbing (like tree-sitter/SCIP/LSP) that agents build on; every feature must make the coding-agent case more useful and stay grounded in static analysis, not LLM guessing | [ADR-0001](openspec/decisions/adr-0001-north-star-is-a-deterministic-structural-context-s.md) |
+| **IaC resources project onto the existing graph primitives** | One projector maps infrastructure onto `FunctionNode`/`CallEdge` so every MCP tool works on IaC with zero new tooling | `analyzer` spec · `src/core/analyzer/iac/project.ts` |
+| **Decisions project onto the graph the same way** | A parser→projector split turns the decision store into `decision::` nodes + `affects` edges — governance becomes a deterministic graph join | `analyzer` spec · `src/core/decisions/project.ts` (Spec 16) |
+| **EdgeStore uses SCHEMA_VERSION rebuild-on-bump, not migrations** | The graph is fully derivable from source, so a schema change drops and rebuilds — no migration code, no drift | `analyzer` spec · `src/core/services/edge-store.ts` |
+| **BM25 keyword retrieval is the zero-network floor** | `orient`/`search_code` work with no API key or embedding server; dense embeddings are an optional upgrade, never a requirement | `analyzer` spec · Spec 06 |
+| **SCIP is a one-way export, not a round-trip format** | The SQLite graph stays canonical; SCIP exports only the subset it can model, avoiding a lossy bidirectional contract | `cli` spec · `src/cli/export/scip.ts` |
+| **MCP exposes a curated `navigation` preset, not all 45 tools** | A lean graph-traversal surface is what wins the Spec 14 agent benchmark; the full set stays available opt-in | `cli` spec · Spec 14 |
+| **Decision consolidation is serialized with a cross-process file lock** | Concurrent `record_decision` calls were losing drafts; a lock makes consolidation safe and every commit instant | `cli` spec · Spec 15 |
+
+This table is not aspirational documentation — it is the live decision log the pre-commit gate enforces and Spec 16 makes queryable. See [docs/governance-dogfooding.md](docs/governance-dogfooding.md).
 
 ---
 

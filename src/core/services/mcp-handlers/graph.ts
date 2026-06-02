@@ -37,6 +37,7 @@ import {
   TRACE_PATH_MAX_PATHS,
 } from '../../../constants.js';
 import type { SerializedCallGraph, FunctionNode } from '../../analyzer/call-graph.js';
+import type { DecisionNode } from '../../decisions/project.js';
 import { getFileGodFunctions, extractSubgraph } from '../../analyzer/subgraph-extractor.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 
@@ -226,6 +227,24 @@ export function nodeToSummary(n: FunctionNode | undefined) {
   return { name: n.name, file: n.filePath, className: n.className ?? null, depth: 0 };
 }
 
+/**
+ * Render a projected decision node as a typed graph neighbor (spec-16).
+ * `nodeType: 'decision'` lets callers distinguish governing decisions from code nodes.
+ */
+export function decisionToNeighbor(d: DecisionNode) {
+  return {
+    nodeType: 'decision' as const,
+    id: d.decisionId,
+    title: d.title,
+    status: d.status,
+    rationale: d.rationale,
+    consequences: d.consequences,
+    affectedDomains: d.affectedDomains,
+    governs: d.affectedFiles,
+    ...(d.supersedes ? { supersedes: d.supersedes } : {}),
+  };
+}
+
 // ============================================================================
 // HANDLERS
 // ============================================================================
@@ -351,6 +370,11 @@ export async function handleGetSubgraph(
       })
   );
 
+  // Governing decisions (spec-16): typed graph neighbors of the subgraph's files,
+  // surfaced via the `affects`-edge join — not a post-hoc filter.
+  const subgraphFiles = [...new Set(visibleNodes.map(n => n.filePath))];
+  const governingDecisions = ctx.edgeStore.getDecisionsForFiles(subgraphFiles).map(decisionToNeighbor);
+
   if (format === 'mermaid') {
     const idOf = new Map<string, string>();
     subNodes.forEach((n, i) => idOf.set(n.name + '|' + n.file, `n${i}`));
@@ -370,16 +394,20 @@ export async function handleGetSubgraph(
       '    classDef seed fill:#f5a623,stroke:#d4891a,color:#000',
       ...nodeLines, ...deduped,
     ].join('\n');
+    const decisionNote = governingDecisions.length > 0
+      ? ` · ${governingDecisions.length} governing decision${governingDecisions.length > 1 ? 's' : ''}`
+      : '';
     return `\`\`\`mermaid\n${diagram}\n\`\`\`\n\n` +
-      `_${subNodes.length} nodes · ${deduped.length} edges · seeds: ${seeds.map(s => s.name).join(', ')}_`;
+      `_${subNodes.length} nodes · ${deduped.length} edges${decisionNote} · seeds: ${seeds.map(s => s.name).join(', ')}_`;
   }
 
   return {
     query: { functionName, direction, maxDepth },
     seeds: seeds.map(n => ({ name: n.name, file: n.filePath })),
-    stats: { nodes: subNodes.length, edges: subEdges.length },
+    stats: { nodes: subNodes.length, edges: subEdges.length, governingDecisions: governingDecisions.length },
     nodes: subNodes,
     edges: subEdges,
+    ...(governingDecisions.length > 0 ? { governingDecisions } : {}),
   };
 }
 
@@ -453,6 +481,15 @@ export async function handleAnalyzeImpact(
 
   const blastRadius = upstreamNodes.length + downstreamNodes.length;
 
+  // Governing decisions (spec-16): decisions whose `affects` edges intersect the
+  // seed plus its blast radius — the deterministic join that answers "what
+  // decisions govern this code, and what does changing it implicate?".
+  const involvedFiles = new Set<string>();
+  for (const s of seeds) involvedFiles.add(s.filePath);
+  for (const n of upstreamNodes) if (n.file) involvedFiles.add(n.file);
+  for (const n of downstreamNodes) if (n.file) involvedFiles.add(n.file);
+  const governingDecisions = ctx.edgeStore.getDecisionsForFiles([...involvedFiles]).map(decisionToNeighbor);
+
   const results = seeds.map(seed => {
     const isHub     = hubIds.has(seed.id);
     const riskScore = computeRiskScore(seed, blastRadius, isHub);
@@ -472,6 +509,7 @@ export async function handleAnalyzeImpact(
       downstreamCriticalPath: downstreamNodes,
       criticalPathLeaves,
       recommendedStrategy: strategy,
+      ...(governingDecisions.length > 0 ? { governingDecisions } : {}),
     };
   });
 

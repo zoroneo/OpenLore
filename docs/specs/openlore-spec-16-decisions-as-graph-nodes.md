@@ -8,13 +8,36 @@
 
 ## Progress
 
-Branch: `openlore-spec-16-decisions-as-graph-nodes`. Not started.
+Branch: `openlore-spec-16-decisions-as-graph-nodes`. **DONE** (PR pending).
 
-- [ ] Add a decision node type and an `affects` edge kind
-- [ ] Project the existing decision store onto graph nodes/edges (derived, like IaC)
-- [ ] Make `analyze_impact` / `get_subgraph` return governing decisions as neighbors
-- [ ] Keep `orient`'s existing decision-surfacing working; upgrade it additively
-- [ ] Bump `SCHEMA_VERSION`; confirm clean rebuild and backward compatibility
+- [x] Add a decision node type and an `affects` edge kind — `DecisionNode` /
+      `DecisionAffectsEdge` in [src/core/decisions/project.ts](../../src/core/decisions/project.ts);
+      `'affects'` added to `EdgeKind` ([call-graph.ts:39](../../src/core/analyzer/call-graph.ts#L39)).
+- [x] Project the existing decision store onto graph nodes/edges (derived, like IaC) —
+      `projectDecisions(store)` mirrors `iac/project.ts`; wired into
+      [`writeEdgesToSQLite`](../../src/core/analyzer/artifact-generator.ts) (load store →
+      project → normalize paths → persist), best-effort so a bad store never fails the graph write.
+- [x] Make `analyze_impact` / `get_subgraph` return governing decisions as neighbors —
+      new `decisions` + `decision_edges` tables in
+      [edge-store.ts](../../src/core/services/edge-store.ts) with `getDecisionsForFiles()`
+      (the deterministic join); both handlers emit a typed `governingDecisions` field
+      (`nodeType: "decision"`), kept out of the code-edge BFS so blast-radius math and hub
+      stats are unchanged.
+- [x] Keep `orient`'s existing decision-surfacing working; upgrade it additively —
+      `pendingDecisions` is untouched; an optional graph-derived `governingDecisions` field
+      (with file-level provenance) was added alongside it.
+- [x] Bump `SCHEMA_VERSION` (2 → 3); confirm clean rebuild and backward compatibility —
+      the bump drops + recreates all tables (rebuild-on-bump, no migration); empty/legacy/missing
+      stores project to zero nodes. Tests: `src/core/decisions/project.test.ts`,
+      `edge-store.test.ts` (decisions block), `graph.test.ts` (governing-decisions block),
+      `src/core/analyzer/decision-projection.test.ts` (persistence wiring). Full suite green
+      (2965 passing across 131 files), lint + typecheck + build clean.
+
+> Note: this repo's *active* decision store is empty post-sync (synced decisions are purged
+> to ADRs/specs and surfaced via the vector index), so projection here yields zero decision
+> nodes — the documented empty-store path. The feature is exercised live whenever an agent
+> records a decision during a dev session (it projects while `verified`/`approved`, until synced),
+> and is covered end-to-end by fixtures.
 
 ---
 

@@ -1274,6 +1274,27 @@ export async function writeEdgesToSQLite(
     store.insertEdges(edges);
     store.insertInheritanceEdges(inheritanceEdges);
     store.insertClasses(classes);
+
+    // Project the decision store onto first-class graph nodes + `affects` edges
+    // (spec-16). Derived, like IaC: the JSON store stays authoritative. Active
+    // decisions only; an empty/legacy store projects to nothing. Best-effort —
+    // a malformed store must never fail the code-graph write.
+    if (rootPath) {
+      try {
+        const { loadDecisionStore } = await import('../decisions/store.js');
+        const { projectDecisions } = await import('../decisions/project.js');
+        const decisionStore = await loadDecisionStore(rootPath);
+        const projected = projectDecisions(decisionStore);
+        const decisionNodes = projected.nodes.map(n => ({
+          ...n,
+          affectedFiles: n.affectedFiles.map(norm),
+        }));
+        const decisionEdges = projected.edges.map(e => ({ ...e, filePath: norm(e.filePath) }));
+        store.insertDecisions(decisionNodes, decisionEdges);
+      } catch {
+        // Decision projection is additive; never block the graph write.
+      }
+    }
   } finally {
     store.close();
   }

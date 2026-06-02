@@ -267,4 +267,73 @@ describe('EdgeStore', () => {
       expect(store.getFileHash('src/a.ts')).toBe('new');
     });
   });
+
+  // ── Decision projection (spec-16) ─────────────────────────────────────────────
+  describe('decisions', () => {
+    const decNode = {
+      id: 'decision::c6d1ad07',
+      decisionId: 'c6d1ad07',
+      kind: 'decision' as const,
+      title: 'Use JWTs for stateless auth',
+      status: 'verified' as const,
+      rationale: 'Avoids a session store',
+      consequences: "Tokens can't be revoked early",
+      affectedDomains: ['auth'],
+      affectedFiles: ['src/a.ts'],
+      confidence: 'high' as const,
+    };
+
+    beforeEach(() => {
+      store.insertDecisions(
+        [decNode],
+        [{ decisionNodeId: 'decision::c6d1ad07', filePath: 'src/a.ts', kind: 'affects' }],
+      );
+    });
+
+    it('round-trips a projected decision node', () => {
+      const all = store.getAllDecisions();
+      expect(all).toHaveLength(1);
+      expect(all[0]).toMatchObject({
+        id: 'decision::c6d1ad07',
+        decisionId: 'c6d1ad07',
+        kind: 'decision',
+        title: 'Use JWTs for stateless auth',
+        affectedDomains: ['auth'],
+        affectedFiles: ['src/a.ts'],
+      });
+      expect(store.countDecisions()).toBe(1);
+    });
+
+    it('getDecisionsForFiles joins affects edges to governing decisions', () => {
+      // src/a.ts is governed; this is the deterministic graph join, not a code-edge query.
+      const govs = store.getDecisionsForFiles(['src/a.ts']);
+      expect(govs.map(d => d.decisionId)).toEqual(['c6d1ad07']);
+    });
+
+    it('getDecisionsForFiles matches across relative/absolute path forms', () => {
+      const govs = store.getDecisionsForFiles(['/abs/project/src/a.ts']);
+      expect(govs.map(d => d.decisionId)).toEqual(['c6d1ad07']);
+    });
+
+    it('returns nothing for files no decision governs', () => {
+      expect(store.getDecisionsForFiles(['src/b.ts'])).toEqual([]);
+      expect(store.getDecisionsForFiles([])).toEqual([]);
+    });
+
+    it('insertDecisions replaces the prior projection wholesale (idempotent re-project)', () => {
+      store.insertDecisions(
+        [{ ...decNode, id: 'decision::ffff0000', decisionId: 'ffff0000', affectedFiles: ['src/z.ts'] }],
+        [{ decisionNodeId: 'decision::ffff0000', filePath: 'src/z.ts', kind: 'affects' }],
+      );
+      expect(store.countDecisions()).toBe(1);
+      expect(store.getDecisionsForFiles(['src/a.ts'])).toEqual([]);
+      expect(store.getDecisionsForFiles(['src/z.ts']).map(d => d.decisionId)).toEqual(['ffff0000']);
+    });
+
+    it('clearAll wipes decisions too', () => {
+      store.clearAll();
+      expect(store.countDecisions()).toBe(0);
+      expect(store.getDecisionsForFiles(['src/a.ts'])).toEqual([]);
+    });
+  });
 });
