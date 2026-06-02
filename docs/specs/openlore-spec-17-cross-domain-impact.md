@@ -7,7 +7,7 @@
 
 ## Progress
 
-Branch: `openlore-spec-17-cross-domain-impact`. **DONE** (PR pending).
+Branch: `openlore-spec-17-cross-domain-impact`. **DONE** — [PR #112](https://github.com/clay-good/OpenLore/pull/112).
 
 - [x] End-to-end traversal across the code↔infra boundary. Investigation found code
       and infra were *disconnected components* — both in the graph, but no edge linked
