@@ -7,7 +7,7 @@
 
 ## Progress
 
-Branch: `openlore-spec-20-reachability-dead-code`. **DONE** (PR pending).
+Branch: `openlore-spec-20-reachability-dead-code`. **DONE** — [PR #115](https://github.com/clay-good/OpenLore/pull/115).
 
 - [x] Reachability from roots over the existing graph — forward BFS over `buildAdjacency`'s
       forward map. Roots = tests + symbols imported by name + HTTP route handlers + `main`
