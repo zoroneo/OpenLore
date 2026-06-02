@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { CallEdge, FunctionNode, ClassNode, InheritanceEdge } from '../analyzer/call-graph.js';
 import type { DecisionNode, DecisionAffectsEdge } from '../decisions/project.js';
+import type { FileProvenance } from '../provenance/git-provenance.js';
 import type { DecisionStatus } from '../../types/index.js';
 import { ARTIFACT_CALL_GRAPH_DB } from '../../constants.js';
 
@@ -46,7 +47,7 @@ function runTransaction(db: DatabaseSync, fn: () => void): void {
 }
 
 /** Bump when schema changes. Old DBs are dropped and rebuilt on next analyze --force. */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 export class EdgeStore {
   private constructor(private readonly db: DatabaseSync) {
@@ -68,6 +69,7 @@ export class EdgeStore {
         DROP TABLE IF EXISTS file_hashes;
         DROP TABLE IF EXISTS decisions;
         DROP TABLE IF EXISTS decision_edges;
+        DROP TABLE IF EXISTS provenance;
         DROP TABLE IF EXISTS schema_version;
         CREATE TABLE schema_version (version INTEGER NOT NULL);
       `);
@@ -167,6 +169,18 @@ export class EdgeStore {
       );
       CREATE INDEX IF NOT EXISTS idx_decision_edge_file ON decision_edges(file_path);
       CREATE INDEX IF NOT EXISTS idx_decision_edge_dec  ON decision_edges(decision_id);
+
+      -- Local provenance (spec-18): per-file last-author + recent authors + PRs,
+      -- derived from local git/gh. Capped upstream; one row per file, no graph bloat.
+      CREATE TABLE IF NOT EXISTS provenance (
+        file_path      TEXT PRIMARY KEY,
+        last_author    TEXT NOT NULL,           -- JSON {name,email}
+        last_date      TEXT,
+        last_commit    TEXT,
+        last_subject   TEXT,
+        recent_authors TEXT NOT NULL DEFAULT '[]', -- JSON Author[]
+        prs            TEXT NOT NULL DEFAULT '[]'   -- JSON PullRequest[]
+      );
     `);
   }
 
@@ -508,6 +522,52 @@ export class EdgeStore {
     return this.getAllDecisions().filter(d => matchedIds.has(d.id));
   }
 
+  // ── Provenance queries / mutations (spec-18) ───────────────────────────────────
+
+  /** Replace the per-file provenance wholesale (idempotent re-extraction). */
+  insertProvenance(records: FileProvenance[]): void {
+    const stmt: StatementSync = this.db.prepare(`
+      INSERT OR REPLACE INTO provenance
+        (file_path, last_author, last_date, last_commit, last_subject, recent_authors, prs)
+      VALUES
+        (@filePath, @lastAuthor, @lastDate, @lastCommit, @lastSubject, @recentAuthors, @prs)
+    `);
+    runTransaction(this.db, () => {
+      this.db.exec('DELETE FROM provenance;');
+      for (const r of records) {
+        stmt.run({
+          '@filePath':      r.filePath,
+          '@lastAuthor':    JSON.stringify(r.lastAuthor),
+          '@lastDate':      r.lastDate ?? null,
+          '@lastCommit':    r.lastCommit ?? null,
+          '@lastSubject':   r.lastSubject ?? null,
+          '@recentAuthors': JSON.stringify(r.recentAuthors),
+          '@prs':           JSON.stringify(r.prs),
+        });
+      }
+    });
+  }
+
+  countProvenance(): number {
+    const row = this.db.prepare('SELECT COUNT(*) as n FROM provenance').get() as { n: number };
+    return row.n;
+  }
+
+  /**
+   * Provenance for a set of files. Path forms differ across callers (edge-store
+   * nodes are repo-relative; some callers pass absolute paths), so match with the
+   * same tolerant comparator used for decisions (spec-18).
+   */
+  getProvenanceForFiles(files: string[]): FileProvenance[] {
+    if (files.length === 0) return [];
+    const rows = this.db.prepare('SELECT * FROM provenance').all() as unknown as RawProvenance[];
+    if (rows.length === 0) return [];
+    const wanted = files.filter(Boolean);
+    return rows
+      .filter(r => wanted.some(f => pathsMatch(f, r.file_path)))
+      .map(rawToProvenance);
+  }
+
   // ── Content-hash cache ────────────────────────────────────────────────────────
 
   getFileHash(filePath: string): string | null {
@@ -527,7 +587,7 @@ export class EdgeStore {
 
   /** Drop all graph data — used by full analyze rebuild. */
   clearAll(): void {
-    this.db.exec('DELETE FROM edges; DELETE FROM inheritance_edges; DELETE FROM nodes; DELETE FROM classes; DELETE FROM nodes_fts; DELETE FROM file_hashes; DELETE FROM decisions; DELETE FROM decision_edges;');
+    this.db.exec('DELETE FROM edges; DELETE FROM inheritance_edges; DELETE FROM nodes; DELETE FROM classes; DELETE FROM nodes_fts; DELETE FROM file_hashes; DELETE FROM decisions; DELETE FROM decision_edges; DELETE FROM provenance;');
   }
 
   /** Run fn inside a single SQLite transaction. */
@@ -611,6 +671,28 @@ interface RawDecision {
   affected_files:   string;
   confidence:       string | null;
   supersedes:       string | null;
+}
+
+interface RawProvenance {
+  file_path:      string;
+  last_author:    string;
+  last_date:      string | null;
+  last_commit:    string | null;
+  last_subject:   string | null;
+  recent_authors: string;
+  prs:            string;
+}
+
+function rawToProvenance(r: RawProvenance): FileProvenance {
+  return {
+    filePath:      r.file_path,
+    lastAuthor:    JSON.parse(r.last_author) as FileProvenance['lastAuthor'],
+    lastDate:      r.last_date ?? '',
+    lastCommit:    r.last_commit ?? '',
+    lastSubject:   r.last_subject ?? '',
+    recentAuthors: JSON.parse(r.recent_authors) as FileProvenance['recentAuthors'],
+    prs:           JSON.parse(r.prs) as FileProvenance['prs'],
+  };
 }
 
 /** Tolerant path equality: exact, or one path is a suffix of the other. */

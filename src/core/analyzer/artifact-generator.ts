@@ -1294,6 +1294,20 @@ export async function writeEdgesToSQLite(
       } catch {
         // Decision projection is additive; never block the graph write.
       }
+
+      // Project local git/gh provenance onto the same files (spec-18). Local-only,
+      // bounded, best-effort: a non-git/shallow repo yields nothing and never blocks
+      // the graph write. Nothing is uploaded anywhere.
+      try {
+        const { extractProvenance } = await import('../provenance/git-provenance.js');
+        const provFiles = [...new Set(
+          nodes.filter(n => !n.isExternal).map(n => n.filePath),
+        )];
+        const provenance = await extractProvenance(rootPath, provFiles);
+        if (provenance.length > 0) store.insertProvenance(provenance);
+      } catch {
+        // Provenance is additive and local-only; never block the graph write.
+      }
     }
   } finally {
     store.close();

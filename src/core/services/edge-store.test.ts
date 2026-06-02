@@ -279,6 +279,54 @@ describe('EdgeStore', () => {
     });
   });
 
+  // ── Provenance (spec-18) ──────────────────────────────────────────────────────
+  describe('provenance', () => {
+    const rec = {
+      filePath: 'src/a.ts',
+      lastAuthor: { name: 'Bob', email: 'bob@example.com' },
+      lastDate: '2026-02-01T10:00:00Z',
+      lastCommit: 'abc1234',
+      lastSubject: 'fix: b (#42)',
+      recentAuthors: [{ name: 'Bob', email: 'bob@example.com' }, { name: 'Alice', email: 'alice@example.com' }],
+      prs: [{ number: 42, title: 'Fix', state: 'merged' }],
+    };
+
+    beforeEach(() => store.insertProvenance([rec]));
+
+    it('round-trips a per-file provenance record', () => {
+      expect(store.countProvenance()).toBe(1);
+      const got = store.getProvenanceForFiles(['src/a.ts']);
+      expect(got).toHaveLength(1);
+      expect(got[0]).toMatchObject({
+        filePath: 'src/a.ts',
+        lastAuthor: { name: 'Bob', email: 'bob@example.com' },
+        recentAuthors: [{ name: 'Bob' }, { name: 'Alice' }],
+        prs: [{ number: 42, title: 'Fix', state: 'merged' }],
+      });
+    });
+
+    it('matches across relative/absolute path forms', () => {
+      expect(store.getProvenanceForFiles(['/abs/project/src/a.ts']).map(r => r.filePath)).toEqual(['src/a.ts']);
+    });
+
+    it('returns nothing for unknown files', () => {
+      expect(store.getProvenanceForFiles(['src/zzz.ts'])).toEqual([]);
+      expect(store.getProvenanceForFiles([])).toEqual([]);
+    });
+
+    it('insertProvenance replaces the prior snapshot wholesale', () => {
+      store.insertProvenance([{ ...rec, filePath: 'src/b.ts' }]);
+      expect(store.countProvenance()).toBe(1);
+      expect(store.getProvenanceForFiles(['src/a.ts'])).toEqual([]);
+      expect(store.getProvenanceForFiles(['src/b.ts'])).toHaveLength(1);
+    });
+
+    it('clearAll wipes provenance too', () => {
+      store.clearAll();
+      expect(store.countProvenance()).toBe(0);
+    });
+  });
+
   // ── Decision projection (spec-16) ─────────────────────────────────────────────
   describe('decisions', () => {
     const decNode = {

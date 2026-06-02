@@ -270,6 +270,10 @@ Agents call `record_decision` before writing code. Consolidation runs immediatel
 
 Decisions are also **first-class graph nodes**. At analyze time the active decision store is projected — the same parser→projector split that puts Infrastructure-as-Code on the graph — into `decision::<id>` nodes joined to the files they govern by `affects` edges. The relationship is stored, not recomputed: `analyze_impact` and `get_subgraph` return the governing decisions of a symbol and its blast radius as typed neighbors (`nodeType: "decision"`), and `orient` reports which relevant files each decision governs. This turns "what architectural decisions constrain this code, and what does changing it implicate?" into a deterministic graph query — the join no code-navigation competitor offers. The JSON store stays authoritative; the projection is derived and rebuilt on every analyze. See [docs/specs/openlore-spec-16-decisions-as-graph-nodes.md](docs/specs/openlore-spec-16-decisions-as-graph-nodes.md).
 
+**Provenance** (no API key, local-only)
+
+Reads the local `.git` history (and local `gh` if present) to project `authored_by` (file → person) and `changed_in_pr` (file → PR) edges onto the graph, so `orient` answers "last changed by X in PR #N" — provenance grep cannot surface. **No OAuth, no cloud connector, nothing is ever uploaded**: the git-only path needs no network, and `gh` is an optional enrichment that degrades gracefully when absent or unauthenticated. Bounded (last-touch + top-N recent authors + recent PRs per file) so the graph never bloats; deterministic for a fixed git state. The same local history feeds the change-coupling instrument (Spec 22). See [docs/provenance.md](docs/provenance.md).
+
 **Telemetry** (opt-in, no API key)
 
 Cognitive telemetry for empirical measurement of EpistemicLease behavior. Gated by `OPENLORE_TELEMETRY=1` — disabled by default. Writes append-only JSONL to `.openlore/telemetry/` per domain. Agent identity is captured from the MCP `initialize` handshake, enabling per-agent behavioral comparison.
@@ -400,6 +404,7 @@ The manifest captures the public API surface, HTTP routes, stats, dependencies, 
 | Preflight CI staleness gate | [docs/preflight.md](docs/preflight.md) |
 | SCIP export (Sourcegraph/Glean interop) | [docs/scip-export.md](docs/scip-export.md) |
 | Cross-domain impact (code ↔ infrastructure) | [docs/cross-domain-impact.md](docs/cross-domain-impact.md) |
+| Local provenance (git/PR, no OAuth) | [docs/provenance.md](docs/provenance.md) |
 | Federation manifest (cross-repo) | [docs/federation.md](docs/federation.md) |
 | CLI command reference | [docs/cli-reference.md](docs/cli-reference.md) |
 | Interactive graph viewer | [docs/viewer.md](docs/viewer.md) |

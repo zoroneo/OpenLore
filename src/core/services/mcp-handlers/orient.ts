@@ -417,6 +417,33 @@ export async function handleOrient(
     // non-fatal — decision projection is additive
   }
 
+  // ── Provenance (local git/gh, spec-18) ─────────────────────────────────────
+  // "Last changed by X in PR #N" for the files this task touches — derived from
+  // local git history (and local gh if present). Additive, local-only, no upload.
+  let provenance:
+    | Array<{ file: string; lastAuthor: string; lastDate?: string; lastPr?: number; lastPrTitle?: string }>
+    | undefined;
+  try {
+    const es = llmCtx?.edgeStore;
+    if (es && relevantFiles.length > 0) {
+      const records = es.getProvenanceForFiles(relevantFiles);
+      if (records.length > 0) {
+        provenance = records.slice(0, 10).map((r) => {
+          const topPr = r.prs[0];
+          return {
+            file: r.filePath,
+            lastAuthor: r.lastAuthor.name || r.lastAuthor.email,
+            ...(r.lastDate ? { lastDate: r.lastDate } : {}),
+            ...(topPr ? { lastPr: topPr.number } : {}),
+            ...(topPr?.title ? { lastPrTitle: topPr.title } : {}),
+          };
+        });
+      }
+    }
+  } catch {
+    // non-fatal — provenance is additive and local-only
+  }
+
   // ── Suggested tools (portable discovery for non-Claude Code clients) ─────
   // Derived from what orient already knows — no extra I/O.
   const _suggested: string[] = ['record_decision'];
@@ -468,6 +495,7 @@ export async function handleOrient(
     ...(matchingSpecs !== undefined ? { matchingSpecs } : {}),
     ...(pendingDecisions !== undefined ? { pendingDecisions } : {}),
     ...(governingDecisions !== undefined ? { governingDecisions } : {}),
+    ...(provenance !== undefined ? { provenance } : {}),
     suggestedTools,
     nextSteps,
   };

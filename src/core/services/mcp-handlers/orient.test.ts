@@ -274,6 +274,49 @@ describe('handleOrient', () => {
     expect(fooPath!.callees.length).toBeGreaterThan(0);
   });
 
+  it('surfaces local provenance (last author + PR) for relevant files (spec-18)', async () => {
+    vi.mocked(VectorIndex.exists).mockReturnValue(true);
+    vi.mocked(VectorIndex.search).mockResolvedValue([
+      makeSearchResult({ id: 'src/foo.ts::doFoo', name: 'doFoo', filePath: 'src/foo.ts' }),
+    ]);
+    vi.mocked(readCachedContext).mockResolvedValue({
+      edgeStore: {
+        getCallers: () => [],
+        getCallees: () => [],
+        getNode: () => null,
+        getDecisionsForFiles: () => [],
+        getProvenanceForFiles: (files: string[]) =>
+          files.some(f => f.endsWith('src/foo.ts'))
+            ? [{
+                filePath: 'src/foo.ts',
+                lastAuthor: { name: 'Bob', email: 'bob@example.com' },
+                lastDate: '2026-02-01T10:00:00Z', lastCommit: 'abc1234', lastSubject: 'fix (#42)',
+                recentAuthors: [{ name: 'Bob', email: 'bob@example.com' }],
+                prs: [{ number: 42, title: 'Fix the bucket' }],
+              }]
+            : [],
+      },
+    } as never);
+
+    const result = await handleOrient('/tmp/proj', 'foo task') as Record<string, unknown>;
+    const prov = result.provenance as Array<{ file: string; lastAuthor: string; lastPr?: number; lastPrTitle?: string }>;
+    expect(prov).toBeDefined();
+    expect(prov[0]).toMatchObject({ file: 'src/foo.ts', lastAuthor: 'Bob', lastPr: 42, lastPrTitle: 'Fix the bucket' });
+  });
+
+  it('omits provenance when the edge store has no provenance for the files (spec-18)', async () => {
+    vi.mocked(VectorIndex.exists).mockReturnValue(true);
+    vi.mocked(VectorIndex.search).mockResolvedValue([makeSearchResult()]);
+    vi.mocked(readCachedContext).mockResolvedValue({
+      edgeStore: {
+        getCallers: () => [], getCallees: () => [], getNode: () => null,
+        getDecisionsForFiles: () => [], getProvenanceForFiles: () => [],
+      },
+    } as never);
+    const result = await handleOrient('/tmp/proj', 'foo task') as Record<string, unknown>;
+    expect(result.provenance).toBeUndefined();
+  });
+
   it('includes matchingSpecs when spec index and embed service are available', async () => {
     vi.mocked(EmbeddingService.fromEnv).mockReturnValue({ model: 'test' } as never);
     vi.mocked(VectorIndex.exists).mockReturnValue(true);

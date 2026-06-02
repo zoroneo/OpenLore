@@ -37,7 +37,14 @@ export type EdgeConfidence =
   | 'external';      // unresolved external/stdlib call (synthetic leaf node)
 
 /** Broad relationship kind */
-export type EdgeKind = 'calls' | 'tested_by' | 'references' | 'depends_on' | 'affects';
+export type EdgeKind =
+  | 'calls'
+  | 'tested_by'
+  | 'references'
+  | 'depends_on'
+  | 'affects'        // decision → governed file (spec-16)
+  | 'authored_by'    // file → person, from local git history (spec-18)
+  | 'changed_in_pr'; // file → pull request, from local git/gh (spec-18)
 
 /** Semantic nature of the call at the call site */
 export type CallType =

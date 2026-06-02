@@ -7,13 +7,27 @@
 
 ## Progress
 
-Branch: `openlore-spec-18-local-provenance-edges`. Not started.
+Branch: `openlore-spec-18-local-provenance-edges`. **DONE** (PR pending).
 
-- [ ] `authored_by` and `changed_in_pr` edges sourced from local git / `gh`
-- [ ] Projected onto existing function/file nodes (derived, regenerable)
-- [ ] Surfaced additively in `orient`
-- [ ] Graceful degradation: git-only when `gh` is absent or unauthenticated
-- [ ] Deterministic given a fixed git state; no network upload
+- [x] `authored_by` and `changed_in_pr` edges sourced from local git / `gh` — new
+      `EdgeKind`s; extractor [git-provenance.ts](../../src/core/provenance/git-provenance.ts)
+      runs two bounded `git log` passes (real authors from `--no-merges`; PR attribution from
+      squash `(#N)` subjects + `--merges --first-parent`). Validated on this repo's real merge
+      history (e.g. `edge-store.ts` → PRs #112, #111, …).
+- [x] Projected onto existing file nodes (derived, regenerable) —
+      [project.ts](../../src/core/provenance/project.ts) maps records to typed `authored_by`/
+      `changed_in_pr` edges; stored one row per file in a new `provenance` table (no person/PR
+      nodes → no graph bloat). Wired into `writeEdgesToSQLite` (best-effort, local-only).
+      `SCHEMA_VERSION` 3 → 4 (rebuild-on-bump).
+- [x] Surfaced additively in `orient` — optional `provenance` block ("last changed by X in
+      PR #N"), omitted when there is none.
+- [x] Graceful degradation — git-only when `gh` is absent/unauthenticated/non-GitHub
+      (`authored_by` works, PR titles omitted); `[]` for non-git/shallow, never blocks `analyze`.
+- [x] Deterministic for a fixed git state; **no network upload on any path**. Caps documented
+      (`PROVENANCE_MAX_COMMITS`/`TOP_AUTHORS`/`MAX_PRS`). Doc:
+      [docs/provenance.md](../provenance.md). Tests over a real temp git repo (authors, squash
+      + merge PRs, determinism, no-git, gh-absent) + projector + edge-store + orient. Full suite
+      green (2993 passing / 134 files).
 
 ---
 

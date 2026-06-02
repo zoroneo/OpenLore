@@ -4821,6 +4821,12 @@ The system SHALL emit a `references` edge from the narrowest enclosing code func
 
 > Decision recorded: 708a8436
 > Date: 2026-06-02
+### Requirement: LocalGitgithubProvenanceStoredAsPerfileRowsInTheEdgestoreSqliteDb
+
+The system SHALL store per-file git provenance (last author, recent authors, pull requests) in the edge-store SQLite database, extracted from local git history during analysis, and SHALL treat extraction failures as non-blocking.
+
+> Decision recorded: f8778883
+> Date: 2026-06-02
 
 ## Technical Notes
 
@@ -4878,3 +4884,13 @@ Architectural decisions from the JSON store are projected into the code graph as
 Embedded IaC frameworks (Pulumi/CDK/CDKTF) declare infrastructure resources inside regular code files. To answer 'what infrastructure does this code provision?' deterministically, the call-graph builder now finds the narrowest enclosing code function by line range and emits a `references` edge from that function to the IaC resource node.
 
 **Consequences:** analyze_impact and get_subgraph now traverse the code↔infra boundary end-to-end without any new edge kind — existing `references` traversal covers it. Standalone IaC files (.tf/.yaml) produce no cross-domain edges since there is no co-located code function. Module-top-level IaC declarations with no enclosing function are intentionally left unlinked.
+
+### Local git/GitHub provenance stored as per-file rows in the edge-store SQLite DB
+
+**Status:** Approved
+**Date:** 2026-06-02
+**ID:** f8778883
+
+Spec-18 requires local provenance (last author, recent authors, associated PRs) to be available for orient and other MCP queries. Storing one row per file in a dedicated `provenance` table keeps the data bounded, avoids inflating the graph edges table, and allows idempotent full-replace on each analyze run.
+
+**Consequences:** Schema version bumped to 4; existing DBs are dropped and rebuilt. Provenance extraction is best-effort and swallowed on failure, so non-git or shallow repos silently produce no provenance. All provenance is local-only — nothing is uploaded.
