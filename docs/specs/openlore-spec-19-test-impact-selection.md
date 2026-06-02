@@ -7,7 +7,7 @@
 
 ## Progress
 
-Branch: `openlore-spec-19-test-impact-selection`. **DONE** (PR pending).
+Branch: `openlore-spec-19-test-impact-selection`. **DONE** — [PR #114](https://github.com/clay-good/OpenLore/pull/114).
 
 - [x] Backward reachability from changed functions/files to the tests that exercise them —
       path-tracked BFS over `buildAdjacency`'s backward map (`calls` + inheritance), collecting
