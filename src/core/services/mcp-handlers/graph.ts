@@ -38,6 +38,7 @@ import {
 } from '../../../constants.js';
 import type { SerializedCallGraph, FunctionNode } from '../../analyzer/call-graph.js';
 import type { DecisionNode } from '../../decisions/project.js';
+import { isIacLanguage } from '../../analyzer/iac/types.js';
 import { getFileGodFunctions, extractSubgraph } from '../../analyzer/subgraph-extractor.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 
@@ -242,6 +243,27 @@ export function decisionToNeighbor(d: DecisionNode) {
     affectedDomains: d.affectedDomains,
     governs: d.affectedFiles,
     ...(d.supersedes ? { supersedes: d.supersedes } : {}),
+  };
+}
+
+/** A node is infrastructure if its language is one of the IaC ecosystems (spec-17). */
+export function isInfraNode(n: FunctionNode | undefined): boolean {
+  return !!n && isIacLanguage(n.language);
+}
+
+/** Render an IaC resource node as a typed cross-domain neighbor (spec-17). */
+export function infraToNeighbor(
+  n: FunctionNode,
+  direction: 'upstream' | 'downstream',
+  depth: number,
+) {
+  return {
+    nodeType: 'infrastructure' as const,
+    name: n.name,
+    file: n.filePath,
+    ecosystem: n.language,
+    direction,
+    depth,
   };
 }
 
@@ -469,17 +491,38 @@ export async function handleAnalyzeImpact(
   const resolveNode = (id: string): FunctionNode | undefined =>
     ctx.edgeStore!.getNode(id) ?? undefined;
 
-  const upstreamNodes = [...upstreamMap.entries()]
-    .filter(([id]) => !seedIds.includes(id))
-    .map(([id, d]) => ({ ...nodeToSummary(resolveNode(id)), depth: d }))
-    .filter(n => n.name);
+  // Resolve once, then partition by domain so code chains stay pure code and
+  // infrastructure neighbors are surfaced separately, clearly typed (spec-17).
+  const resolve = (map: Map<string, number>) =>
+    [...map.entries()]
+      .filter(([id]) => !seedIds.includes(id))
+      .map(([id, d]) => ({ node: resolveNode(id), depth: d }))
+      .filter((x): x is { node: FunctionNode; depth: number } => !!x.node && !!x.node.name);
 
-  const downstreamNodes = [...downstreamMap.entries()]
-    .filter(([id]) => !seedIds.includes(id))
-    .map(([id, d]) => ({ ...nodeToSummary(resolveNode(id)), depth: d }))
-    .filter(n => n.name);
+  const upstreamResolved   = resolve(upstreamMap);
+  const downstreamResolved = resolve(downstreamMap);
 
-  const blastRadius = upstreamNodes.length + downstreamNodes.length;
+  const upstreamNodes = upstreamResolved
+    .filter(x => !isInfraNode(x.node))
+    .map(x => ({ ...nodeToSummary(x.node), depth: x.depth }));
+  const downstreamNodes = downstreamResolved
+    .filter(x => !isInfraNode(x.node))
+    .map(x => ({ ...nodeToSummary(x.node), depth: x.depth }));
+
+  // Cross-domain (code↔infra) neighbors — additive, typed, ecosystem-tagged.
+  const infraNeighbors = [
+    ...upstreamResolved.filter(x => isInfraNode(x.node)).map(x => infraToNeighbor(x.node, 'upstream', x.depth)),
+    ...downstreamResolved.filter(x => isInfraNode(x.node)).map(x => infraToNeighbor(x.node, 'downstream', x.depth)),
+  ];
+  const crossDomain = infraNeighbors.length > 0
+    ? {
+        reachesInfrastructure: true,
+        ecosystems: [...new Set(infraNeighbors.map(n => n.ecosystem))].sort(),
+        infrastructure: infraNeighbors,
+      }
+    : undefined;
+
+  const blastRadius = upstreamNodes.length + downstreamNodes.length + infraNeighbors.length;
 
   // Governing decisions (spec-16): decisions whose `affects` edges intersect the
   // seed plus its blast radius — the deterministic join that answers "what
@@ -488,6 +531,7 @@ export async function handleAnalyzeImpact(
   for (const s of seeds) involvedFiles.add(s.filePath);
   for (const n of upstreamNodes) if (n.file) involvedFiles.add(n.file);
   for (const n of downstreamNodes) if (n.file) involvedFiles.add(n.file);
+  for (const n of infraNeighbors) if (n.file) involvedFiles.add(n.file);
   const governingDecisions = ctx.edgeStore.getDecisionsForFiles([...involvedFiles]).map(decisionToNeighbor);
 
   const results = seeds.map(seed => {
@@ -502,13 +546,19 @@ export async function handleAnalyzeImpact(
       className: seed.className ?? null,
       language:  seed.language,
       metrics:   { fanIn: seed.fanIn ?? 0, fanOut: seed.fanOut ?? 0, isHub },
-      blastRadius: { total: blastRadius, upstream: upstreamNodes.length, downstream: downstreamNodes.length },
+      blastRadius: {
+        total: blastRadius,
+        upstream: upstreamNodes.length,
+        downstream: downstreamNodes.length,
+        ...(infraNeighbors.length > 0 ? { infrastructure: infraNeighbors.length } : {}),
+      },
       riskScore,
       riskLevel: riskScore <= 20 ? 'low' : riskScore <= 45 ? 'medium' : riskScore <= 70 ? 'high' : 'critical',
       upstreamChain:          upstreamNodes,
       downstreamCriticalPath: downstreamNodes,
       criticalPathLeaves,
       recommendedStrategy: strategy,
+      ...(crossDomain ? { crossDomain } : {}),
       ...(governingDecisions.length > 0 ? { governingDecisions } : {}),
     };
   });

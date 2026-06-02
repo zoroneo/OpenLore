@@ -4815,6 +4815,12 @@ The system SHALL project active architectural decisions from the JSON decision s
 
 > Decision recorded: bf450b1c
 > Date: 2026-06-02
+### Requirement: CrossdomainCodeinfraEdgesViaLinecontainmentLinkage
+
+The system SHALL emit a `references` edge from the narrowest enclosing code function to each embedded IaC resource declared within the same file, enabling end-to-end code↔infra graph traversal.
+
+> Decision recorded: 708a8436
+> Date: 2026-06-02
 
 ## Technical Notes
 
@@ -4862,3 +4868,13 @@ Semantic retrieval must work with no API key and no network, so the default inde
 Architectural decisions from the JSON store are projected into the code graph as `decision::` nodes with `affects` edges to governed files, enabling deterministic graph joins (e.g. orient can query governing decisions via SQL rather than runtime set-membership filtering). Dedicated tables keep decision data isolated so code-node statistics (hubs, entry points, countNodes) and call-edge BFS remain untouched.
 
 **Consequences:** Schema version bumped to 3 (old DBs auto-rebuilt). EdgeStore gains decision-specific queries (insertDecisions, getAllDecisions, getDecisionsForFiles). The JSON decision store remains authoritative; SQLite projection is derived and best-effort — a malformed store never blocks the code-graph write. A new EdgeKind 'affects' is added to the call-graph type union.
+
+### Cross-domain code↔infra edges via line-containment linkage
+
+**Status:** Approved
+**Date:** 2026-06-02
+**ID:** 708a8436
+
+Embedded IaC frameworks (Pulumi/CDK/CDKTF) declare infrastructure resources inside regular code files. To answer 'what infrastructure does this code provision?' deterministically, the call-graph builder now finds the narrowest enclosing code function by line range and emits a `references` edge from that function to the IaC resource node.
+
+**Consequences:** analyze_impact and get_subgraph now traverse the code↔infra boundary end-to-end without any new edge kind — existing `references` traversal covers it. Standalone IaC files (.tf/.yaml) produce no cross-domain edges since there is no co-located code function. Module-top-level IaC declarations with no enclosing function are intentionally left unlinked.

@@ -399,6 +399,7 @@ The manifest captures the public API surface, HTTP routes, stats, dependencies, 
 | CI/CD integration | [docs/ci-cd.md](docs/ci-cd.md) |
 | Preflight CI staleness gate | [docs/preflight.md](docs/preflight.md) |
 | SCIP export (Sourcegraph/Glean interop) | [docs/scip-export.md](docs/scip-export.md) |
+| Cross-domain impact (code ↔ infrastructure) | [docs/cross-domain-impact.md](docs/cross-domain-impact.md) |
 | Federation manifest (cross-repo) | [docs/federation.md](docs/federation.md) |
 | CLI command reference | [docs/cli-reference.md](docs/cli-reference.md) |
 | Interactive graph viewer | [docs/viewer.md](docs/viewer.md) |
@@ -441,6 +442,8 @@ The manifest captures the public API surface, HTTP routes, stats, dependencies, 
 **Languages supported**: TypeScript · JavaScript · Python · Go · Rust · Ruby · Java · C++ · Swift · C# · Kotlin · PHP · C · Scala · Dart · Lua · Elixir · Bash — call graphs ride the same node/edge primitives for every language. See [docs/languages.md](docs/languages.md) for per-language extraction limits and the `.h` C/C++ rule.
 
 **Infrastructure-as-Code**: Terraform/HCL · Kubernetes · Helm · CloudFormation · Ansible · Pulumi · AWS CDK · CDKTF — IaC resources and their references are projected onto the same graph as application code, so `orient`, `search_code`, `get_subgraph`, and `analyze_impact` answer "what is the blast radius of changing this security group / ConfigMap / IAM role?" with zero new tooling. See [docs/iac.md](docs/iac.md).
+
+**Cross-domain impact** (Spec 17): for embedded IaC (Pulumi/CDK/CDKTF), the code that provisions a resource is linked to it by a `references` edge, so `analyze_impact` traverses the code↔infra boundary **end-to-end** — "what infrastructure does this handler reach?" and the reverse, "what code breaks if I change this resource?". Infra neighbors are surfaced as a typed, ecosystem-tagged `crossDomain` block, distinct from the code blast radius. A code-only navigator structurally cannot answer this. Reproducible example: [docs/cross-domain-impact.md](docs/cross-domain-impact.md).
 
 ---
 

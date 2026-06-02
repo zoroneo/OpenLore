@@ -815,3 +815,75 @@ describe('governing decisions — analyze_impact & get_subgraph', () => {
     expect(result.governingDecisions).toBeUndefined();
   });
 });
+
+// ============================================================================
+// Cross-domain impact: code ↔ infrastructure (spec-17)
+// ============================================================================
+describe('cross-domain impact — analyze_impact', () => {
+  let dir: string;
+  let store: EdgeStore;
+
+  // handler → deploy (code) --references--> Bucket:logs (Pulumi infra)
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'graph-xdomain-test-'));
+    store = EdgeStore.open(join(dir, 'call-graph.db'));
+    store.insertNodes([
+      makeNode({ id: 'src/app.ts::handleProvisionRequest', fanOut: 1 }),
+      makeNode({ id: 'src/app.ts::deployBucket', fanIn: 1, fanOut: 1 }),
+      makeNode({ id: 'src/app.ts::Bucket:logs', language: 'Pulumi', fanIn: 1 }),
+    ]);
+    store.insertEdges([
+      { callerId: 'src/app.ts::handleProvisionRequest', calleeId: 'src/app.ts::deployBucket', calleeName: 'deployBucket', confidence: 'import', kind: 'calls' },
+      { callerId: 'src/app.ts::deployBucket', calleeId: 'src/app.ts::Bucket:logs', calleeName: 'Bucket:logs', confidence: 'import', kind: 'references' },
+    ]);
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('surfaces the provisioned infra as a typed, ecosystem-tagged crossDomain neighbor', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    const result = await handleAnalyzeImpact(dir, 'deployBucket', 2) as {
+      crossDomain?: { reachesInfrastructure: boolean; ecosystems: string[]; infrastructure: Array<{ nodeType: string; name: string; ecosystem: string; direction: string }> };
+      downstreamCriticalPath: Array<{ name: string }>;
+      blastRadius: { infrastructure?: number };
+    };
+    expect(result.crossDomain?.reachesInfrastructure).toBe(true);
+    expect(result.crossDomain?.ecosystems).toEqual(['Pulumi']);
+    expect(result.crossDomain?.infrastructure).toEqual([
+      { nodeType: 'infrastructure', name: 'Bucket:logs', file: 'src/app.ts', ecosystem: 'Pulumi', direction: 'downstream', depth: 1 },
+    ]);
+    expect(result.blastRadius.infrastructure).toBe(1);
+    // Infra is kept OUT of the pure-code chain.
+    expect(result.downstreamCriticalPath.map(n => n.name)).not.toContain('Bucket:logs');
+  });
+
+  it('reverse: a code function provisioning the resource shows up as its upstream (what code breaks if I change this resource)', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    const result = await handleAnalyzeImpact(dir, 'Bucket:logs', 2) as {
+      symbol?: string; language?: string;
+      upstreamChain: Array<{ name: string }>;
+      crossDomain?: unknown;
+    };
+    expect(result.symbol).toBe('Bucket:logs');
+    expect(result.language).toBe('Pulumi');
+    expect(result.upstreamChain.map(n => n.name)).toContain('deployBucket');
+    // The resource's neighbors here are all code → no infra crossDomain bucket.
+    expect(result.crossDomain).toBeUndefined();
+  });
+
+  it('omits crossDomain entirely for a pure-code impact', async () => {
+    store.clearAll();
+    store.insertNodes([
+      makeNode({ id: 'src/a.ts::foo', fanOut: 1 }),
+      makeNode({ id: 'src/b.ts::bar', fanIn: 1 }),
+    ]);
+    store.insertEdges([{ callerId: 'src/a.ts::foo', calleeId: 'src/b.ts::bar', calleeName: 'bar', confidence: 'import', kind: 'calls' }]);
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    const result = await handleAnalyzeImpact(dir, 'foo', 2) as { crossDomain?: unknown; blastRadius: { infrastructure?: number } };
+    expect(result.crossDomain).toBeUndefined();
+    expect(result.blastRadius.infrastructure).toBeUndefined();
+  });
+});

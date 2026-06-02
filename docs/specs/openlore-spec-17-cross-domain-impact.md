@@ -7,12 +7,34 @@
 
 ## Progress
 
-Branch: `openlore-spec-17-cross-domain-impact`. Not started.
+Branch: `openlore-spec-17-cross-domain-impact`. **DONE** — [PR #112](https://github.com/clay-good/OpenLore/pull/112).
 
-- [ ] End-to-end traversal across the existing code↔infra edges
-- [ ] Surface it through `analyze_impact` (blast radius now spans infra) and `orient`
-- [ ] One published, reproducible code→infra example
-- [ ] Deterministic and offline; tests over existing IaC fixtures
+- [x] End-to-end traversal across the code↔infra boundary. Investigation found code
+      and infra were *disconnected components* — both in the graph, but no edge linked
+      them (`bfsFromDB` already traverses `references`/`depends_on`; the missing piece was
+      a connecting edge). Added the deterministic link: `linkCodeToInfra` in
+      [call-graph.ts](../../src/core/analyzer/call-graph.ts) attaches a `references` edge
+      from the enclosing code function to each embedded IaC resource (Pulumi/CDK/CDKTF) it
+      provisions, by line containment. Standalone `.tf`/`.yaml` (no co-located code) stays
+      infra-only, exactly as before.
+- [x] Surface through `analyze_impact` and `orient`. `analyze_impact` now partitions the
+      blast radius: pure-code chains stay code, infra neighbors go in a typed,
+      ecosystem-tagged `crossDomain.infrastructure` block (`nodeType: "infrastructure"`)
+      with a `blastRadius.infrastructure` count; the field is omitted entirely for
+      code-only impact (byte-for-byte unchanged). `orient` tags IaC neighbors in its
+      callPaths with `domain: "infra"`. `get_subgraph` already returns `language`.
+- [x] One published, reproducible example —
+      [docs/cross-domain-impact.md](../cross-domain-impact.md) +
+      fixture [iac/fixtures/cross-domain/app.ts](../../src/core/analyzer/iac/fixtures/cross-domain/app.ts).
+- [x] Deterministic and offline; tests over IaC fixtures —
+      [iac/cross-domain.test.ts](../../src/core/analyzer/iac/cross-domain.test.ts) (edge,
+      reachability, determinism, standalone isolation) + the `analyze_impact` cross-domain
+      block in [graph.test.ts](../../src/core/services/mcp-handlers/graph.test.ts).
+
+> Bonus fix surfaced by this work: `EdgeStore.searchNodes` passed the query straight into an
+> FTS5 MATCH, so any symbol containing `:` (every Pulumi address, e.g. `Bucket:logs`) was
+> misparsed as a column filter and threw. Wrapped the term as an FTS5 phrase — now any IaC
+> resource is searchable/impact-queryable by name. Full suite green (2973 passing / 132 files).
 
 ---
 

@@ -19,6 +19,7 @@ import type { ImportMap } from './import-resolver-bridge.js';
 import { inferTypesFromSource, resolveViaTypeInference } from './type-inference-engine.js';
 import { extractAllHttpEdges } from './http-route-parser.js';
 import { buildProjectedIac } from './iac/index.js';
+import { isIacLanguage } from './iac/types.js';
 import { logger } from '../../utils/logger.js';
 
 // ============================================================================
@@ -367,6 +368,72 @@ function findEnclosingFunction(
     }
   }
   return best;
+}
+
+/**
+ * Cross-domain code↔infra edges (spec-17).
+ *
+ * For each embedded IaC resource (Pulumi/CDK/CDKTF, declared inside a code file),
+ * find the narrowest enclosing code function in the same file by line containment
+ * and emit a `references` edge: enclosing function → resource. This is the single
+ * deterministic link that crosses the code↔infra boundary, so the existing graph
+ * traversal (which already walks `references` edges) answers "what infrastructure
+ * does this code provision?" and the reverse, end-to-end.
+ *
+ * Resources with no enclosing function (e.g. Pulumi declared at module top level)
+ * are left unlinked — there is no code unit to attribute them to. Standalone IaC
+ * (.tf/.yaml) has no co-located code functions, so nothing matches.
+ */
+function linkCodeToInfra(
+  iacNodes: FunctionNode[],
+  allNodes: Map<string, FunctionNode>,
+): CallEdge[] {
+  // Index code (non-IaC, non-external) function nodes with known line ranges by file.
+  const codeByFile = new Map<string, FunctionNode[]>();
+  for (const n of allNodes.values()) {
+    if (n.isExternal) continue;
+    if (isIacLanguage(n.language)) continue;
+    if (n.startLine === undefined || n.endLine === undefined) continue;
+    const arr = codeByFile.get(n.filePath);
+    if (arr) arr.push(n);
+    else codeByFile.set(n.filePath, [n]);
+  }
+  if (codeByFile.size === 0) return [];
+
+  const edges: CallEdge[] = [];
+  const seen = new Set<string>();
+  // Deterministic: iterate resources in id order.
+  const sorted = [...iacNodes].sort((a, b) => a.id.localeCompare(b.id));
+  for (const res of sorted) {
+    if (!isIacLanguage(res.language)) continue;
+    if (res.startLine === undefined) continue;
+    const candidates = codeByFile.get(res.filePath);
+    if (!candidates) continue;
+
+    // Narrowest code function whose line range encloses the resource declaration.
+    let best: FunctionNode | undefined;
+    let bestSpan = Infinity;
+    for (const fn of candidates) {
+      if (fn.startLine! <= res.startLine && res.startLine <= fn.endLine!) {
+        const span = fn.endLine! - fn.startLine!;
+        if (span < bestSpan) { bestSpan = span; best = fn; }
+      }
+    }
+    if (!best || best.id === res.id) continue;
+
+    const key = `${best.id}\0${res.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push({
+      callerId: best.id,
+      calleeId: res.id,
+      calleeName: res.name,
+      line: res.startLine,
+      confidence: 'import',
+      kind: 'references',
+    });
+  }
+  return edges;
 }
 
 // ============================================================================
@@ -2638,6 +2705,14 @@ export class CallGraphBuilder {
       for (const n of iac.nodes) if (!allNodes.has(n.id)) allNodes.set(n.id, n);
       edges.push(...iac.edges);
       iacClasses = iac.classes;
+
+      // Pass 2c.1: Cross-domain code↔infra edges (spec-17).
+      // Embedded IaC (Pulumi/CDK/CDKTF) declares resources *inside* code files.
+      // Link the enclosing code function → the resource it provisions with a
+      // `references` edge, so analyze_impact/get_subgraph traverse the code↔infra
+      // boundary end-to-end. Standalone IaC (.tf/.yaml) has no co-located code, so
+      // no edge is created — those stay infra-only components, exactly as today.
+      edges.push(...linkCodeToInfra(iac.nodes, allNodes));
     } catch {
       // IaC extraction is best-effort; never fail the whole build
     }

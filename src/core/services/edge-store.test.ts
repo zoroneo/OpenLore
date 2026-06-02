@@ -199,6 +199,17 @@ describe('EdgeStore', () => {
       expect(results.some(n => n.id === nodeA.id)).toBe(true);
     });
 
+    it('searchNodes handles IaC resource names with FTS-special chars (spec-17)', () => {
+      const iacNode: FunctionNode = {
+        id: 'src/app.ts::Bucket:logs', name: 'Bucket:logs', filePath: 'src/app.ts',
+        isAsync: false, language: 'Pulumi', startIndex: 0, endIndex: 0, fanIn: 0, fanOut: 0,
+      };
+      store.insertNodes([iacNode]);
+      // ':' would be read as an FTS5 column filter unquoted — must not throw, must match.
+      expect(store.searchNodes('Bucket:logs').some(n => n.id === iacNode.id)).toBe(true);
+      expect(store.searchNodes('bucket').some(n => n.id === iacNode.id)).toBe(true);
+    });
+
     it('getCallers returns edges where node is callee', () => {
       store.insertNodes([nodeA]);
       const callers = store.getCallers(nodeA.id);

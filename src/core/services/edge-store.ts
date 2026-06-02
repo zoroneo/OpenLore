@@ -299,6 +299,10 @@ export class EdgeStore {
   /** Case-insensitive substring search on node name. FTS5 trigram for ≥3 chars, LIKE fallback otherwise. */
   searchNodes(pattern: string, limit = 50): FunctionNode[] {
     if (pattern.length >= 3) {
+      // Wrap as an FTS5 phrase so special characters in the symbol are literal —
+      // IaC resource names contain ':' (e.g. "Bucket:logs") and '.' which FTS5
+      // would otherwise read as column filters / operators (spec-17).
+      const phrase = `"${pattern.replace(/"/g, '""')}"`;
       return (
         this.db
           .prepare(`
@@ -307,7 +311,7 @@ export class EdgeStore {
             WHERE nodes_fts MATCH ? AND n.is_external = 0
             LIMIT ?
           `)
-          .all(pattern, limit) as unknown as RawNode[]
+          .all(phrase, limit) as unknown as RawNode[]
       ).map(rawToFunctionNode);
     }
     return (

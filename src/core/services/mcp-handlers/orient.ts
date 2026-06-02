@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain, readCachedContext } from './utils.js';
 import { readOpenLoreConfig } from '../config-manager.js';
+import { isIacLanguage } from '../../analyzer/iac/types.js';
 import type { RagManifest } from '../../generator/rag-manifest-generator.js';
 import { OPENSPEC_DIR, ARTIFACT_RAG_MANIFEST } from '../../../constants.js';
 import {
@@ -102,6 +103,8 @@ interface OrientFunction {
 interface CallNeighbour {
   name: string;
   filePath: string;
+  /** Present only for infrastructure neighbors (IaC resources) — spec-17 cross-domain. */
+  domain?: 'infra';
 }
 
 interface OrientCallPath {
@@ -257,12 +260,17 @@ export async function handleOrient(
       return { function: r.record.name, filePath: r.record.filePath, callers: [], callees: [] };
     }
     const es = llmCtx.edgeStore;
+    // Tag IaC resources so an agent can tell infrastructure neighbors from code (spec-17).
+    const toNeighbour = (n: ReturnType<typeof es.getNode>): CallNeighbour | null =>
+      n && !n.isExternal
+        ? { name: n.name, filePath: n.filePath, ...(isIacLanguage(n.language) ? { domain: 'infra' as const } : {}) }
+        : null;
     const callers = es.getCallers(r.record.id)
-      .map(e => { const n = es.getNode(e.callerId); return n && !n.isExternal ? { name: n.name, filePath: n.filePath } : null; })
+      .map(e => toNeighbour(es.getNode(e.callerId)))
       .filter((x): x is CallNeighbour => x !== null)
       .slice(0, 5);
     const callees = es.getCallees(r.record.id)
-      .map(e => { const n = es.getNode(e.calleeId); return n && !n.isExternal ? { name: n.name, filePath: n.filePath } : null; })
+      .map(e => toNeighbour(es.getNode(e.calleeId)))
       .filter((x): x is CallNeighbour => x !== null)
       .slice(0, 5);
     return { function: r.record.name, filePath: r.record.filePath, callers, callees };
