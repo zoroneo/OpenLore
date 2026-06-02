@@ -2,6 +2,8 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { CallEdge, FunctionNode, ClassNode, InheritanceEdge } from '../analyzer/call-graph.js';
+import type { DecisionNode, DecisionAffectsEdge } from '../decisions/project.js';
+import type { DecisionStatus } from '../../types/index.js';
 import { ARTIFACT_CALL_GRAPH_DB } from '../../constants.js';
 
 
@@ -44,7 +46,7 @@ function runTransaction(db: DatabaseSync, fn: () => void): void {
 }
 
 /** Bump when schema changes. Old DBs are dropped and rebuilt on next analyze --force. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export class EdgeStore {
   private constructor(private readonly db: DatabaseSync) {
@@ -64,6 +66,8 @@ export class EdgeStore {
         DROP TABLE IF EXISTS nodes;
         DROP TABLE IF EXISTS classes;
         DROP TABLE IF EXISTS file_hashes;
+        DROP TABLE IF EXISTS decisions;
+        DROP TABLE IF EXISTS decision_edges;
         DROP TABLE IF EXISTS schema_version;
         CREATE TABLE schema_version (version INTEGER NOT NULL);
       `);
@@ -138,6 +142,31 @@ export class EdgeStore {
       );
 
       CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(node_id UNINDEXED, name, tokenize='trigram');
+
+      -- Architectural decisions projected as first-class graph nodes (spec-16).
+      -- Derived from .openlore/decisions/pending.json; the JSON store stays
+      -- authoritative. Held in dedicated tables so code-node stats (hubs,
+      -- entry points, countNodes) and call-edge BFS are untouched.
+      CREATE TABLE IF NOT EXISTS decisions (
+        id               TEXT PRIMARY KEY,  -- graph node id "decision::<id>"
+        decision_id      TEXT NOT NULL,     -- original 8-char store id
+        title            TEXT NOT NULL,
+        status           TEXT NOT NULL,
+        rationale        TEXT NOT NULL DEFAULT '',
+        consequences     TEXT NOT NULL DEFAULT '',
+        affected_domains TEXT NOT NULL DEFAULT '[]',
+        affected_files   TEXT NOT NULL DEFAULT '[]',
+        confidence       TEXT,
+        supersedes       TEXT
+      );
+
+      -- affects edges: decision node -> governed file path.
+      CREATE TABLE IF NOT EXISTS decision_edges (
+        decision_id TEXT NOT NULL,  -- graph node id "decision::<id>"
+        file_path   TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_decision_edge_file ON decision_edges(file_path);
+      CREATE INDEX IF NOT EXISTS idx_decision_edge_dec  ON decision_edges(decision_id);
     `);
   }
 
@@ -405,6 +434,76 @@ export class EdgeStore {
     });
   }
 
+  // ── Decision queries / mutations (spec-16) ─────────────────────────────────────
+
+  /** Replace the projected decision graph wholesale (idempotent re-projection). */
+  insertDecisions(nodes: DecisionNode[], edges: DecisionAffectsEdge[]): void {
+    const nodeStmt: StatementSync = this.db.prepare(`
+      INSERT OR REPLACE INTO decisions
+        (id, decision_id, title, status, rationale, consequences, affected_domains, affected_files, confidence, supersedes)
+      VALUES
+        (@id, @decisionId, @title, @status, @rationale, @consequences, @affectedDomains, @affectedFiles, @confidence, @supersedes)
+    `);
+    const edgeStmt: StatementSync = this.db.prepare(
+      'INSERT INTO decision_edges (decision_id, file_path) VALUES (?, ?)'
+    );
+    runTransaction(this.db, () => {
+      this.db.exec('DELETE FROM decisions; DELETE FROM decision_edges;');
+      for (const n of nodes) {
+        nodeStmt.run({
+          '@id':              n.id,
+          '@decisionId':      n.decisionId,
+          '@title':           n.title,
+          '@status':          n.status,
+          '@rationale':       n.rationale,
+          '@consequences':    n.consequences,
+          '@affectedDomains': JSON.stringify(n.affectedDomains),
+          '@affectedFiles':   JSON.stringify(n.affectedFiles),
+          '@confidence':      n.confidence ?? null,
+          '@supersedes':      n.supersedes ?? null,
+        });
+      }
+      for (const e of edges) edgeStmt.run(e.decisionNodeId, e.filePath);
+    });
+  }
+
+  /** Every projected decision node (deterministic order). */
+  getAllDecisions(): DecisionNode[] {
+    return (
+      this.db.prepare('SELECT * FROM decisions ORDER BY id').all() as unknown as RawDecision[]
+    ).map(rawToDecisionNode);
+  }
+
+  countDecisions(): number {
+    const row = this.db.prepare('SELECT COUNT(*) as n FROM decisions').get() as { n: number };
+    return row.n;
+  }
+
+  /**
+   * Governing decisions for a set of files — the deterministic graph join that
+   * replaces orient's runtime affectedFiles set-membership filter (spec-16).
+   *
+   * Path forms differ across callers (edge-store nodes are repo-relative; some
+   * callers pass absolute paths), and decisions are few, so we match in JS with a
+   * tolerant suffix comparator rather than relying on exact SQL equality.
+   */
+  getDecisionsForFiles(files: string[]): DecisionNode[] {
+    if (files.length === 0) return [];
+    const edgeRows = this.db
+      .prepare('SELECT decision_id, file_path FROM decision_edges')
+      .all() as unknown as Array<{ decision_id: string; file_path: string }>;
+    if (edgeRows.length === 0) return [];
+
+    const wanted = files.filter(Boolean);
+    const matchedIds = new Set<string>();
+    for (const row of edgeRows) {
+      if (wanted.some(f => pathsMatch(f, row.file_path))) matchedIds.add(row.decision_id);
+    }
+    if (matchedIds.size === 0) return [];
+
+    return this.getAllDecisions().filter(d => matchedIds.has(d.id));
+  }
+
   // ── Content-hash cache ────────────────────────────────────────────────────────
 
   getFileHash(filePath: string): string | null {
@@ -424,7 +523,7 @@ export class EdgeStore {
 
   /** Drop all graph data — used by full analyze rebuild. */
   clearAll(): void {
-    this.db.exec('DELETE FROM edges; DELETE FROM inheritance_edges; DELETE FROM nodes; DELETE FROM classes; DELETE FROM nodes_fts; DELETE FROM file_hashes;');
+    this.db.exec('DELETE FROM edges; DELETE FROM inheritance_edges; DELETE FROM nodes; DELETE FROM classes; DELETE FROM nodes_fts; DELETE FROM file_hashes; DELETE FROM decisions; DELETE FROM decision_edges;');
   }
 
   /** Run fn inside a single SQLite transaction. */
@@ -495,6 +594,44 @@ interface RawClass {
   fan_in:         number;
   fan_out:        number;
   is_module:      number;
+}
+
+interface RawDecision {
+  id:               string;
+  decision_id:      string;
+  title:            string;
+  status:           string;
+  rationale:        string;
+  consequences:     string;
+  affected_domains: string;
+  affected_files:   string;
+  confidence:       string | null;
+  supersedes:       string | null;
+}
+
+/** Tolerant path equality: exact, or one path is a suffix of the other. */
+function pathsMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  const na = a.replace(/^\/+/, '');
+  const nb = b.replace(/^\/+/, '');
+  if (na === nb) return true;
+  return na.endsWith('/' + nb) || nb.endsWith('/' + na);
+}
+
+function rawToDecisionNode(r: RawDecision): DecisionNode {
+  return {
+    id:              r.id,
+    decisionId:      r.decision_id,
+    kind:            'decision',
+    title:           r.title,
+    status:          r.status as DecisionStatus,
+    rationale:       r.rationale,
+    consequences:    r.consequences,
+    affectedDomains: JSON.parse(r.affected_domains) as string[],
+    affectedFiles:   JSON.parse(r.affected_files) as string[],
+    confidence:      (r.confidence ?? 'medium') as DecisionNode['confidence'],
+    ...(r.supersedes ? { supersedes: r.supersedes } : {}),
+  };
 }
 
 function rawToCallEdge(r: RawEdge): CallEdge {

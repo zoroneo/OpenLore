@@ -384,6 +384,31 @@ export async function handleOrient(
     // non-fatal — decisions feature may not be initialised
   }
 
+  // ── Governing decisions (graph-derived, spec-16) ───────────────────────────
+  // The `affects`-edge join: decisions that govern the files this task touches,
+  // resolved deterministically from the projected decision graph rather than a
+  // runtime set-membership scan. Additive alongside pendingDecisions — this field
+  // also reports *which* files each decision governs (file-level provenance).
+  let governingDecisions:
+    | Array<{ id: string; title: string; status: string; governs: string[] }>
+    | undefined;
+  try {
+    const es = llmCtx?.edgeStore;
+    if (es && relevantFiles.length > 0) {
+      const govs = es.getDecisionsForFiles(relevantFiles);
+      if (govs.length > 0) {
+        governingDecisions = govs.map((d) => ({
+          id: d.decisionId,
+          title: d.title,
+          status: d.status,
+          governs: d.affectedFiles,
+        }));
+      }
+    }
+  } catch {
+    // non-fatal — decision projection is additive
+  }
+
   // ── Suggested tools (portable discovery for non-Claude Code clients) ─────
   // Derived from what orient already knows — no extra I/O.
   const _suggested: string[] = ['record_decision'];
@@ -434,6 +459,7 @@ export async function handleOrient(
     insertionPoints,
     ...(matchingSpecs !== undefined ? { matchingSpecs } : {}),
     ...(pendingDecisions !== undefined ? { pendingDecisions } : {}),
+    ...(governingDecisions !== undefined ? { governingDecisions } : {}),
     suggestedTools,
     nextSteps,
   };

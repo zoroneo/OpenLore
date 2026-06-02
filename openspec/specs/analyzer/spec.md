@@ -4809,6 +4809,12 @@ The system SHALL provide BM25 keyword retrieval as the default search index, req
 
 > Decision recorded: 06a6e545
 > Date: 2026-06-01
+### Requirement: DecisionsProjectedAsFirstclassGraphNodesWithDedicatedSqliteTables
+
+The system SHALL project active architectural decisions from the JSON decision store into the code graph as first-class nodes with `affects` edges, stored in dedicated SQLite tables that do not interfere with code-node statistics or call-edge traversal.
+
+> Decision recorded: bf450b1c
+> Date: 2026-06-02
 
 ## Technical Notes
 
@@ -4846,3 +4852,13 @@ The call-graph SQLite store is a derived cache, not a source of truth, so on a s
 Semantic retrieval must work with no API key and no network, so the default index is a deterministic BM25 corpus built from static analysis; embeddings layer on only when a provider is configured (Spec 06).
 
 **Consequences:** orient and search_code always work offline; embeddings are an optional ranking boost, never a hard dependency.
+
+### Decisions projected as first-class graph nodes with dedicated SQLite tables
+
+**Status:** Approved
+**Date:** 2026-06-02
+**ID:** bf450b1c
+
+Architectural decisions from the JSON store are projected into the code graph as `decision::` nodes with `affects` edges to governed files, enabling deterministic graph joins (e.g. orient can query governing decisions via SQL rather than runtime set-membership filtering). Dedicated tables keep decision data isolated so code-node statistics (hubs, entry points, countNodes) and call-edge BFS remain untouched.
+
+**Consequences:** Schema version bumped to 3 (old DBs auto-rebuilt). EdgeStore gains decision-specific queries (insertDecisions, getAllDecisions, getDecisionsForFiles). The JSON decision store remains authoritative; SQLite projection is derived and best-effort — a malformed store never blocks the code-graph write. A new EdgeKind 'affects' is added to the call-graph type union.

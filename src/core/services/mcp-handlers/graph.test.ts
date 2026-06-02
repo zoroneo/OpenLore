@@ -745,3 +745,73 @@ describe('symbol resolution — exact-match preference', () => {
     expect(result.nodes?.map(n => n.name)).toContain('auth');
   });
 });
+
+// ============================================================================
+// Governing decisions as typed graph neighbors (spec-16)
+// ============================================================================
+describe('governing decisions — analyze_impact & get_subgraph', () => {
+  let dir: string;
+  let store: EdgeStore;
+
+  // entry → middle → leaf, with a decision governing the seed's file (src/a.ts).
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'graph-decisions-test-'));
+    store = EdgeStore.open(join(dir, 'call-graph.db'));
+    store.insertNodes([
+      makeNode({ id: 'src/a.ts::entry',  fanOut: 1 }),
+      makeNode({ id: 'src/b.ts::middle', fanIn: 1, fanOut: 1 }),
+      makeNode({ id: 'src/c.ts::leaf',   fanIn: 1, fanOut: 0 }),
+    ]);
+    store.insertEdges([
+      makeEdge('src/a.ts::entry',  'src/b.ts::middle'),
+      makeEdge('src/b.ts::middle', 'src/c.ts::leaf'),
+    ]);
+    store.insertDecisions(
+      [{
+        id: 'decision::c6d1ad07', decisionId: 'c6d1ad07', kind: 'decision',
+        title: 'North star is a deterministic substrate', status: 'verified',
+        rationale: 'local-first plumbing', consequences: 'features must serve the agent case',
+        affectedDomains: ['overview'], affectedFiles: ['src/a.ts'], confidence: 'high',
+      }],
+      [{ decisionNodeId: 'decision::c6d1ad07', filePath: 'src/a.ts', kind: 'affects' }],
+    );
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('analyze_impact returns the governing decision as a typed neighbor (not a code node)', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    const result = await handleAnalyzeImpact(dir, 'entry', 2) as {
+      governingDecisions?: Array<{ nodeType: string; id: string; governs: string[] }>;
+      upstreamChain: unknown[];
+    };
+    expect(result.governingDecisions).toBeDefined();
+    expect(result.governingDecisions!).toHaveLength(1);
+    expect(result.governingDecisions![0]).toMatchObject({
+      nodeType: 'decision',
+      id: 'c6d1ad07',
+      governs: ['src/a.ts'],
+    });
+  });
+
+  it('get_subgraph surfaces governing decisions for the subgraph files', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    const result = await handleGetSubgraph(dir, 'entry', 'downstream', 2) as {
+      governingDecisions?: Array<{ id: string }>;
+      stats: { governingDecisions: number };
+    };
+    expect(result.stats.governingDecisions).toBe(1);
+    expect(result.governingDecisions?.map(d => d.id)).toEqual(['c6d1ad07']);
+  });
+
+  it('omits the field entirely when no decision governs the touched files', async () => {
+    store.clearAll();
+    store.insertNodes([makeNode({ id: 'src/x.ts::solo', fanIn: 0, fanOut: 0 })]);
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    const result = await handleAnalyzeImpact(dir, 'solo', 2) as { governingDecisions?: unknown };
+    expect(result.governingDecisions).toBeUndefined();
+  });
+});

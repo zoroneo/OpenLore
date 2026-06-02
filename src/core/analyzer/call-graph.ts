@@ -36,7 +36,7 @@ export type EdgeConfidence =
   | 'external';      // unresolved external/stdlib call (synthetic leaf node)
 
 /** Broad relationship kind */
-export type EdgeKind = 'calls' | 'tested_by' | 'references' | 'depends_on';
+export type EdgeKind = 'calls' | 'tested_by' | 'references' | 'depends_on' | 'affects';
 
 /** Semantic nature of the call at the call site */
 export type CallType =
