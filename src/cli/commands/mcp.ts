@@ -44,7 +44,7 @@ import { sanitizeMcpError, validateDirectory } from '../../core/services/mcp-han
 import { createTracker, updateTracker, getFreshnessSignal } from '../../core/services/mcp-handlers/epistemic-lease.js';
 import type { EpistemicTracker } from '../../core/services/mcp-handlers/epistemic-lease.js';
 import { emit } from '../../core/services/telemetry.js';
-import { DEFAULT_DRIFT_MAX_FILES, MCP_TOOL_MAX_BYTES } from '../../constants.js';
+import { MCP_TOOL_MAX_BYTES } from '../../constants.js';
 import {
   handleGetCallGraph,
   handleGetSubgraph,
@@ -60,24 +60,8 @@ import {
   handleSearchCode,
   handleSuggestInsertionPoints,
   handleSearchSpecs,
-  handleListSpecDomains,
-  handleGetSpec,
-  handleUnifiedSearch,
 } from '../../core/services/mcp-handlers/semantic.js';
-import { handleOrient } from '../../core/services/mcp-handlers/orient.js';
-import { handleSelectTests } from '../../core/services/mcp-handlers/test-impact.js';
-import { handleFindDeadCode } from '../../core/services/mcp-handlers/reachability.js';
-import { handleStructuralDiff } from '../../core/services/mcp-handlers/structural-diff.js';
-import { handleGetChangeCoupling } from '../../core/services/mcp-handlers/change-coupling.js';
-import { handleCheckArchitecture } from '../../core/services/mcp-handlers/architecture.js';
-import { handleGenerateChangeProposal, handleAnnotateStory } from '../../core/services/mcp-handlers/change.js';
-import {
-  handleRecordDecision,
-  handleListDecisions,
-  handleApproveDecision,
-  handleRejectDecision,
-  handleSyncDecisions,
-} from '../../core/services/mcp-handlers/decisions.js';
+import { dispatchTool, UnknownToolError } from '../../core/services/tool-dispatch.js';
 import {
   handleAnalyzeCodebase,
   handleGetArchitectureOverview,
@@ -87,8 +71,6 @@ import {
   handleGetMapping,
   handleCheckSpecDrift,
   handleGetFunctionSkeleton,
-  handleGetFunctionBody,
-  handleGetDecisions,
   handleGetRouteInventory,
   handleGetMiddlewareInventory,
   handleGetSchemaInventory,
@@ -1590,10 +1572,17 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
       // pathological hang can never wedge the server. Slow tools (analysis, LLM) have
       // generous overrides in MCP_TOOL_TIMEOUT_OVERRIDES.
       await withToolTimeout((async () => {
-      if (name === 'orient') {
-        const { task, limit = 5, tokenBudget, lean } = args as { task: string; limit?: number; tokenBudget?: number; lean?: boolean };
-        result = await handleOrient(directory, task, limit, tokenBudget, lean);
-        if (result && typeof result === 'object') {
+        try {
+          result = await dispatchTool(name, args as Record<string, unknown>, directory);
+        } catch (err) {
+          if (err instanceof UnknownToolError) {
+            _unknownTool = true;
+            return;
+          }
+          throw err;
+        }
+        // orient emits navigation telemetry tied to the MCP session's agent.
+        if (name === 'orient' && result && typeof result === 'object') {
           const r = result as Record<string, unknown>;
           emit(directory, 'orient', {
             event: 'orient_call',
@@ -1604,186 +1593,6 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
             insertion_points: Array.isArray(r['insertionPoints']) ? r['insertionPoints'].length : 0,
           });
         }
-      } else if (name === 'analyze_codebase') {
-        const { directory, force = false } = args as { directory: string; force?: boolean };
-        result = await handleAnalyzeCodebase(directory, force);
-      } else if (name === 'get_architecture_overview') {
-        const { directory } = args as { directory: string };
-        result = await handleGetArchitectureOverview(directory);
-      } else if (name === 'get_refactor_report') {
-        const { directory } = args as { directory: string };
-        result = await handleGetRefactorReport(directory);
-      } else if (name === 'get_call_graph') {
-        const { directory } = args as { directory: string };
-        result = await handleGetCallGraph(directory);
-      } else if (name === 'get_signatures') {
-        const { directory, filePattern } = args as { directory: string; filePattern?: string };
-        result = await handleGetSignatures(directory, filePattern);
-      } else if (name === 'get_subgraph') {
-        const { directory, functionName, direction = 'downstream', maxDepth = 3, format = 'json' } =
-          args as { directory: string; functionName: string; direction?: 'downstream' | 'upstream' | 'both'; maxDepth?: number; format?: 'json' | 'mermaid' };
-        result = await handleGetSubgraph(directory, functionName, direction, maxDepth, format);
-      } else if (name === 'trace_execution_path') {
-        const { directory, entryFunction, targetFunction, maxDepth = 6, maxPaths = 10 } =
-          args as { directory: string; entryFunction: string; targetFunction: string; maxDepth?: number; maxPaths?: number };
-        result = await handleTraceExecutionPath(directory, entryFunction, targetFunction, maxDepth, maxPaths);
-      } else if (name === 'get_mapping') {
-        const { directory, domain, orphansOnly } = args as { directory: string; domain?: string; orphansOnly?: boolean };
-        result = await handleGetMapping(directory, domain, orphansOnly);
-      } else if (name === 'analyze_impact') {
-        const { directory, symbol, depth = 2 } =
-          args as { directory: string; symbol: string; depth?: number };
-        result = await handleAnalyzeImpact(directory, symbol, depth);
-      } else if (name === 'select_tests') {
-        const { directory, changedSymbols, diffRef, maxDepth } =
-          args as { directory: string; changedSymbols?: string[]; diffRef?: string; maxDepth?: number };
-        result = await handleSelectTests({ directory, changedSymbols, diffRef, maxDepth });
-      } else if (name === 'find_dead_code') {
-        const { directory, ifDeleted, maxResults, filePattern } =
-          args as { directory: string; ifDeleted?: string; maxResults?: number; filePattern?: string };
-        result = await handleFindDeadCode({ directory, ifDeleted, maxResults, filePattern });
-      } else if (name === 'structural_diff') {
-        const { directory, baseRef, headRef, maxResults } =
-          args as { directory: string; baseRef?: string; headRef?: string; maxResults?: number };
-        result = await handleStructuralDiff({ directory, baseRef, headRef, maxResults });
-      } else if (name === 'get_change_coupling') {
-        const { directory, file, limit } = args as { directory: string; file?: string; limit?: number };
-        result = await handleGetChangeCoupling({ directory, file, limit });
-      } else if (name === 'check_architecture') {
-        const { directory, from, to } = args as { directory: string; from?: string; to?: string };
-        result = await handleCheckArchitecture({ directory, from, to });
-      } else if (name === 'get_low_risk_refactor_candidates') {
-        const { directory, limit = 5, filePattern } =
-          args as { directory: string; limit?: number; filePattern?: string };
-        result = await handleGetLowRiskRefactorCandidates(directory, limit, filePattern);
-      } else if (name === 'get_leaf_functions') {
-        const { directory, limit = 20, filePattern, sortBy = 'fanIn' } =
-          args as { directory: string; limit?: number; filePattern?: string; sortBy?: 'fanIn' | 'name' | 'file' };
-        result = await handleGetLeafFunctions(directory, limit, filePattern, sortBy);
-      } else if (name === 'get_critical_hubs') {
-        const { directory, limit = 10, minFanIn = 3 } =
-          args as { directory: string; limit?: number; minFanIn?: number };
-        result = await handleGetCriticalHubs(directory, limit, minFanIn);
-      } else if (name === 'get_duplicate_report') {
-        const { directory } = args as { directory: string };
-        result = await handleGetDuplicateReport(directory);
-      } else if (name === 'get_function_skeleton') {
-        const { directory, filePath } = args as { directory: string; filePath: string };
-        result = await handleGetFunctionSkeleton(directory, filePath);
-      } else if (name === 'get_god_functions') {
-        const { directory, filePath, fanOutThreshold = 8 } =
-          args as { directory: string; filePath?: string; fanOutThreshold?: number };
-        result = await handleGetGodFunctions(directory, filePath, fanOutThreshold);
-      } else if (name === 'check_spec_drift') {
-        const { directory, base = 'auto', files = [], domains = [], failOn = 'warning', maxFiles = DEFAULT_DRIFT_MAX_FILES } =
-          args as { directory: string; base?: string; files?: string[]; domains?: string[]; failOn?: 'error' | 'warning' | 'info'; maxFiles?: number };
-        result = await handleCheckSpecDrift(directory, base, files, domains, failOn, maxFiles);
-      } else if (name === 'search_code') {
-        const { directory, query, limit = 10, language, minFanIn, tokenBudget } =
-          args as { directory: string; query: string; limit?: number; language?: string; minFanIn?: number; tokenBudget?: number };
-        result = await handleSearchCode(directory, query, limit, language, minFanIn, tokenBudget);
-      } else if (name === 'suggest_insertion_points') {
-        const { directory, description, limit = 5, language } =
-          args as { directory: string; description: string; limit?: number; language?: string };
-        result = await handleSuggestInsertionPoints(directory, description, limit, language);
-      } else if (name === 'search_specs') {
-        const { directory, query, limit = 10, domain, section } =
-          args as { directory: string; query: string; limit?: number; domain?: string; section?: string };
-        result = await handleSearchSpecs(directory, query, limit, domain, section);
-      } else if (name === 'search_unified') {
-        const { directory, query, limit = 10, language, domain, section } =
-          args as { directory: string; query: string; limit?: number; language?: string; domain?: string; section?: string };
-        result = await handleUnifiedSearch(directory, query, limit, language, domain, section);
-      } else if (name === 'list_spec_domains') {
-        const { directory } = args as { directory: string };
-        result = await handleListSpecDomains(directory);
-      } else if (name === 'get_spec') {
-        const { directory, domain } = args as { directory: string; domain: string };
-        result = await handleGetSpec(directory, domain);
-      } else if (name === 'get_function_body') {
-        const { directory, filePath, functionName } =
-          args as { directory: string; filePath: string; functionName: string };
-        result = await handleGetFunctionBody(directory, filePath, functionName);
-      } else if (name === 'get_file_dependencies') {
-        const { directory, filePath, direction = 'both' } =
-          args as { directory: string; filePath: string; direction?: 'imports' | 'importedBy' | 'both' };
-        result = await handleGetFileDependencies(directory, filePath, direction);
-      } else if (name === 'generate_change_proposal') {
-        const { directory, description, slug, storyContent } =
-          args as { directory: string; description: string; slug: string; storyContent?: string };
-        result = await handleGenerateChangeProposal(directory, description, slug, storyContent);
-      } else if (name === 'annotate_story') {
-        const { directory, storyFilePath, description } =
-          args as { directory: string; storyFilePath: string; description: string };
-        result = await handleAnnotateStory(directory, storyFilePath, description);
-      } else if (name === 'get_decisions') {
-        const { directory, query } = args as { directory: string; query?: string };
-        result = await handleGetDecisions(directory, query);
-      } else if (name === 'get_route_inventory') {
-        const { directory } = args as { directory: string };
-        result = await handleGetRouteInventory(directory);
-      } else if (name === 'get_middleware_inventory') {
-        const { directory } = args as { directory: string };
-        result = await handleGetMiddlewareInventory(directory);
-      } else if (name === 'get_schema_inventory') {
-        const { directory } = args as { directory: string };
-        result = await handleGetSchemaInventory(directory);
-      } else if (name === 'get_ui_components') {
-        const { directory } = args as { directory: string };
-        result = await handleGetUIComponents(directory);
-      } else if (name === 'get_env_vars') {
-        const { directory } = args as { directory: string };
-        result = await handleGetEnvVars(directory);
-      } else if (name === 'get_external_packages') {
-        const { directory } = args as { directory: string };
-        result = await handleGetExternalPackages(directory);
-      } else if (name === 'audit_spec_coverage') {
-        const { directory, maxUncovered = 50, hubThreshold = 5 } =
-          args as { directory: string; maxUncovered?: number; hubThreshold?: number };
-        result = await handleAuditSpecCoverage(directory, maxUncovered, hubThreshold);
-      } else if (name === 'generate_tests') {
-        const { directory, domains, framework, useLlm, dryRun } =
-          args as {
-            directory: string;
-            domains?: string[];
-            framework?: string;
-            useLlm?: boolean;
-            dryRun?: boolean;
-          };
-        result = await handleGenerateTests({ directory, domains, framework, useLlm, dryRun });
-      } else if (name === 'get_test_coverage') {
-        const { directory, domains, minCoverage } =
-          args as { directory: string; domains?: string[]; minCoverage?: number };
-        result = await handleGetTestCoverage({ directory, domains, minCoverage });
-      } else if (name === 'get_minimal_context') {
-        const { directory, functionName, filePath } =
-          args as { directory: string; functionName: string; filePath?: string };
-        result = await handleGetMinimalContext(directory, functionName, filePath);
-      } else if (name === 'get_cluster') {
-        const { directory, functionName } = args as { directory: string; functionName: string };
-        result = await handleGetCluster(directory, functionName);
-      } else if (name === 'detect_changes') {
-        const { directory, base } = args as { directory: string; base?: string };
-        result = await handleDetectChanges(directory, base);
-      } else if (name === 'record_decision') {
-        const { directory, title, rationale, consequences, affectedFiles, supersedes, scope } =
-          args as { directory: string; title: string; rationale: string; consequences?: string; affectedFiles?: string[]; supersedes?: string; scope?: import('../../types/index.js').DecisionScope };
-        result = await handleRecordDecision(directory, title, rationale, consequences, affectedFiles, supersedes, scope);
-      } else if (name === 'list_decisions') {
-        const { directory, status } = args as { directory: string; status?: string };
-        result = await handleListDecisions(directory, status);
-      } else if (name === 'approve_decision') {
-        const { directory, id, note } = args as { directory: string; id: string; note?: string };
-        result = await handleApproveDecision(directory, id, note);
-      } else if (name === 'reject_decision') {
-        const { directory, id, note } = args as { directory: string; id: string; note?: string };
-        result = await handleRejectDecision(directory, id, note);
-      } else if (name === 'sync_decisions') {
-        const { directory, dryRun = false, id } = args as { directory: string; dryRun?: boolean; id?: string };
-        result = await handleSyncDecisions(directory, dryRun, id);
-      } else {
-        _unknownTool = true;
-      }
       })(), name);
 
       if (_unknownTool) {
