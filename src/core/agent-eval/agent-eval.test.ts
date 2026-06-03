@@ -52,15 +52,20 @@ describe('median + summarize', () => {
 
 describe('deriveTasks', () => {
   const facts: GraphFact[] = [
-    { name: 'hub', filePath: 'a.ts', callerNames: ['c1', 'c2', 'c3'], calleeNames: [], isEntryPoint: false },
+    { name: 'validateDirectory', filePath: 'src/utils.ts', callerNames: ['c1', 'c2', 'c3'], calleeNames: [], isEntryPoint: false },
     { name: 'leaf', filePath: 'b.ts', callerNames: ['c1'], calleeNames: [], isEntryPoint: false },
-    { name: 'main', filePath: 'm.ts', callerNames: [], calleeNames: ['hub', 'leaf'], isEntryPoint: true },
+    { name: 'startMcpServer', filePath: 'src/mcp.ts', callerNames: [], calleeNames: ['validateDirectory', 'leaf'], isEntryPoint: true },
   ];
 
-  it('derives a hub task whose oracle is the most-called function', () => {
-    const tasks = deriveTasks(facts);
-    const hub = tasks.find(t => t.id === 'hub')!;
-    expect(hub.mustIncludeAny).toEqual(['hub']);
+  it('derives a locate task oracled by the file path/stem (robust, unambiguous)', () => {
+    const locate = deriveTasks(facts).find(t => t.id === 'locate')!;
+    expect(locate.prompt).toContain('validateDirectory');
+    expect(locate.mustIncludeAny).toContain('src/utils.ts');
+    expect(locate.mustIncludeAny).toContain('utils'); // file stem
+  });
+
+  it('does NOT emit an ambiguous "most callers" task', () => {
+    expect(deriveTasks(facts).find(t => t.id === 'hub')).toBeUndefined();
   });
 
   it('derives a caller task oracled by any real caller', () => {
@@ -68,10 +73,19 @@ describe('deriveTasks', () => {
     expect(caller.mustIncludeAny).toEqual(['c1', 'c2', 'c3']);
   });
 
-  it('derives an entry-point callee task', () => {
+  it('derives a callee task from a distinctive high-fan-out function', () => {
     const callee = deriveTasks(facts).find(t => t.id === 'callee')!;
-    expect(callee.prompt).toContain('main');
-    expect(callee.mustIncludeAny).toEqual(['hub', 'leaf']);
+    expect(callee.prompt).toContain('startMcpServer');
+    expect(callee.mustIncludeAny).toEqual(['validateDirectory', 'leaf']);
+  });
+
+  it('prefers a distinctively-named hub over a generic one for an unambiguous oracle', () => {
+    const f: GraphFact[] = [
+      { name: 'run', filePath: 'a.ts', callerNames: ['x', 'y', 'z', 'w'], calleeNames: [], isEntryPoint: false },
+      { name: 'readOpenLoreConfig', filePath: 'src/config.ts', callerNames: ['x', 'y'], calleeNames: [], isEntryPoint: false },
+    ];
+    const locate = deriveTasks(f).find(t => t.id === 'locate')!;
+    expect(locate.prompt).toContain('readOpenLoreConfig'); // distinctive, not the generic `run`
   });
 
   it('is deterministic (same facts → same tasks)', () => {

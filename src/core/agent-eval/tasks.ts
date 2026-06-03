@@ -31,32 +31,54 @@ export function scoreAnswer(task: ProveTask, answer: string): boolean {
   return task.mustIncludeAny.some(s => a.includes(s.toLowerCase()));
 }
 
+/** basename without extension, e.g. "src/core/edge-store.ts" → "edge-store". */
+function fileStem(filePath: string): string {
+  const base = filePath.split('/').pop() ?? filePath;
+  return base.replace(/\.[^.]+$/, '');
+}
+
+/**
+ * A name is a good oracle target if it's distinctive enough that the agent's
+ * answer will quote it verbatim rather than a synonym — long, and not a generic
+ * one-word English term. Avoids ambiguous targets like `run`/`get`/`handle`.
+ */
+function isDistinctive(name: string): boolean {
+  if (name.length < 6) return false;
+  return /[A-Z_]/.test(name.slice(1)) || /[._]/.test(name); // camelCase / snake_case / qualified
+}
+
 /**
  * Derive up to `max` orientation tasks from graph facts. Deterministic: facts
  * are sorted by a stable key before selection so the same graph yields the same
- * tasks. Returns [] when the graph is too sparse to form an oracle-able task.
+ * tasks. Tasks use forgiving, structurally-grounded oracles (a file path, or any
+ * one of many valid callers/callees) so a correct answer is reliably recognized —
+ * an earlier "which function has the most callers?" task was too ambiguous (the
+ * agent named a plausible-but-different function) and is gone. Returns [] when
+ * the graph is too sparse to form an oracle-able task.
  */
 export function deriveTasks(facts: GraphFact[], max = 3): ProveTask[] {
   const tasks: ProveTask[] = [];
 
-  // Stable ordering: most-called first, then by name (tie-break) — no Date/random.
+  // Most-called first, then by name (stable tie-break) — no Date/random.
   const byCallers = [...facts].sort(
     (a, b) => b.callerNames.length - a.callerNames.length || a.name.localeCompare(b.name),
   );
 
-  // Task 1 — the hub: "which function is called by the most others?"
-  const hub = byCallers[0];
+  // Hub = a well-connected function with a distinctive name (so the oracle is
+  // unambiguous), falling back to the most-called function if none qualifies.
+  const hub = byCallers.find(f => f.callerNames.length >= 2 && isDistinctive(f.name)) ?? byCallers[0];
+
   if (hub && hub.callerNames.length >= 2) {
+    // Task 1 — locate: "which file defines `hub`?" Oracle = the file path/stem,
+    // which a correct answer will quote verbatim. Very robust.
     tasks.push({
-      id: 'hub',
-      prompt:
-        'In this codebase, which single function is called by the most other functions? ' +
-        'Answer with just the function name.',
-      mustIncludeAny: [hub.name],
-      probes: `most-called function (${hub.name}, ${hub.callerNames.length} callers)`,
+      id: 'locate',
+      prompt: `In this codebase, which file defines the function \`${hub.name}\`? Answer with the file path.`,
+      mustIncludeAny: [hub.filePath, fileStem(hub.filePath)],
+      probes: `definition site of ${hub.name} (${hub.filePath})`,
     });
 
-    // Task 2 — a caller of the hub (any valid caller counts).
+    // Task 2 — a caller of the hub (any one of many valid callers counts).
     tasks.push({
       id: 'caller',
       prompt: `Name one function that directly calls \`${hub.name}\` in this codebase.`,
@@ -65,15 +87,18 @@ export function deriveTasks(facts: GraphFact[], max = 3): ProveTask[] {
     });
   }
 
-  // Task 3 — an entry point's callee: "what does <entry> invoke?"
-  const entry = byCallers.find(f => f.isEntryPoint && f.calleeNames.length >= 2)
-    ?? [...facts].sort((a, b) => b.calleeNames.length - a.calleeNames.length || a.name.localeCompare(b.name))[0];
-  if (entry && entry.calleeNames.length >= 2) {
+  // Task 3 — a callee of a distinctive, high-fan-out function.
+  const byCallees = [...facts].sort(
+    (a, b) => b.calleeNames.length - a.calleeNames.length || a.name.localeCompare(b.name),
+  );
+  const fanOutHub = byCallees.find(f => f.calleeNames.length >= 2 && isDistinctive(f.name) && f.name !== hub?.name)
+    ?? byCallees.find(f => f.calleeNames.length >= 2);
+  if (fanOutHub) {
     tasks.push({
       id: 'callee',
-      prompt: `Name one function that \`${entry.name}\` calls (directly invokes) in this codebase.`,
-      mustIncludeAny: entry.calleeNames.slice(0, 25),
-      probes: `a callee of ${entry.name}`,
+      prompt: `Name one function that \`${fanOutHub.name}\` calls (directly invokes) in this codebase.`,
+      mustIncludeAny: fanOutHub.calleeNames.slice(0, 25),
+      probes: `a callee of ${fanOutHub.name}`,
     });
   }
 

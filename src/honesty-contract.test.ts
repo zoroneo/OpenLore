@@ -20,13 +20,16 @@ import { dirname, join } from 'node:path';
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), 'utf-8');
 
-/** The measured numbers the README is allowed to publish (docs/AGENT-BENCHMARKS.md, 2026-06-01). */
+/** The measured numbers the README is allowed to publish (docs/AGENT-BENCHMARKS.md). */
 const CANONICAL = {
-  measuredDate: '2026-06-01',
+  measuredDate: '2026-06-01',       // Round 2 (N=4) headline measurement
+  reproveDate: '2026-06-03',        // Round 3 live re-prove (N=2)
   aggregateRoundTripsDelta: '26%',  // −26% round-trips, the co-headline
-  smallRepoCostDelta: '43%',        // +43% on small/familiar repos (the published loss)
+  smallRepoCostDelta: '43%',        // +43% on small/familiar repos (Round 1 published loss)
   deepCostRange: ['7%', '21%'],     // −7%→−21% on deep traces
   perRepo: ['25 → 16', '17 → 13', '13 → 11', '21 → 15', '10 → 9'], // round-trips wo→w
+  // Round 3 (2026-06-03, N=2): deep win reproduced + small-repo task-dependence.
+  round3: ['13%', '32%', '59%'],
 };
 
 /** Estimates retired in Spec 25 Phase A — must not reappear in shipped surfaces. */
@@ -41,10 +44,12 @@ describe('honesty contract (spec-25)', () => {
 
   it('every canonical measured figure appears in the README', () => {
     expect(readme).toContain(CANONICAL.measuredDate);
+    expect(readme).toContain(CANONICAL.reproveDate);
     expect(readme).toContain(CANONICAL.aggregateRoundTripsDelta);
     expect(readme).toContain(CANONICAL.smallRepoCostDelta);
     for (const r of CANONICAL.deepCostRange) expect(readme).toContain(r);
     for (const cell of CANONICAL.perRepo) expect(readme, `missing per-repo round-trips "${cell}"`).toContain(cell);
+    for (const r of CANONICAL.round3) expect(readme, `missing Round-3 figure "${r}"`).toContain(r);
   });
 
   it('publishes the loss cell next to the wins (never hides +43%)', () => {

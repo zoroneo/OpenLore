@@ -16,7 +16,9 @@ OpenLore only earns its place if an agent **with** it reaches a correct answer f
 | Scenario (task × repo) | Cost Δ | Round-trips Δ | Correctness | Verdict |
 |---|---|---|---|---|
 | **Large/unfamiliar repo · deep "how does X flow through Y"** *(its target)* | **−7% to −21%** | **−26%** | 100% = 100% | ✅ helps — and the win grows with repo size |
-| Small/familiar repo · shallow "who calls X" | **+43%** | **+38%** | 100% = 100% | ❌ adds overhead — don't use it here |
+| Small/familiar repo · shallow "who calls X" | **task-dependent** *(Round 1: +43%)* | **+38%** | 100% = 100% | ❌ often adds overhead — measure with `openlore prove` |
+
+> **Re-confirmed live 2026-06-03 (N=2):** the deep-task win **reproduces** — okhttp **−13%, identical to the table below**. The small/familiar case is **task-dependent, not a flat loss**: same repo class, opposite outcomes (chalk **−32%** win vs express **+59%** loss) — the cost there is a sometimes-redundant `orient` round-trip, not tool-schema bytes, so a leaner surface doesn't close it. Don't guess from our repos — run **`openlore prove`** on yours.
 
 Deep-trace detail — the win scales with codebase size (cost Δ; round-trips WITHOUT → WITH):
 

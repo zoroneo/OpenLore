@@ -13,8 +13,12 @@
 Phasing in §8 (prove → optimize → re-prove). Implementation branch:
 `feat/spec-25-value-scorecard`.
 
-Status: **Phases A–D + the honesty guard shipped.** The one remaining item (Q1's
-re-based benchmark *run*) is gated on API budget, not code — the corpus and harness are ready.
+Status: **Phases A–D + the honesty guard shipped; the empirical re-prove (Phase E) is now in scope
+and underway.** Earlier this PR delivered the code/deterministic half and *deferred* the actual
+benchmark run as API-budget-gated. That deferral is rescinded: Phase E runs the agent benchmark live
+on this machine, measures whether the lean surface moves the small-repo loss (§3), refreshes the
+scorecard from real numbers, and iterates on the surface if the loss persists. We report whatever we
+measure — including a loss that does not fully close — per the honesty contract.
 
 - [x] **Phase A — Prove the present, honestly.** README [Value Scorecard](../../README.md#value-scorecard--does-it-pay-for-itself)
   built from the existing measured Spec-14 data (Round-1 loss + Round-2 win, **including the loss
@@ -38,9 +42,19 @@ re-based benchmark *run*) is gated on API budget, not code — the corpus and ha
 - [x] **Honesty guard test** (`src/honesty-contract.test.ts`) — the contract is now executable: the
   README's published figures must match a reviewed canonical set, and the retired estimates can't
   reappear in any shipped surface.
-- [ ] **Q1 follow-up (API-budget-gated, not code).** The target corpus (django/tokio/excalidraw/
-  okhttp/gin) and harness are wired; the actual re-based **run** + scorecard refresh needs an API key
-  and budget, so it's left for a maintainer to execute with `npm run bench:agent`.
+- [x] **Phase E — Empirical re-prove (Q1 + §3), run live 2026-06-03.** Ran the agent benchmark on this
+  machine (`claude-sonnet-4-6`, `--preset navigation`, --strict-mcp-config). Findings in
+  [AGENT-BENCHMARKS.md → Round 3](../AGENT-BENCHMARKS.md#round-3--live-re-prove-on-this-machine-2026-06-03-spec-25-phase-e):
+  1. **Deep win reproduced** — okhttp **−13%, identical to Round 2** (and unchanged by the Phase C
+     edits): the win is real and stable.
+  2. **§3 loss NOT eliminated, and it's task-dependent** — chalk **−32% (win)** vs express **+59%
+     (loss)** on the same small-repo class. The cost is a sometimes-redundant `orient` round-trip, not
+     tool-schema bytes, so a leaner surface does not close it. Reported plainly rather than claimed fixed.
+  3. **`openlore prove` validated live** and a real weakness fixed: its first run scored 0%/33% because
+     the auto-derived "most-called function?" task was ambiguous; replaced with robust file-locate +
+     caller/callee oracles → 67%/67%, honest "doesn't help here" verdict on this repo's shallow tasks.
+  4. **Scorecard refreshed** (README + AGENT-BENCHMARKS.md Round 3 + honesty-guard constants) from the
+     fresh, dated numbers — including the losses.
 
 ---
 
@@ -267,10 +281,16 @@ README, and never overstate it.**
 
 ## 9. Success criteria
 
-- The README carries a **measured, reproducible** value scorecard — wins *and* losses — linked
+Honest status after Phase E (2026-06-03):
+
+- ✅ The README carries a **measured, reproducible** value scorecard — wins *and* losses — linked
   prominently above the fold.
-- On the target corpus, WITH-OpenLore beats WITHOUT on **cost and round-trips at equal correctness**,
-  by a margin that **grows with repo size**.
-- The small/familiar-repo loss is **eliminated or reduced to break-even** (via P1).
-- Anyone can run **`openlore prove`** on their own repo and get an honest personal number in minutes.
-- Every public token claim traces to a command someone else can run.
+- ✅ On the target corpus, WITH-OpenLore beats WITHOUT on **cost and round-trips at equal correctness**,
+  by a margin that **grows with repo size** — re-confirmed live (okhttp −13%, reproducing Round 2).
+- ❌ **The small/familiar-repo loss is NOT eliminated.** Phase E showed it's task-dependent (chalk
+  −32% vs express +59%) and rooted in a sometimes-redundant `orient` round-trip, which a leaner
+  surface (P1) does not remove. We report this rather than claim a fix. Honest mitigation: `openlore
+  prove` lets a user see the per-repo verdict themselves.
+- ✅ Anyone can run **`openlore prove`** on their own repo and get an honest personal number in
+  minutes (validated live; oracle hardened so correctness is meaningful).
+- ✅ Every public token claim traces to a command someone else can run (enforced by the honesty-guard test).
