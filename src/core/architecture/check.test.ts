@@ -67,6 +67,19 @@ describe('scanViolations', () => {
     expect(scan.violations[0]).toMatchObject({ kind: 'layers', from: 'src/core/x.ts', to: 'src/cli/y.ts' });
   });
 
+  it('layer prefixes match by path boundary, not substring (no false sibling match)', () => {
+    // `src/clinic` must NOT be classified into the `cli` layer; `src/coreutils`
+    // must NOT be classified into `core`. With substring matching both edges
+    // would be mis-layered and one would be flagged as a violation.
+    const g = depGraph([
+      ['src/clinic/a.ts', 'src/coreutils/b.ts'],
+      ['src/coreutils/b.ts', 'src/clinic/a.ts'],
+    ]);
+    const r = rules({ kind: 'layers', layers: { cli: ['src/cli'], core: ['src/core'] }, source: 'config' });
+    const scan = scanViolations(g, r);
+    expect(scan.violations).toHaveLength(0);
+  });
+
   it('flags an allowedOnly module-boundary breach but allows intra-module + allowlisted', () => {
     const g = depGraph([
       ['src/api/a.ts', 'src/db/conn.ts'], // not allowlisted → violation

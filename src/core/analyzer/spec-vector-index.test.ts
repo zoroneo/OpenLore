@@ -161,13 +161,20 @@ describe('SpecVectorIndex', () => {
   // --------------------------------------------------------------------------
 
   describe('build()', () => {
-    it('throws when no spec files found', async () => {
+    it('throws a "present but empty" error when the spec dir exists but has no specs', async () => {
       const emptyDir = join(tmpDir, 'empty-specs');
       await mkdir(emptyDir, { recursive: true });
       const embedSvc = makeMockEmbedSvc();
       await expect(SpecVectorIndex.build(tmpDir, emptyDir, embedSvc)).rejects.toThrow(
-        'No spec.md files found'
+        'exists but contains no spec.md files'
       );
+    });
+
+    it('throws a "does not exist" error when the spec dir is missing', async () => {
+      const embedSvc = makeMockEmbedSvc();
+      await expect(
+        SpecVectorIndex.build(tmpDir, join(tmpDir, 'nope-specs'), embedSvc)
+      ).rejects.toThrow('does not exist');
     });
 
     it('returns the number of indexed sections', async () => {

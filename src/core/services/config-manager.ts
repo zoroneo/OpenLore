@@ -4,7 +4,7 @@
  * Handles reading/writing .openlore/config.json and openspec/config.yaml
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import YAML from 'yaml';
 import type { ProjectType, OpenLoreConfig } from '../../types/index.js';
@@ -163,6 +163,47 @@ export async function openspecConfigExists(openspecPath: string): Promise<boolea
 export async function createOpenSpecStructure(openspecPath: string): Promise<void> {
   await ensureDir(openspecPath);
   await ensureDir(join(openspecPath, 'specs'));
+}
+
+/** A spec directory discovered on disk before `init` decides where to point. */
+export interface DetectedSpecDir {
+  /** openspec-root, relative to the project root (config `openspecPath`). */
+  root: string;
+  /** The `<root>/specs` directory, relative to the project root. */
+  specsRel: string;
+  /** Count of `*.md` files found beneath the specs dir. */
+  count: number;
+}
+
+/**
+ * Detect an existing specs directory so `init` does not create an empty
+ * `openspec/` blind to specs that already live in `docs/specs/` or `specs/`
+ * (Spec 26 B5). Candidate openspec-roots are scanned in priority order; the
+ * first whose `<root>/specs` contains at least one `*.md` wins. Returns null
+ * when nothing is found.
+ */
+export async function detectExistingSpecDir(rootPath: string): Promise<DetectedSpecDir | null> {
+  // root (relative) → specs live at `<root>/specs`. '.' covers a bare `specs/`.
+  const candidateRoots = ['openspec', 'docs', '.'];
+  for (const root of candidateRoots) {
+    const specsRel = root === '.' ? 'specs' : `${root}/specs`;
+    const specsDir = join(rootPath, specsRel);
+    let count = 0;
+    try {
+      const stack = [specsDir];
+      while (stack.length) {
+        const dir = stack.pop()!;
+        for (const d of await readdir(dir, { withFileTypes: true })) {
+          if (d.isDirectory()) stack.push(join(dir, d.name));
+          else if (d.name.endsWith('.md')) count++;
+        }
+      }
+    } catch {
+      continue; // specs dir doesn't exist — try the next candidate
+    }
+    if (count > 0) return { root, specsRel, count };
+  }
+  return null;
 }
 
 /**

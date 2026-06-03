@@ -22,6 +22,7 @@ import {
   openspecDirExists,
   openspecConfigExists,
   createOpenSpecStructure,
+  detectExistingSpecDir,
 } from '../../core/services/config-manager.js';
 import {
   gitignoreExists,
@@ -64,7 +65,17 @@ After initialization, run 'openlore analyze' to scan your codebase.
   )
   .action(async (options: Partial<InitOptions>) => {
     const rootPath = process.cwd();
-    const openspecRelPath = options.openspecPath ?? DEFAULT_OPENSPEC_PATH;
+    // Honor an explicit --openspec-path; otherwise detect specs that already
+    // live in docs/specs/ or specs/ so we don't create an empty openspec/ that
+    // is blind to them (Spec 26 B5).
+    let openspecRelPath = options.openspecPath ?? DEFAULT_OPENSPEC_PATH;
+    let detectedSpecDir = null as Awaited<ReturnType<typeof detectExistingSpecDir>>;
+    if (!options.openspecPath) {
+      detectedSpecDir = await detectExistingSpecDir(rootPath);
+      if (detectedSpecDir && detectedSpecDir.root !== 'openspec') {
+        openspecRelPath = detectedSpecDir.root === '.' ? '.' : detectedSpecDir.root;
+      }
+    }
     const openspecPath = resolve(rootPath, openspecRelPath);
     const force = options.force ?? false;
 
@@ -144,7 +155,11 @@ After initialization, run 'openlore analyze' to scan your codebase.
       }
     }
 
-    if (existingOpenspecDir) {
+    if (detectedSpecDir && detectedSpecDir.root !== 'openspec') {
+      logger.success(
+        `Found existing specs in ${detectedSpecDir.specsRel}/ (${detectedSpecDir.count} file(s)) — pointing openspecPath at ${openspecRelPath}`
+      );
+    } else if (existingOpenspecDir) {
       logger.success('Found existing openspec/ directory');
       if (existingOpenspecConfig) {
         const openspecConfig = await readOpenSpecConfig(openspecPath);

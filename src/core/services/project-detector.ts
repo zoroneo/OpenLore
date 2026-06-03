@@ -4,10 +4,15 @@
  * Detects the project type by checking for language-specific manifest files.
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ProjectType } from '../../types/index.js';
 import { fileExists } from '../../utils/command-helpers.js';
+
+/** Depth-1 subdirs commonly holding a nested manifest (monorepo / polyglot layout). */
+const NESTED_SCAN_IGNORE = new Set([
+  'node_modules', '.git', 'dist', 'build', 'coverage', '.openlore', 'vendor', '.venv', 'target',
+]);
 
 /**
  * Project detection result
@@ -58,8 +63,19 @@ export async function detectProjectType(rootPath: string): Promise<ProjectDetect
     }
   }
 
-  // No manifests found
+  // No manifest at the root — scan depth-1 subdirs before giving up, so a
+  // nested layout (e.g. python/pyproject.toml, backend/go.mod) is not reported
+  // as "Unknown" (Spec 26 B6A). Prefer the shallowest, highest-priority match.
   if (detectedManifests.length === 0) {
+    const nested = await detectNestedManifest(rootPath);
+    if (nested) {
+      return {
+        projectType: nested.type,
+        manifestFile: nested.file,
+        hasGit,
+        confidence: 'medium',
+      };
+    }
     return {
       projectType: 'unknown',
       manifestFile: null,
@@ -88,6 +104,36 @@ export async function detectProjectType(rootPath: string): Promise<ProjectDetect
     hasGit,
     confidence,
   };
+}
+
+/**
+ * Scan depth-1 subdirectories for a manifest when the root has none. Returns the
+ * highest-priority manifest found in the shallowest matching subdir, or null.
+ */
+async function detectNestedManifest(
+  rootPath: string
+): Promise<{ file: string; type: ProjectType } | null> {
+  let entries: string[];
+  try {
+    const dirents = await readdir(rootPath, { withFileTypes: true });
+    entries = dirents
+      .filter((d) => d.isDirectory() && !d.name.startsWith('.') && !NESTED_SCAN_IGNORE.has(d.name))
+      .map((d) => d.name);
+  } catch {
+    return null;
+  }
+
+  const hits: { file: string; type: ProjectType; priority: number }[] = [];
+  for (const sub of entries) {
+    for (const manifest of MANIFEST_MAP) {
+      if (await fileExists(join(rootPath, sub, manifest.file))) {
+        hits.push({ file: join(sub, manifest.file), type: manifest.type, priority: manifest.priority });
+      }
+    }
+  }
+  if (hits.length === 0) return null;
+  hits.sort((a, b) => a.priority - b.priority);
+  return { file: hits[0].file, type: hits[0].type };
 }
 
 /**

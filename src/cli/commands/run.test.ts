@@ -43,7 +43,7 @@ describe('run command', () => {
     it('should have --model option with default', () => {
       const modelOption = runCommand.options.find(o => o.long === '--model');
       expect(modelOption).toBeDefined();
-      expect(modelOption?.defaultValue).toBe('claude-sonnet-4-20250514');
+      expect(modelOption?.defaultValue).toBe('claude-sonnet-4-6');
     });
 
     it('should have --dry-run option', () => {

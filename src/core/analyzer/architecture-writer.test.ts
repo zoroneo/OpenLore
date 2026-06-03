@@ -467,14 +467,14 @@ describe('writeArchitectureMd', () => {
     vi.clearAllMocks();
   });
 
-  it('writes ARCHITECTURE.md to rootPath and returns the path', async () => {
+  it('writes ARCHITECTURE.md into the given output dir and returns the path', async () => {
     const { writeFile } = await import('node:fs/promises');
     const overview = makeOverview();
-    const result = await writeArchitectureMd('/my/project', overview);
+    const result = await writeArchitectureMd('/my/project/.openlore/analysis', overview);
 
-    expect(result).toBe('/my/project/ARCHITECTURE.md');
+    expect(result).toBe('/my/project/.openlore/analysis/ARCHITECTURE.md');
     expect(writeFile).toHaveBeenCalledWith(
-      '/my/project/ARCHITECTURE.md',
+      '/my/project/.openlore/analysis/ARCHITECTURE.md',
       expect.stringContaining('# Architecture Overview'),
       'utf-8',
     );
@@ -485,7 +485,7 @@ describe('writeArchitectureMd', () => {
     const overview = makeOverview({
       summary: { totalFiles: 7, totalClusters: 1, totalEdges: 2, cycles: 0, layerViolations: 0 },
     });
-    await writeArchitectureMd('/root', overview);
+    await writeArchitectureMd('/root/.openlore/analysis', overview);
 
     const [, content] = (writeFile as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(content).toContain('| Files | 7 |');

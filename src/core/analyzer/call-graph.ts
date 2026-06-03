@@ -131,7 +131,10 @@ export interface LayerViolation {
  */
 export function layerOf(filePath: string, layers: Record<string, string[]>): string | undefined {
   for (const [layerName, prefixes] of Object.entries(layers)) {
-    if (prefixes.some(p => filePath.includes(p))) return layerName;
+    // Path-prefix match, not substring: `src/cli` must not classify
+    // `src/clinic/x.ts` or `src/api-deprecated/y.ts` into a neighbouring layer.
+    if (prefixes.some(p => { const q = p.endsWith('/') ? p : p + '/'; return filePath === p || filePath.startsWith(q); }))
+      return layerName;
   }
   return undefined;
 }

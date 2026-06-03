@@ -11,15 +11,33 @@
 
 ## Progress
 
-Branch: `chore/post-arc-ci-hardening` → [PR #120](https://github.com/clay-good/OpenLore/pull/120).
-This document is the **plan**; implementation lands in follow-up commits/PRs per the wave sequence in
-§4. Status: **analysis complete, implementation pending.**
+Original plan branch: `chore/post-arc-ci-hardening` → [PR #120](https://github.com/clay-good/OpenLore/pull/120).
+All implementation landed on `fix/spec-26-wave-0-mcp-registration` →
+[PR #121](https://github.com/clay-good/OpenLore/pull/121). Status: **Waves 0–4 shipped.**
 
-- [ ] Wave 0 — Fix MCP registration (the headline bug)
-- [ ] Wave 1 — Consolidated `doctor` pass
-- [ ] Wave 2 — Detection correctness (spec dir, agent/project, node version)
-- [ ] Wave 3 — Freshness ownership (drop redundant hook, auto-rebuild on reset)
-- [ ] Wave 4 — Cosmetic/cleanup wins (skill schema, ARCHITECTURE.md path, gitignore dedupe, model bump)
+- [x] **Wave 0** — Fix MCP registration (the headline bug). B1: `openlore install --agent claude-code`
+  now writes `mcpServers.openlore` to **`.mcp.json`** (the file Claude Code actually reads) and keeps
+  only the SessionStart hook in `.claude/settings.json`; re-running migrates a legacy
+  `settings.json` entry away. Added a `doctor` **MCP wiring** check that warns when the server is in
+  the wrong file (with the exact `--force` fix).
+- [x] **Wave 1** — Consolidated `doctor` pass. B4 (LLM/embedding = warn, not fail → no-LLM exits 0),
+  B7-doctor (Node *minor*-version check ≥22.5 for node:sqlite), B5-doctor (read the configured
+  openspecPath). Also fixed an audit-found layer-matching bug (`layerOf` substring → path-boundary).
+- [x] **Wave 2** — Detection correctness. B5 (`detectExistingSpecDir` → point at docs/specs/ or
+  specs/ instead of an empty openspec/; sharpened spec-index error), B6A (depth-1 nested-manifest
+  scan), B6B (bias to claude-code when `~/.claude` exists instead of blind AGENTS.md).
+- [x] **Wave 3** — Freshness ownership. B9 (removed the redundant full-`analyze` PostToolUse hook;
+  `--watch-auto` is the sole owner; setup migrates the legacy hook away), B10 (watcher schedules one
+  detached `analyze --force` to self-heal a schema-reset graph).
+- [x] **Wave 4** — Cleanup. B8 (skill SKILL.md → real camelCase fields + `.mcp.json` detection note),
+  B3 (`ARCHITECTURE.md` now lands in `.openlore/analysis/`; dropped the redundant gitignore line),
+  B2a (gitignore parent-prefix guard, slash-insensitive), B2b (default model → `claude-sonnet-4-6`).
+
+> **Deferred (low value, already mitigated):** B7's optional npx/`node:sqlite` import guards — the
+> doctor minor-version check (Wave 1) + `engines.node` already catch a too-old Node. Audit findings
+> in orient (`involvesRelevant`) and structural-diff (rename path) were investigated and judged
+> **not bugs** (both endpoints are full file paths so `===` is the real match; labeling the old
+> snapshot with the new path is intentional rename-matching).
 
 ---
 
@@ -298,3 +316,42 @@ estimation still resolves. *Files:* `constants.ts` + those tests.
 - No new runtime behavior beyond making install/first-run **work and tell the truth**.
 - Do **not** lower the Node floor to support 20 (keep `node:sqlite`; fix the *signal* instead).
 - No LLM/network in any fix (model-id bump is a default-string change, not a runtime dependency).
+
+---
+
+## 7. Full-surface verification (specs 1–26)
+
+A final methodical pass on `2026-06-03` confirming every shipped spec is complete **and functionally
+working**, not just unit-green. No code changed in this pass.
+
+**Deterministic gates:** `lint` clean · `typecheck` clean · `build` clean · **3104 tests pass**, 2
+skipped (145 files).
+
+**Live MCP surface (driven over stdio against this repo):** `initialize` negotiates protocol
+`2025-11-25`; `tools/list` returns **50 tools**, each with a schema (specs 11/12). A 25-call battery
+of the headline read tools returned **25/25 OK, zero `isError`**:
+
+| Spec | Tool | Evidence |
+|------|------|----------|
+| 06/13 | `orient` | returns ranked functions via `bm25_fallback` |
+| 13 | `search_code` / `search_unified` | hits returned |
+| 17 | `analyze_impact` | impact set for `readOpenLoreConfig` |
+| 18 | provenance | `orient` surfaces last author/PR per file |
+| 19 | `select_tests` | reachable tests for changed symbols |
+| 20 | `find_dead_code` | swept 1,575 functions |
+| 21 | `structural_diff` | base/head delta computed |
+| 22 | `get_change_coupling` | volatility + co-change from git |
+| 23 | `check_architecture` | scan mode (no rules → clean); 55 unit tests incl. the layer-boundary regression |
+| 15/16 | `get_decisions` | the synced `e3d3214e` decision is a graph node |
+| drift | `check_spec_drift` · `audit_spec_coverage` | run clean |
+
+**CLI-only surfaces:** `preflight` (spec 03) exits 0; `export scip` (spec 04) emits a 641 KB SCIP
+index; `manifest emit` + `validate` (spec 05) round-trip as a valid v1 manifest.
+
+**Confirmed-intentional deferrals (behave correctly, never crash):** spec 04 SCIP import + column
+ranges, spec 05 federation index + events/RPC extraction, spec 08 deferred languages, spec 09
+(*NOT DOING — superseded*). Each emits empty arrays / a documented warning rather than wrong data.
+
+**Conclusion: specs 1–26 are complete and fully working.** The only confirmed defect found across the
+whole audit was the `layerOf` substring bug (fixed in Wave 1); two other reported findings were
+investigated and judged not-bugs.

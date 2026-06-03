@@ -27,6 +27,7 @@
 import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
+import { spawn } from 'node:child_process';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { extractSignatures, detectLanguage } from '../analyzer/signature-extractor.js';
 import type { FunctionNode } from '../analyzer/call-graph.js';
@@ -48,6 +49,15 @@ const CALL_GRAPH_LANGS = new Set([
 ]);
 /** Max callerFiles to re-parse in a single watch event (guards against high-fanIn renames). */
 const CALLER_REPARSE_LIMIT = 10;
+
+/**
+ * Session-global latch: a SCHEMA_VERSION bump wipes the graph store, and an
+ * incremental update can't repair it — only a full `analyze` can. We schedule
+ * exactly one background rebuild per process (Spec 26 B10). Latched (never
+ * cleared) so a persistently-failing rebuild can't spin into a loop; on failure
+ * we fall back to the existing "run analyze" note.
+ */
+let backgroundRebuildTriggered = false;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -362,9 +372,10 @@ export class McpWatcher {
         // (only the changed file's nodes). Skip it — a full `analyze` must rebuild.
         if (store.wasReset) {
           process.stderr.write(
-            '[mcp-watcher] graph index was reset by a schema-version upgrade — run "openlore analyze" to rebuild. ' +
+            '[mcp-watcher] graph index was reset by a schema-version upgrade — scheduling a background rebuild. ' +
             'Skipping incremental update to avoid a partial graph.\n'
           );
+          this.scheduleBackgroundRebuild();
         }
         for (const f of files) {
           if (store.wasReset) break;
@@ -445,6 +456,36 @@ export class McpWatcher {
     process.stderr.write(
       `[mcp-watcher] ${isBulk ? `coalesced ${n} changes` : `updated ${n} file${n === 1 ? '' : 's'}`} (${Date.now() - t0}ms)\n`
     );
+  }
+
+  /**
+   * Self-heal a schema-reset graph by spawning one detached `analyze --force`
+   * (BM25-only, no network). Runs at most once per process (`backgroundRebuild
+   * Triggered`); a spawn failure logs and falls back to the existing "run
+   * analyze" note rather than retrying — no thundering herd, no loop (B10).
+   */
+  private scheduleBackgroundRebuild(): void {
+    if (backgroundRebuildTriggered) return;
+    backgroundRebuildTriggered = true;
+    const cli = process.argv[1];
+    if (!cli) {
+      process.stderr.write('[mcp-watcher] cannot locate the openlore CLI to auto-rebuild — run "openlore analyze".\n');
+      return;
+    }
+    try {
+      const child = spawn(
+        process.execPath,
+        [cli, 'analyze', '--force', '--no-embed', '--output', this.outputPath],
+        { cwd: this.rootPath, stdio: 'ignore', detached: true }
+      );
+      child.on('error', (err) => {
+        process.stderr.write(`[mcp-watcher] background rebuild failed to start (${err.message}) — run "openlore analyze".\n`);
+      });
+      child.unref();
+      process.stderr.write('[mcp-watcher] background "openlore analyze --force" started; the graph will self-heal shortly.\n');
+    } catch (err) {
+      process.stderr.write(`[mcp-watcher] background rebuild could not be spawned (${(err as Error).message}) — run "openlore analyze".\n`);
+    }
   }
 
   // ── llm-context load + persistence + read-cache handoff (Step 2) ─────────────

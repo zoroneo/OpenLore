@@ -607,7 +607,7 @@ After analysis, run 'openlore generate' to create OpenSpec files.
       try {
         const ctx = artifacts.llmContext ?? null;
         const overview = buildArchitectureOverview(depGraph, ctx, rootPath);
-        await writeArchitectureMd(rootPath, overview);
+        await writeArchitectureMd(outputPath, overview);
         architectureMdWritten = true;
       } catch (archErr) {
         logger.debug(`ARCHITECTURE.md generation skipped: ${(archErr as Error).message}`);
@@ -672,7 +672,7 @@ After analysis, run 'openlore generate' to create OpenSpec files.
       }
       if (architectureMdWritten) {
         console.log(`    ├─ ${opts.output}SUMMARY.md`);
-        console.log('    ├─ ARCHITECTURE.md');
+        console.log(`    ├─ ${opts.output}ARCHITECTURE.md`);
       } else {
         console.log(`    ├─ ${opts.output}SUMMARY.md`);
       }

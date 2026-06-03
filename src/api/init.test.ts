@@ -20,6 +20,7 @@ vi.mock('../core/services/config-manager.js', () => ({
   openloreConfigExists: vi.fn(),
   openspecDirExists: vi.fn(),
   createOpenSpecStructure: vi.fn(),
+  detectExistingSpecDir: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('../core/services/gitignore-manager.js', () => ({

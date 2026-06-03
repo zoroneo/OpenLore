@@ -298,6 +298,12 @@ The system SHALL expose a find_dead_code MCP tool that performs mark-and-sweep r
 
 > Decision recorded: bee7ef06
 > Date: 2026-06-02
+### Requirement: McpServerRegistrationMovesFromClaudesettingsjsonToMcpjson
+
+The system SHALL register the OpenLore MCP server in `.mcp.json` and migrate any stale `mcpServers.openlore` entry from `.claude/settings.json` during install.
+
+> Decision recorded: e3d3214e
+> Date: 2026-06-03
 
 ## Technical Notes
 
@@ -354,3 +360,13 @@ Enables agents to determine which tests to run after a code change by walking th
 Agents need a deterministic, call-graph-based way to identify unreachable code and assess deletion impact without LLM inference, consistent with the structural-context-substrate north star.
 
 **Consequences:** New read-only MCP tool find_dead_code; results are explicitly confidence-tagged candidates (not deletion authority) due to dynamic dispatch / DI blind spots; requires analyze_codebase to have been run first.
+
+### MCP server registration moves from .claude/settings.json to .mcp.json
+
+**Status:** Approved
+**Date:** 2026-06-03
+**ID:** e3d3214e
+
+Claude Code loads MCP servers only from .mcp.json (project scope), ~/.claude.json, or `claude mcp add` — never from .claude/settings.json. Earlier versions (≤2.0.8) wrote mcpServers.openlore to settings.json, so the server silently never loaded.
+
+**Consequences:** Install now writes MCP config to .mcp.json and migrates stale entries out of settings.json; settings.json retains only the SessionStart hook. Uninstall must clean both files. Doctor gains an MCP-wiring check to catch the stale-file misconfiguration.

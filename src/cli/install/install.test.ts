@@ -60,19 +60,45 @@ describe('openlore install (end-to-end)', () => {
     expect(md).toContain('orient()');
   });
 
-  it('claude-code install creates settings.json with SessionStart + mcpServers', async () => {
+  it('claude-code install writes mcpServers to .mcp.json and SessionStart to settings.json', async () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
     const code = await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
     expect(code).toBe(0);
-    const settings = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
-    expect(settings.mcpServers.openlore).toEqual({
+
+    // MCP server goes in .mcp.json — the file Claude Code actually reads.
+    const mcp = JSON.parse(await readFile(join(dir, '.mcp.json'), 'utf8'));
+    expect(mcp.mcpServers.openlore).toEqual({
       command: 'npx',
       args: ['--yes', 'openlore', 'mcp'],
     });
+    expect(mcp._openlore.managed).toBe(true);
+
+    // settings.json carries only the SessionStart hook — never mcpServers.
+    const settings = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
+    expect(settings.mcpServers).toBeUndefined();
     expect(settings.hooks.SessionStart[0].hooks[0].command).toBe(
       'npx --yes openlore orient --json'
     );
-    expect(settings._openlore.managed).toBe(true);
+  });
+
+  it('claude-code install migrates a legacy mcpServers entry out of settings.json', async () => {
+    await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
+    await mkdir(join(dir, '.claude'), { recursive: true });
+    // Simulate a pre-2.0.9 install that wrote the server to the wrong file.
+    const legacy = {
+      mcpServers: { openlore: { command: 'npx', args: ['--yes', 'openlore', 'mcp'] } },
+      _openlore: { managed: true, version: 1, fingerprint: 'x', paths: ['mcpServers.openlore'] },
+    };
+    await writeFile(join(dir, '.claude/settings.json'), JSON.stringify(legacy, null, 2), 'utf8');
+
+    const code = await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
+    expect(code).toBe(0);
+    const settings = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
+    expect(settings.mcpServers).toBeUndefined();
+    expect(settings._openlore).toBeUndefined();
+    expect(settings.hooks.SessionStart[0]._openlore).toBe(true);
+    const mcp = JSON.parse(await readFile(join(dir, '.mcp.json'), 'utf8'));
+    expect(mcp.mcpServers.openlore.command).toBe('npx');
   });
 
   it('re-running install is a no-op (no writes, exit 0)', async () => {
@@ -80,11 +106,13 @@ describe('openlore install (end-to-end)', () => {
     await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
     const mdBefore = await readFile(join(dir, 'CLAUDE.md'), 'utf8');
     const settingsBefore = await readFile(join(dir, '.claude/settings.json'), 'utf8');
+    const mcpBefore = await readFile(join(dir, '.mcp.json'), 'utf8');
 
     const code = await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
     expect(code).toBe(0);
     expect(await readFile(join(dir, 'CLAUDE.md'), 'utf8')).toBe(mdBefore);
     expect(await readFile(join(dir, '.claude/settings.json'), 'utf8')).toBe(settingsBefore);
+    expect(await readFile(join(dir, '.mcp.json'), 'utf8')).toBe(mcpBefore);
   });
 
   it('refuses to overwrite hand-edited block without --force', async () => {
@@ -120,8 +148,9 @@ describe('openlore install (end-to-end)', () => {
     const code = await runInstall({ cwd: dir, agent: 'claude-code', uninstall: true });
     expect(code).toBe(0);
     expect(await readFile(join(dir, 'CLAUDE.md'), 'utf8')).toBe(original);
-    // settings.json was created by us, so it should be removed
+    // settings.json and .mcp.json were created by us, so both should be removed
     expect(await exists(join(dir, '.claude/settings.json'))).toBe(false);
+    expect(await exists(join(dir, '.mcp.json'))).toBe(false);
   });
 
   it('--uninstall removes AGENTS.md when it was OpenLore-only', async () => {

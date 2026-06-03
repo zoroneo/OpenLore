@@ -25,7 +25,7 @@ If you are reading source files without having called `orient` first, you are pr
 
 ### Preferred: via the OpenLore MCP server
 
-If `openlore` is registered as an MCP server in this project (look for `.claude/settings.json` → `mcpServers.openlore`), call the `orient` tool directly through the MCP interface. This is the lowest-latency path and gives the model access to the full openlore tool surface (45 tools), not just `orient`.
+If `openlore` is registered as an MCP server in this project (look for `.mcp.json` → `mcpServers.openlore` — the project-scope file Claude Code reads; **not** `.claude/settings.json`, which it ignores for MCP), call the `orient` tool directly through the MCP interface. This is the lowest-latency path and gives the model access to the full openlore tool surface (~50 tools), not just `orient`.
 
 ### Fallback: via the shell wrapper
 
@@ -37,12 +37,15 @@ bash scripts/orient.sh "<task description>"
 
 The wrapper tries the direct CLI subcommand first (`npx --yes openlore orient --json --task "<task>"`) and falls back to driving the `openlore mcp` server over stdio JSON-RPC via the sibling `orient-via-mcp.mjs` helper on older openlore versions that predate the CLI subcommand. Either path produces real orient JSON on stdout. Parse these arrays from the result:
 
-- **`relevant_functions`** — top scored functions for the task, with file/line, role classification, and a short reason.
-- **`callers`** — depth-1 caller neighbourhood for each top function. This is where "who breaks if I change this" lives.
-- **`spec_sections`** — OpenSpec sections that own the relevant files, including the requirements they encode. Read these before reading code.
-- **`insertion_points`** — ranked candidate locations to make the change, with structural justification.
+The result fields are **camelCase** (matching `orient --json`):
 
-Always start by reading **`spec_sections`**, then **`callers`**, then jump into source only at the **`insertion_points`** you actually plan to edit.
+- **`relevantFunctions`** — top scored functions for the task, each with `name`/`file`/`line`, role classification, and a short reason.
+- **`callPaths`** — caller/callee neighbourhood for the top functions. This is where "who breaks if I change this" lives.
+- **`specDomains`** — OpenSpec domains that own the relevant files, including the requirements they encode. Read these before reading code.
+- **`insertionPoints`** — ranked candidate locations to make the change, with structural justification.
+- **`relevantFiles`**, **`provenance`**, **`changeCoupling`**, **`suggestedTools`**, **`nextSteps`** — supporting context. **`searchMode`** is `semantic` when embeddings are built or `bm25_fallback` otherwise.
+
+Always start by reading **`specDomains`**, then **`callPaths`**, then jump into source only at the **`insertionPoints`** you actually plan to edit.
 
 > **Note:** the `openlore orient --json --task` CLI subcommand is available, so the wrappers use it directly. The MCP fallback in the wrappers only kicks in on older openlore versions that predate the subcommand.
 
@@ -51,7 +54,7 @@ Always start by reading **`spec_sections`**, then **`callers`**, then jump into 
 - **Do not open source files before `orient` has returned.** This is the single most expensive mistake — you'll re-derive what the graph already knows.
 - **Do not call `orient` on every edit.** It's a session-start and re-orient-on-staleness tool, not a per-call helper. Respect the Epistemic Lease signal — if no prefix appears, your context is still fresh.
 - **Do not paraphrase the task** when passing it to `orient`. Use the user's words. The semantic search matches better when the query language matches the eventual prompt.
-- **Do not ignore `spec_sections`.** Reading specs first is faster and more accurate than reading code first, in this repo.
+- **Do not ignore `specDomains`.** Reading specs first is faster and more accurate than reading code first, in this repo.
 
 ## Cost & latency
 
@@ -70,7 +73,7 @@ Cold-graph first call may take 2–4s if the on-disk index needs to be loaded; s
 
 If `orient` returns an empty result or errors:
 
-1. **Empty `relevant_functions` array** — the task description didn't match the graph. Try rephrasing using a known module name, function name, or domain word from the spec. Do not fall back silently — tell the user that `orient` didn't match and you're going to grep.
+1. **Empty `relevantFunctions` array** — the task description didn't match the graph. Try rephrasing using a known module name, function name, or domain word from the spec. Do not fall back silently — tell the user that `orient` didn't match and you're going to grep.
 2. **Wrapper output contains `"error": "No analysis found"`** — the codebase hasn't been analyzed yet. Run `npx openlore analyze` once to seed the graph, then retry. The wrapper itself is healthy in this case; the underlying tool is telling you what's missing.
 3. **Graph is stale (mtime older than recent edits)** — the JSON output will still come back, but the insertion points may be wrong. Re-run `npx openlore analyze` to rebuild.
 

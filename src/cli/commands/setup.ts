@@ -22,7 +22,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { checkbox } from '@inquirer/prompts';
 import { logger } from '../../utils/logger.js';
-import { installPreCommitHook, installClaudeHook } from './decisions.js';
+import { installPreCommitHook, uninstallClaudeHook } from './decisions.js';
 
 // ============================================================================
 // TYPES
@@ -305,7 +305,7 @@ export const setupCommand = new Command('setup')
         message: 'Which agent tools do you want to install skills for?',
         choices: [
           {
-            name: 'Claude Code   (.claude/skills/ — 8 skills + pre-commit & PostToolUse hooks)',
+            name: 'Claude Code   (.claude/skills/ — 8 skills + pre-commit hook)',
             value: 'claude' as ToolName,
           },
           {
@@ -362,7 +362,9 @@ export const setupCommand = new Command('setup')
 
     if (tools.includes('claude')) {
       await installPreCommitHook(projectRoot);
-      await installClaudeHook(projectRoot);
+      // Freshness is owned by the MCP server's --watch-auto (Spec 13.1); strip
+      // any legacy full-analyze PostToolUse hook a prior version installed (B9).
+      await uninstallClaudeHook(projectRoot);
     }
 
     // ── Report ───────────────────────────────────────────────────────────────

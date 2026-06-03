@@ -36,5 +36,5 @@ Static analysis output is stored in `.openlore/analysis/`:
 | `audit-report.json` | Latest parity audit report (produced by `openlore audit`) |
 | `vector-index/` | LanceDB semantic index (produced by `--embed`) |
 
-`openlore analyze` also writes **`ARCHITECTURE.md`** to your project root -- a Markdown overview of module clusters, entry points, and critical hubs, refreshed on every run.
+`openlore analyze` also writes **`ARCHITECTURE.md`** into `.openlore/analysis/` -- a Markdown overview of module clusters, entry points, and critical hubs, refreshed on every run.
 

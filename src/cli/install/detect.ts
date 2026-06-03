@@ -8,6 +8,7 @@
 
 import { access, stat, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 
 export type AgentName = 'claude-code' | 'cursor' | 'cline' | 'continue' | 'agents-md';
 
@@ -113,6 +114,19 @@ export async function detect(startDir: string): Promise<DetectedSurface[]> {
     if (parent === dir) break;
     dir = parent;
   }
+  // No in-tree markers at all: bias toward Claude Code when the user has a
+  // ~/.claude home (the headline audience) rather than silently targeting only
+  // AGENTS.md and mis-wiring a clean repo (Spec 26 B6B).
+  if (out.length === 0) {
+    try {
+      if ((await stat(join(homedir(), '.claude'))).isDirectory()) {
+        out.push({ agent: 'claude-code', root: resolve(startDir), markers: ['(~/.claude present)'] });
+      }
+    } catch {
+      /* no ~/.claude — fall through to the AGENTS.md fallback */
+    }
+  }
+
   // Universal fallback — anchored at the first detected root, or cwd.
   const fallbackRoot = out[0]?.root ?? resolve(startDir);
   out.push({ agent: 'agents-md', root: fallbackRoot, markers: ['(fallback)'] });

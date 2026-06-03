@@ -315,10 +315,16 @@ export class SpecVectorIndex {
       }
     }
 
-    // Discover spec files
+    // Discover spec files — distinguish "directory missing" from "directory
+    // present but empty" so callers can tell a misconfig from an unseeded repo.
     const specFiles = await findSpecFiles(specsDir);
     if (specFiles.length === 0) {
-      throw new Error(`No spec.md files found in ${specsDir}`);
+      const dirExists = await fileExists(specsDir);
+      throw new Error(
+        dirExists
+          ? `Spec directory ${specsDir} exists but contains no spec.md files — run 'openlore generate', or point openspecPath at your specs`
+          : `Spec directory ${specsDir} does not exist — run 'openlore init' (it now detects docs/specs/ and specs/)`
+      );
     }
 
     // Parse all specs into records (without vectors)

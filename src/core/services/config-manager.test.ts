@@ -17,6 +17,7 @@ import {
   openspecConfigExists,
   createOpenSpecStructure,
   mergeOpenSpecConfig,
+  detectExistingSpecDir,
 } from './config-manager.js';
 
 describe('config-manager', () => {
@@ -31,6 +32,40 @@ describe('config-manager', () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
+  describe('detectExistingSpecDir (Spec 26 B5)', () => {
+    it('returns null when no specs exist anywhere', async () => {
+      expect(await detectExistingSpecDir(testDir)).toBeNull();
+    });
+
+    it('detects specs under docs/specs/ and reports the root', async () => {
+      await mkdir(join(testDir, 'docs', 'specs', 'auth'), { recursive: true });
+      await writeFile(join(testDir, 'docs', 'specs', 'auth', 'spec.md'), '# auth\n');
+      const found = await detectExistingSpecDir(testDir);
+      expect(found).toEqual({ root: 'docs', specsRel: 'docs/specs', count: 1 });
+    });
+
+    it('prefers openspec/ over docs/ when both exist', async () => {
+      await mkdir(join(testDir, 'openspec', 'specs'), { recursive: true });
+      await writeFile(join(testDir, 'openspec', 'specs', 'a.md'), '# a\n');
+      await mkdir(join(testDir, 'docs', 'specs'), { recursive: true });
+      await writeFile(join(testDir, 'docs', 'specs', 'b.md'), '# b\n');
+      const found = await detectExistingSpecDir(testDir);
+      expect(found?.root).toBe('openspec');
+    });
+
+    it('ignores an empty specs directory (no *.md)', async () => {
+      await mkdir(join(testDir, 'openspec', 'specs'), { recursive: true });
+      expect(await detectExistingSpecDir(testDir)).toBeNull();
+    });
+
+    it('detects a bare specs/ dir as root "."', async () => {
+      await mkdir(join(testDir, 'specs'), { recursive: true });
+      await writeFile(join(testDir, 'specs', 'overview.md'), '# o\n');
+      const found = await detectExistingSpecDir(testDir);
+      expect(found).toEqual({ root: '.', specsRel: 'specs', count: 1 });
+    });
+  });
+
   describe('getDefaultConfig', () => {
     it('should return config with correct defaults', () => {
       const config = getDefaultConfig('nodejs', './openspec');
@@ -41,7 +76,7 @@ describe('config-manager', () => {
       expect(config.analysis.maxFiles).toBe(100_000);
       expect(config.analysis.includePatterns).toEqual([]);
       expect(config.analysis.excludePatterns).toEqual([]);
-      expect(config.generation.model).toBe('claude-sonnet-4-20250514');
+      expect(config.generation.model).toBe('claude-sonnet-4-6');
       expect(config.generation.domains).toBe('auto');
       expect(config.createdAt).toBeDefined();
       expect(config.lastRun).toBe(null);

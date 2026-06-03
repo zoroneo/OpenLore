@@ -173,6 +173,40 @@ describe('project-detector', () => {
     });
   });
 
+  describe('nested manifest detection (Spec 26 B6A)', () => {
+    it('detects a manifest one directory deep when the root has none', async () => {
+      await mkdir(join(testDir, 'python'), { recursive: true });
+      await writeFile(join(testDir, 'python', 'pyproject.toml'), '[project]\n');
+      const result = await detectProjectType(testDir);
+      expect(result.projectType).toBe('python');
+      expect(result.manifestFile).toBe(join('python', 'pyproject.toml'));
+      expect(result.confidence).toBe('medium');
+    });
+
+    it('still reports unknown when no manifest exists at root or depth-1', async () => {
+      await mkdir(join(testDir, 'docs'), { recursive: true });
+      await writeFile(join(testDir, 'docs', 'README.md'), '# hi\n');
+      const result = await detectProjectType(testDir);
+      expect(result.projectType).toBe('unknown');
+    });
+
+    it('prefers the root manifest over a nested one', async () => {
+      await writeFile(join(testDir, 'package.json'), '{}');
+      await mkdir(join(testDir, 'backend'), { recursive: true });
+      await writeFile(join(testDir, 'backend', 'go.mod'), 'module x\n');
+      const result = await detectProjectType(testDir);
+      expect(result.projectType).toBe('nodejs');
+      expect(result.manifestFile).toBe('package.json');
+    });
+
+    it('ignores node_modules when scanning depth-1', async () => {
+      await mkdir(join(testDir, 'node_modules'), { recursive: true });
+      await writeFile(join(testDir, 'node_modules', 'package.json'), '{}');
+      const result = await detectProjectType(testDir);
+      expect(result.projectType).toBe('unknown');
+    });
+  });
+
   describe('getProjectTypeName', () => {
     it('should return correct names for all project types', () => {
       expect(getProjectTypeName('nodejs')).toBe('Node.js/TypeScript');

@@ -6,7 +6,7 @@
  *
  * Used by:
  *   - MCP tool `get_architecture_overview` (mcp.ts)
- *   - `openlore analyze` — writes ARCHITECTURE.md to the project root
+ *   - `openlore analyze` — writes ARCHITECTURE.md into .openlore/analysis/
  */
 
 import { writeFile } from 'node:fs/promises';
@@ -261,14 +261,16 @@ export function renderArchitectureMarkdown(overview: ArchitectureOverview): stri
 // ============================================================================
 
 /**
- * Write ARCHITECTURE.md to the project root.
+ * Write ARCHITECTURE.md into the given output directory (the analysis dir,
+ * `.openlore/analysis/`), alongside CODEBASE.md and the other generated
+ * artifacts, so nothing churns at the repo root (Spec 26 B3).
  * Returns the path written.
  */
 export async function writeArchitectureMd(
-  rootPath: string,
+  outputDir: string,
   overview: ArchitectureOverview
 ): Promise<string> {
-  const outPath = join(rootPath, 'ARCHITECTURE.md');
+  const outPath = join(outputDir, 'ARCHITECTURE.md');
   await writeFile(outPath, renderArchitectureMarkdown(overview), 'utf-8');
   return outPath;
 }

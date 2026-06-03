@@ -186,7 +186,7 @@ test-results/
 result
 docker/
 docker-compose.yml
-ARCHITECTURE.md
+# (ARCHITECTURE.md now lands in .openlore/analysis/ — covered by .openlore/ above — Spec 26 B3)
 # openspec: the blanket `openspec/` silently ignored the ADR files written by
 # `openlore decisions --sync` (dogfooding, spec 15). Keep ignoring untracked
 # openspec content (already-tracked specs still commit), but un-ignore the

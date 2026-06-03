@@ -17,6 +17,7 @@ import {
   openloreConfigExists,
   openspecDirExists,
   createOpenSpecStructure,
+  detectExistingSpecDir,
 } from '../core/services/config-manager.js';
 import {
   gitignoreExists,
@@ -40,7 +41,13 @@ function progress(onProgress: ProgressCallback | undefined, step: string, status
  */
 export async function openloreInit(options: InitApiOptions = {}): Promise<InitResult> {
   const rootPath = options.rootPath ?? process.cwd();
-  const openspecRelPath = options.openspecPath ?? DEFAULT_OPENSPEC_PATH;
+  let openspecRelPath = options.openspecPath ?? DEFAULT_OPENSPEC_PATH;
+  // Point at existing specs (docs/specs/, specs/) rather than creating an empty
+  // openspec/ blind to them, unless an explicit path was given (Spec 26 B5).
+  if (!options.openspecPath) {
+    const detected = await detectExistingSpecDir(rootPath);
+    if (detected && detected.root !== 'openspec') openspecRelPath = detected.root;
+  }
   const openspecFullPath = resolve(rootPath, openspecRelPath);
   const force = options.force ?? false;
   const { onProgress } = options;

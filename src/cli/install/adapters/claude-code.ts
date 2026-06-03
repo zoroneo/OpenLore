@@ -1,7 +1,13 @@
 /**
  * claude-code adapter — appends the OpenLore instruction block to CLAUDE.md
- * (creating it if absent) and adds a SessionStart hook + MCP server
- * registration to `.claude/settings.json`.
+ * (creating it if absent), registers the OpenLore MCP server in `.mcp.json`
+ * (the project-scope file Claude Code actually reads for MCP), and adds a
+ * SessionStart hook to `.claude/settings.json`.
+ *
+ * NB: Claude Code loads MCP servers only from `.mcp.json` (project),
+ * `~/.claude.json`, or `claude mcp add` — never from `.claude/settings.json`.
+ * Earlier versions wrote `mcpServers.openlore` to `settings.json`, so the
+ * server never loaded; `apply` now migrates that stale entry away.
  */
 
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
@@ -13,6 +19,7 @@ import type { Adapter, ApplyContext, ApplyResult, PlannedChange } from './types.
 
 const MD_FILE = 'CLAUDE.md';
 const SETTINGS_PATH = '.claude/settings.json';
+const MCP_PATH = '.mcp.json';
 
 const MCP_ENTRY = {
   command: 'npx',
@@ -83,64 +90,88 @@ export const claudeCodeAdapter: Adapter = {
       blockBody: ctx.instructionTemplate,
     });
 
-    const settingsPath = join(ctx.root, SETTINGS_PATH);
-    const existing = await readJsonOrEmpty(settingsPath);
-    const had = await fileExists(settingsPath);
-    const prevMeta = readMeta(existing);
-    if (prevMeta && isHandEdited(existing, prevMeta) && !ctx.force) {
+    // --- 1. MCP server registration → .mcp.json (the file Claude Code reads) ---
+    const mcpPath = join(ctx.root, MCP_PATH);
+    const existingMcp = await readJsonOrEmpty(mcpPath);
+    const hadMcp = await fileExists(mcpPath);
+    const prevMcpMeta = readMeta(existingMcp);
+    if (prevMcpMeta && isHandEdited(existingMcp, prevMcpMeta) && !ctx.force) {
       mdResult.changes.push({
-        path: settingsPath,
+        path: mcpPath,
         kind: 'noop',
-        summary: `${SETTINGS_PATH}: refused to overwrite hand-edited OpenLore entries (use --force)`,
+        summary: `${MCP_PATH}: refused to overwrite hand-edited OpenLore entries (use --force)`,
       });
       mdResult.warnings.push(
-        `${SETTINGS_PATH} has hand-edits in OpenLore-managed paths — pass --force to overwrite`
+        `${MCP_PATH} has hand-edits in OpenLore-managed paths — pass --force to overwrite`
       );
       mdResult.conflict = true;
       return mdResult;
     }
-
-    // SessionStart is computed imperatively (preserving any user-defined
-    // entries) and written through mergeEntries, but only mcpServers.openlore
-    // is tracked in our meta — we identify our SessionStart entry by its
-    // `_openlore: true` marker, not by claiming the whole array.
-    const currentSessionStart =
-      ((existing.hooks as Record<string, unknown>)?.SessionStart as unknown) ?? [];
-    const nextSessionStart = mergeSessionStart(currentSessionStart);
-
-    const { next, action } = mergeEntries(existing, [
+    const { next: nextMcp, action: mcpAction } = mergeEntries(existingMcp, [
       { path: 'mcpServers.openlore', value: MCP_ENTRY },
     ]);
-    // Apply the SessionStart update outside the managed-paths set.
+    const mcpBefore = hadMcp ? JSON.stringify(existingMcp, null, 2) + '\n' : '';
+    const mcpAfter = JSON.stringify(nextMcp, null, 2) + '\n';
+    mdResult.changes.push({
+      path: mcpPath,
+      kind: !hadMcp ? 'create' : mcpAction === 'noop' ? 'noop' : 'update',
+      summary: !hadMcp
+        ? `create ${MCP_PATH} with mcpServers.openlore`
+        : mcpAction === 'noop'
+          ? `${MCP_PATH}: already up to date`
+          : `update mcpServers.openlore in ${MCP_PATH}`,
+      preview: !hadMcp
+        ? previewCreate(mcpPath, mcpAfter)
+        : mcpAction === 'noop'
+          ? undefined
+          : previewDiff(mcpPath, mcpBefore, mcpAfter),
+    });
+    if (!ctx.dryRun && (mcpAction !== 'noop' || !hadMcp)) {
+      await mkdir(dirname(mcpPath), { recursive: true });
+      await writeFile(mcpPath, mcpAfter, 'utf8');
+    }
+
+    // --- 2. SessionStart hook → .claude/settings.json (marker-identified) ---
+    const settingsPath = join(ctx.root, SETTINGS_PATH);
+    const existing = await readJsonOrEmpty(settingsPath);
+    const had = await fileExists(settingsPath);
+
+    // Migrate away the legacy mcpServers.openlore + meta a prior version wrote
+    // here (settings.json is never read for MCP). removeManaged strips the
+    // managed paths (mcpServers.openlore) and our top-level meta; SessionStart
+    // is identified separately by its `_openlore: true` marker, so it survives.
+    const migrated = removeManaged(existing);
+    const base = migrated.removed ? migrated.next : existing;
+
+    const currentSessionStart =
+      ((base.hooks as Record<string, unknown>)?.SessionStart as unknown) ?? [];
+    const nextSessionStart = mergeSessionStart(currentSessionStart);
+
+    const next = structuredClone(base) as Record<string, unknown>;
     if (!next.hooks || typeof next.hooks !== 'object') next.hooks = {};
     (next.hooks as Record<string, unknown>).SessionStart = nextSessionStart;
 
-    // Re-derive action: if existing already had identical SessionStart + meta noop, it's noop.
-    const sessionChanged =
-      JSON.stringify(currentSessionStart) !== JSON.stringify(nextSessionStart);
-    const finalAction =
-      action === 'noop' && !sessionChanged ? 'noop' : action === 'created' ? 'created' : 'updated';
-
+    const changed = JSON.stringify(existing) !== JSON.stringify(next);
     const before = had ? JSON.stringify(existing, null, 2) + '\n' : '';
     const after = JSON.stringify(next, null, 2) + '\n';
     const change: PlannedChange = {
       path: settingsPath,
-      kind: !had ? 'create' : finalAction === 'noop' ? 'noop' : 'update',
+      kind: !had ? 'create' : !changed ? 'noop' : 'update',
       summary: !had
-        ? `create ${SETTINGS_PATH} with SessionStart hook + mcpServers.openlore`
-        : finalAction === 'noop'
+        ? `create ${SETTINGS_PATH} with SessionStart hook`
+        : !changed
           ? `${SETTINGS_PATH}: already up to date`
-          : `update SessionStart hook + mcpServers.openlore in ${SETTINGS_PATH}`,
+          : `update SessionStart hook in ${SETTINGS_PATH}`,
       preview: !had
         ? previewCreate(settingsPath, after)
-        : finalAction === 'noop'
+        : !changed
           ? undefined
           : previewDiff(settingsPath, before, after),
     };
 
-    if (!ctx.dryRun && (finalAction !== 'noop' || !had)) {
+    if (!ctx.dryRun && changed) {
       await mkdir(dirname(settingsPath), { recursive: true });
-      await writeFile(settingsPath, JSON.stringify(next, null, 2) + '\n', 'utf8');
+      await writeFile(settingsPath, after, 'utf8');
     }
 
     mdResult.changes.push(change);
@@ -149,6 +180,33 @@ export const claudeCodeAdapter: Adapter = {
 
   async uninstall(ctx: ApplyContext): Promise<ApplyResult> {
     const md = await uninstallMarkdownBlock(ctx, MD_FILE, false);
+
+    // Strip mcpServers.openlore from .mcp.json; delete the file if it was ours.
+    const mcpPath = join(ctx.root, MCP_PATH);
+    try {
+      const parsedMcp = JSON.parse(await readFile(mcpPath, 'utf8')) as Record<string, unknown>;
+      const { next, removed } = removeManaged(parsedMcp);
+      if (removed) {
+        if (Object.keys(next).length === 0) {
+          if (!ctx.dryRun) await unlink(mcpPath);
+          md.changes.push({
+            path: mcpPath,
+            kind: 'delete',
+            summary: `remove ${MCP_PATH} (was OpenLore-only)`,
+          });
+        } else {
+          if (!ctx.dryRun) await writeFile(mcpPath, JSON.stringify(next, null, 2) + '\n', 'utf8');
+          md.changes.push({
+            path: mcpPath,
+            kind: 'update',
+            summary: `strip OpenLore entries from ${MCP_PATH}`,
+          });
+        }
+      }
+    } catch {
+      /* no .mcp.json — nothing to do */
+    }
+
     const settingsPath = join(ctx.root, SETTINGS_PATH);
     let parsed: Record<string, unknown>;
     try {
@@ -156,11 +214,13 @@ export const claudeCodeAdapter: Adapter = {
     } catch {
       return md;
     }
-    // Strip our SessionStart entry first (it's identified by _openlore marker,
-    // not by the managed-paths meta).
+    // Strip our SessionStart entry (identified by the `_openlore` marker, not by
+    // the managed-paths meta).
+    let changed = false;
     const hooksObj = parsed.hooks as Record<string, unknown> | undefined;
     if (hooksObj && Array.isArray(hooksObj.SessionStart)) {
       const filtered = stripOurSessionStart(hooksObj.SessionStart);
+      if (filtered.length !== hooksObj.SessionStart.length) changed = true;
       if (filtered.length === 0) {
         delete hooksObj.SessionStart;
         if (Object.keys(hooksObj).length === 0) delete parsed.hooks;
@@ -169,12 +229,11 @@ export const claudeCodeAdapter: Adapter = {
       }
     }
 
+    // Also strip any legacy managed entry (mcpServers.openlore + meta) a prior
+    // version wrote here before MCP moved to .mcp.json.
     const { next, removed } = removeManaged(parsed);
-    if (!removed && parsed.hooks === undefined) {
-      // We may have only stripped a SessionStart entry — that still counts as work.
-    } else if (!removed) {
-      return md;
-    }
+    if (removed) changed = true;
+    if (!changed) return md;
 
     // If file is now empty (only had our entries), delete it.
     const isEmpty = Object.keys(next).length === 0;
