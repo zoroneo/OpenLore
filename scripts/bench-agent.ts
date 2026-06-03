@@ -37,6 +37,7 @@ interface Opts {
   skipSetup: boolean;
   withFullTools: boolean;   // WITH exposes all ~45 tools instead of a lean preset
   withPreset: string;       // lean tool preset for the WITH arm (default: navigation)
+  leanOrient: boolean;      // instruct the WITH arm to call orient with lean:true (Spec 27)
 }
 
 function parseArgs(argv: string[]): Opts {
@@ -61,6 +62,7 @@ function parseArgs(argv: string[]): Opts {
     skipSetup: argv.includes('--skip-setup'),
     withFullTools: argv.includes('--with-full-tools'),
     withPreset: get('--with-preset') ?? 'navigation',
+    leanOrient: argv.includes('--lean-orient'),
   };
 }
 
@@ -231,7 +233,8 @@ function runAgent(task: BenchTask, repoDir: string, condition: Condition, opts: 
     // beyond what a real openlore install gives the agent.
     args.push('--append-system-prompt',
       'This project uses OpenLore for architectural memory. BEFORE reading source ' +
-      'files, call the openlore `orient` tool (mcp__openlore__orient) with your task — ' +
+      'files, call the openlore `orient` tool (mcp__openlore__orient) with your task' +
+      (opts.leanOrient ? ' and pass `lean: true` (this is a shallow lookup)' : '') + ' — ' +
       'it returns the relevant functions, their callers, matching specs, and insertion ' +
       'points in one call. If you are reading source files without having called orient ' +
       'first, you are probably wasting tokens.');

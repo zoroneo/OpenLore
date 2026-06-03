@@ -96,14 +96,23 @@ describe('orient command', () => {
     it('passes task, directory and limit through to handleOrient', async () => {
       mockHandleOrient.mockResolvedValue({ task: 't', searchMode: 'bm25_fallback', relevantFunctions: [] });
       await orientCommand.parseAsync(['--task', 'add rate limiting', '--limit', '7'], { from: 'user' });
-      // 4th arg is tokenBudget — undefined when --token-budget is not passed (Spec 25 P4).
-      expect(mockHandleOrient).toHaveBeenCalledWith('/fake/proj', 'add rate limiting', 7, undefined);
+      // args: (dir, task, limit, tokenBudget=undefined, lean=false).
+      expect(mockHandleOrient).toHaveBeenCalledWith('/fake/proj', 'add rate limiting', 7, undefined, false);
     });
 
     it('passes --token-budget through to handleOrient', async () => {
       mockHandleOrient.mockResolvedValue({ task: 't', searchMode: 'bm25_fallback', relevantFunctions: [] });
       await orientCommand.parseAsync(['--task', 'auth flow', '--limit', '5', '--token-budget', '400'], { from: 'user' });
-      expect(mockHandleOrient).toHaveBeenCalledWith('/fake/proj', 'auth flow', 5, 400);
+      expect(mockHandleOrient).toHaveBeenCalledWith('/fake/proj', 'auth flow', 5, 400, false);
+    });
+
+    it('passes --lean through to handleOrient (Spec 27)', async () => {
+      // Commander v12 retains option values across parseAsync on the same command
+      // instance, so clear --token-budget that a prior test set.
+      orientCommand.setOptionValue('tokenBudget', undefined);
+      mockHandleOrient.mockResolvedValue({ task: 't', searchMode: 'bm25_fallback', relevantFunctions: [], lean: true });
+      await orientCommand.parseAsync(['--task', 'who calls foo', '--lean'], { from: 'user' });
+      expect(mockHandleOrient).toHaveBeenCalledWith('/fake/proj', 'who calls foo', 5, undefined, true);
     });
 
     it('--json emits the full result object as JSON', async () => {

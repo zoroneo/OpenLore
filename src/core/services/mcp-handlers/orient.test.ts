@@ -147,6 +147,33 @@ describe('handleOrient', () => {
     expect((result.relevantFunctions as unknown[]).length).toBeGreaterThan(0);
   });
 
+  it('lean mode (Spec 27) returns the navigation core only and drops enrichment', async () => {
+    vi.mocked(VectorIndex.exists).mockReturnValue(true);
+    vi.mocked(VectorIndex.search).mockResolvedValue([
+      makeSearchResult({ name: 'handleAuth', filePath: 'src/auth.ts' }),
+      makeSearchResult({ name: 'verifyToken', filePath: 'src/auth.ts' }),
+    ]);
+
+    const lean = await handleOrient('/tmp/proj', 'who calls handleAuth', 5, undefined, true) as Record<string, unknown>;
+
+    // Core kept, with expand handles on every function (the progressive-disclosure contract).
+    expect(lean.lean).toBe(true);
+    expect(Array.isArray(lean.relevantFunctions)).toBe(true);
+    expect(Array.isArray(lean.callPaths)).toBe(true);
+    expect(lean.specDomains).toBeDefined();
+    for (const f of lean.relevantFunctions as Array<{ expand?: string }>) {
+      expect(typeof f.expand).toBe('string');
+    }
+    // Enrichment dropped — each is reachable via expand handles / dedicated tools.
+    for (const k of ['insertionPoints', 'nextSteps', 'provenance', 'changeCoupling', 'inlineSpecs', 'architectureViolations']) {
+      expect(lean[k], `lean should omit "${k}"`).toBeUndefined();
+    }
+
+    // And lean is materially smaller than the rich payload for the same query.
+    const rich = await handleOrient('/tmp/proj', 'who calls handleAuth', 5) as Record<string, unknown>;
+    expect(Buffer.byteLength(JSON.stringify(lean))).toBeLessThan(Buffer.byteLength(JSON.stringify(rich)));
+  });
+
   it('preserves raw score (higher = better) without inverting via 1 - score', async () => {
     vi.mocked(VectorIndex.exists).mockReturnValue(true);
     vi.mocked(VectorIndex.search).mockResolvedValue([

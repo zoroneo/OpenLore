@@ -310,6 +310,12 @@ The system SHALL The orient and search_code tools SHALL accept an optional token
 
 > Decision recorded: dbe1a253
 > Date: 2026-06-03
+### Requirement: OrientToolSupportsLeanModeToStripEnrichmentSections
+
+The system SHALL The orient command SHALL accept a `lean` flag that, when set, returns only the navigation core (relevantFunctions, callPaths, specDomains) and omits provenance, change-coupling, insertion-points, specs, and decisions enrichment.
+
+> Decision recorded: e57091fb
+> Date: 2026-06-03
 
 ## Technical Notes
 
@@ -386,3 +392,13 @@ Claude Code loads MCP servers only from .mcp.json (project scope), ~/.claude.jso
 Allows callers to cap the number of tokens returned in relevantFunctions/search results, enabling agents to stay within context-window limits without over-fetching; highest-scored items are kept and exact duplicates are collapsed
 
 **Consequences:** orient and search_code gain an optional tokenBudget parameter threaded from CLI/MCP surface through to handlers; callers that omit it get unbounded (legacy) behavior
+
+### Orient tool supports lean mode to strip enrichment sections
+
+**Status:** Approved
+**Date:** 2026-06-03
+**ID:** e57091fb
+
+Shallow 'who/where' lookups don't need provenance, change-coupling, insertion-points, specs, or decisions enrichment — returning only the navigation core (relevantFunctions, callPaths, specDomains) cuts per-call token cost for agents that only need a quick lookup before drilling deeper with dedicated tools.
+
+**Consequences:** Callers must opt-in via the `lean` flag; expand handles and dedicated tools remain the path to full enrichment. Both MCP and CLI surfaces must forward the parameter to handleOrient.

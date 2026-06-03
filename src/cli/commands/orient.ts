@@ -23,6 +23,7 @@ interface OrientCliOptions {
   directory?: string;
   limit?: string;
   tokenBudget?: string;
+  lean?: boolean;
   json?: boolean;
 }
 
@@ -121,6 +122,7 @@ export const orientCommand = new Command('orient')
   .option('--directory <path>', 'Project directory to orient in (default: current directory)')
   .option('--limit <n>', 'Number of relevant functions to return (default: 5)')
   .option('--token-budget <n>', 'Cap relevantFunctions to ~this many tokens (Spec 25 P4); highest-scored kept, exact duplicates collapsed')
+  .option('--lean', 'Return only the navigation core — drop provenance/change-coupling/insertion-points/specs/decisions enrichment (Spec 27)', false)
   .option('--json', 'Emit the full result as JSON instead of a human-readable summary', false)
   .addHelpText(
     'after',
@@ -165,9 +167,10 @@ prints a short session-start primer (used by the install SessionStart hook).
     try {
       // In --json mode keep stdout clean (validateDirectory logs to stdout);
       // in human mode let diagnostics through normally.
+      const lean = opts.lean ?? false;
       const result = (asJson
-        ? await withQuietStdout(() => handleOrient(directory, task, limit, tokenBudget))
-        : await handleOrient(directory, task, limit, tokenBudget)) as Record<string, unknown>;
+        ? await withQuietStdout(() => handleOrient(directory, task, limit, tokenBudget, lean))
+        : await handleOrient(directory, task, limit, tokenBudget, lean)) as Record<string, unknown>;
       // Always emit structured results (including the "no analysis" error object)
       // on stdout so wrapper scripts can parse them — mirroring the MCP tool.
       if (asJson) {

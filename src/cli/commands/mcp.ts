@@ -174,6 +174,10 @@ export const TOOL_DEFINITIONS = [
           type: 'number',
           description: 'Optional: cap relevantFunctions to ~this many tokens (highest-scored kept, exact duplicates collapsed); each item carries an `expand` handle for get_function_body',
         },
+        lean: {
+          type: 'boolean',
+          description: 'Return only the navigation core (relevantFunctions + callPaths + specDomains); drop provenance/change-coupling/insertion-points/specs/decisions enrichment (each reachable via expand handles or dedicated tools). Lower per-call cost for shallow "who/where" lookups.',
+        },
       },
       required: ['directory', 'task'],
     },
@@ -1587,8 +1591,8 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
       // generous overrides in MCP_TOOL_TIMEOUT_OVERRIDES.
       await withToolTimeout((async () => {
       if (name === 'orient') {
-        const { task, limit = 5, tokenBudget } = args as { task: string; limit?: number; tokenBudget?: number };
-        result = await handleOrient(directory, task, limit, tokenBudget);
+        const { task, limit = 5, tokenBudget, lean } = args as { task: string; limit?: number; tokenBudget?: number; lean?: boolean };
+        result = await handleOrient(directory, task, limit, tokenBudget, lean);
         if (result && typeof result === 'object') {
           const r = result as Record<string, unknown>;
           emit(directory, 'orient', {

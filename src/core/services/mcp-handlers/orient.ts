@@ -158,6 +158,7 @@ export async function handleOrient(
   task: string,
   limit = 5,
   tokenBudget?: number,
+  lean = false,
 ): Promise<unknown> {
   const absDir = await validateDirectory(directory);
   const outputDir = join(absDir, '.openlore', 'analysis');
@@ -559,7 +560,8 @@ export async function handleOrient(
   // depend on it, so flag it rather than silently returning a thinner result.
   const graphIndexStale = relevantFunctions.length > 0 && !llmCtx?.edgeStore;
 
-  return {
+  // Minimal-sufficient navigation core — always returned (Spec 27).
+  const core = {
     task,
     searchMode,
     ...(searchMode === 'bm25_fallback'
@@ -573,10 +575,23 @@ export async function handleOrient(
     ...(budgeted.omitted > 0
       ? { relevantFunctionsOmitted: omissionNote(budgeted.omitted, 'raise tokenBudget, increase limit, or call search_code') }
       : {}),
-    ...(specLinkedFunctions.length > 0 ? { specLinkedFunctions } : {}),
     specDomains,
-    ...(inlineSpecs !== undefined ? { inlineSpecs } : {}),
     callPaths,
+    suggestedTools,
+  };
+
+  // Lean mode (Spec 27): return the navigation core only. The enrichment blocks
+  // below are pure overhead on a shallow "who calls X" lookup and each is one
+  // exact `expand` handle or one dedicated tool call away — so we trim bytes per
+  // turn without forcing a follow-up round-trip. The rich default is unchanged.
+  if (lean) {
+    return { ...core, lean: true };
+  }
+
+  return {
+    ...core,
+    ...(specLinkedFunctions.length > 0 ? { specLinkedFunctions } : {}),
+    ...(inlineSpecs !== undefined ? { inlineSpecs } : {}),
     insertionPoints,
     ...(matchingSpecs !== undefined ? { matchingSpecs } : {}),
     ...(pendingDecisions !== undefined ? { pendingDecisions } : {}),
@@ -584,7 +599,6 @@ export async function handleOrient(
     ...(provenance !== undefined ? { provenance } : {}),
     ...(changeCoupling !== undefined ? { changeCoupling } : {}),
     ...(architectureViolations !== undefined ? { architectureViolations } : {}),
-    suggestedTools,
     nextSteps,
   };
 }

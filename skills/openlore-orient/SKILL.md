@@ -47,6 +47,10 @@ The result fields are **camelCase** (matching `orient --json`):
 
 Always start by reading **`specDomains`**, then **`callPaths`**, then jump into source only at the **`insertionPoints`** you actually plan to edit.
 
+### Lean mode for shallow lookups (cheaper)
+
+For a quick "who calls X" / "where is Y defined" lookup, pass **`lean: true`** (or `orient --lean`): it returns just the navigation core (`relevantFunctions` with `expand` handles, `callPaths`, `specDomains`) — ~40% smaller — and drops the provenance / change-coupling / insertion-points / specs / decisions enrichment, each still one `expand` handle or dedicated tool call away. Omit `lean` when you actually need that enrichment (planning an edit, checking specs/decisions). Caveat (measured, Spec 27): on a *trivial* lookup in a small/familiar repo, even a lean orient call can cost more than just grepping — `orient` earns its keep on unfamiliar or multi-hop work, not one-line facts you could find in 2 reads.
+
 > **Note:** the `openlore orient --json --task` CLI subcommand is available, so the wrappers use it directly. The MCP fallback in the wrappers only kicks in on older openlore versions that predate the subcommand.
 
 ## What NOT to do
