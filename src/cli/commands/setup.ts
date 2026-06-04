@@ -28,7 +28,7 @@ import { installPreCommitHook, uninstallClaudeHook } from './decisions.js';
 // TYPES
 // ============================================================================
 
-type ToolName = 'vibe' | 'cline' | 'gsd' | 'bmad' | 'claude' | 'opencode' | 'omoa';
+type ToolName = 'vibe' | 'cline' | 'gsd' | 'bmad' | 'claude' | 'opencode' | 'omoa' | 'pi';
 
 interface SkillEntry {
   /** Absolute source path inside the package's examples/ directory */
@@ -117,7 +117,7 @@ async function copyFile(
 // SKILL MANIFESTS
 // ============================================================================
 
-function buildManifest(projectRoot: string): Record<ToolName, SkillEntry[]> {
+function buildManifest(projectRoot: string, piGlobal = false): Record<ToolName, SkillEntry[]> {
   const ex = join(PACKAGE_ROOT, 'examples');
 
   const VIBE_SKILLS = [
@@ -229,6 +229,16 @@ function buildManifest(projectRoot: string): Record<ToolName, SkillEntry[]> {
         dest: join(projectRoot, '.opencode', 'prompts', 'sisyphus-sdd.md'),
       },
     ],
+    // Pi (pi.dev) — a single TS extension, not per-skill markdown. Project-local
+    // by default; --global installs it for every project.
+    pi: [
+      {
+        src: join(ex, 'pi', 'openlore.ts'),
+        dest: piGlobal
+          ? join(homedir(), '.pi', 'agent', 'extensions', 'openlore.ts')
+          : join(projectRoot, '.pi', 'extensions', 'openlore.ts'),
+      },
+    ],
   };
 }
 
@@ -239,9 +249,10 @@ function buildManifest(projectRoot: string): Record<ToolName, SkillEntry[]> {
 async function runSetup(
   projectRoot: string,
   tools: ToolName[],
-  force: boolean
+  force: boolean,
+  piGlobal = false
 ): Promise<SetupResult[]> {
-  const manifest = buildManifest(projectRoot);
+  const manifest = buildManifest(projectRoot, piGlobal);
   const results: SetupResult[] = [];
 
   for (const tool of tools) {
@@ -272,7 +283,7 @@ export const setupCommand = new Command('setup')
   )
   .option(
     '--tools <list>',
-    'Comma-separated list of tools to install: vibe, cline, claude, opencode, gsd, bmad (default: all)'
+    'Comma-separated list of tools to install: vibe, cline, claude, opencode, gsd, bmad, pi (default: all)'
   )
   .option(
     '--force',
@@ -280,9 +291,10 @@ export const setupCommand = new Command('setup')
     false
   )
   .option('--dir <path>', 'Project root directory', process.cwd())
-  .action(async (options: { tools?: string; force: boolean; dir: string }) => {
+  .option('--global', 'For the pi target: install the extension to ~/.pi/agent/extensions/ instead of the project', false)
+  .action(async (options: { tools?: string; force: boolean; dir: string; global: boolean }) => {
     const projectRoot = options.dir;
-    const allTools: ToolName[] = ['vibe', 'cline', 'gsd', 'bmad', 'claude', 'opencode', 'omoa'];
+    const allTools: ToolName[] = ['vibe', 'cline', 'gsd', 'bmad', 'claude', 'opencode', 'omoa', 'pi'];
 
     let tools: ToolName[];
     if (options.tools) {
@@ -291,7 +303,7 @@ export const setupCommand = new Command('setup')
       );
       if (tools.length === 0) {
         logger.error(
-          'setup: no valid tools specified. Valid values: vibe, cline, gsd, bmad, claude, opencode, omoa'
+          'setup: no valid tools specified. Valid values: vibe, cline, gsd, bmad, claude, opencode, omoa, pi'
         );
         process.exit(1);
       }
@@ -333,6 +345,10 @@ export const setupCommand = new Command('setup')
             value: 'omoa' as ToolName,
             checked: omoaDetected,
           },
+          {
+            name: 'Pi            (.pi/extensions/openlore.ts — warm-daemon extension; --global for ~/.pi)',
+            value: 'pi' as ToolName,
+          },
         ],
       });
       if (selected.length === 0) {
@@ -353,7 +369,7 @@ export const setupCommand = new Command('setup')
 
     let results: SetupResult[];
     try {
-      results = await runSetup(projectRoot, tools, options.force);
+      results = await runSetup(projectRoot, tools, options.force, options.global);
     } catch (err) {
       logger.error(`setup failed: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);

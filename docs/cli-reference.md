@@ -18,8 +18,9 @@
 | `openlore decisions --install-hook` | Install the pre-commit hook that gates commits until decisions are reviewed | No |
 | `openlore run` | Full pipeline: init, analyze, generate | Yes |
 | `openlore view` | Launch interactive graph & spec viewer in the browser | No |
-| `openlore setup` | Install workflow skills into the project (Vibe, Cline, GSD, BMAD) | No |
+| `openlore setup` | Install workflow skills into the project (Vibe, Cline, GSD, BMAD, Pi) | No |
 | `openlore mcp` | Start MCP server (stdio, for Cline / Claude Code) | No |
+| `openlore serve` | Start a warm local HTTP daemon exposing tools (loopback, for Pi / editors) | No |
 | `openlore doctor` | Check environment and configuration for common issues | No |
 | `openlore refresh-stories` | Refresh story files with latest structural context after each commit | No |
 
@@ -188,6 +189,51 @@ Checks performed:
 | Disk space | Warns < 500 MB, fails < 200 MB |
 
 Run `openlore doctor` whenever setup instructions aren't working — it tells you exactly what to fix and how.
+
+---
+
+## Serve (warm daemon)
+
+`openlore serve` runs a long-lived loopback HTTP daemon that keeps openlore's
+caches warm across calls and, with `--watch` (default), keeps the analysis
+continuously fresh — signatures/vector live, plus a debounced full call-graph
+re-analyze after each edit burst. It exposes the same tools as the MCP server
+over plain HTTP so non-MCP clients (e.g. the [Pi](https://pi.dev) extension in
+`examples/pi/`) can hit them with `fetch` — no JSON-RPC, no subprocess-per-call.
+
+```bash
+openlore serve                          # navigation preset, ephemeral port, watch on
+openlore serve --preset all --port 7077 # all ~45 tools on a fixed port
+openlore serve --no-watch               # transport only, no freshness lane
+openlore serve --stop                   # stop the daemon serving this directory
+```
+
+| Option | Description |
+|--------|-------------|
+| `-d, --directory <path>` | Project root to serve; discovery file written here (default: cwd) |
+| `-p, --port <number>` | Port to bind (default: ephemeral free port) |
+| `--host <host>` | Host to bind (default: `127.0.0.1`) |
+| `--preset <name>` | Tool surface: `minimal`, `navigation` (default), or `all` |
+| `--token <token>` | Require this token as the `x-openlore-token` header (default: `$OPENLORE_SERVE_TOKEN`) |
+| `--no-watch` | Disable the freshness watcher + re-analyze lane |
+| `--stop` | Stop a running daemon for `--directory` and exit |
+
+Endpoints (loopback only): `GET /health`, `POST /tool/:name` with body
+`{ "directory": "...", "args": { ... } }`. Discovery: the daemon writes
+`.openlore/serve.json` `{ port, pid, host, token? }` (removed on clean shutdown).
+
+```bash
+PORT=$(jq .port .openlore/serve.json)
+curl 127.0.0.1:$PORT/health
+curl -XPOST 127.0.0.1:$PORT/tool/orient -d '{"args":{"task":"add rate limiting"}}'
+```
+
+### Pi integration
+
+`openlore setup --tools pi` installs the Pi extension to `.pi/extensions/openlore.ts`
+(add `--global` for `~/.pi/agent/extensions/`). It auto-starts and talks to the
+serve daemon, injecting structural context and exposing the navigation tools.
+See `examples/pi/README.md`.
 
 ---
 
