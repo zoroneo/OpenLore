@@ -62,13 +62,19 @@ async function readDescriptor(cwd: string): Promise<ServeDescriptor | null> {
   }
 }
 
-/** GET /health — confirms a descriptor points at a live daemon. */
+/**
+ * GET /health — confirms a descriptor points at a live openlore daemon, not a
+ * stale serve.json or a recycled port now owned by an unrelated server. Checks
+ * the `ok: true` response shape, not just a 200.
+ */
 async function health(desc: ServeDescriptor): Promise<boolean> {
   try {
     const res = await fetch(`http://${desc.host}:${desc.port}/health`, {
       signal: AbortSignal.timeout(1000),
     });
-    return res.ok;
+    if (!res.ok) return false;
+    const body = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+    return body?.ok === true;
   } catch {
     return false;
   }

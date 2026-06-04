@@ -121,6 +121,25 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(text);
 }
 
+/**
+ * Confirm a descriptor points at a LIVE openlore daemon — not a stale serve.json
+ * left by a SIGKILL'd process, nor a recycled port now owned by something else.
+ * Verifies GET /health returns our `ok: true` shape, so we never signal a PID we
+ * can't positively identify as our own daemon.
+ */
+async function daemonAlive(desc: ServeDescriptor): Promise<boolean> {
+  try {
+    const res = await fetch(`http://${desc.host}:${desc.port}/health`, {
+      signal: AbortSignal.timeout(1000),
+    });
+    if (!res.ok) return false;
+    const body = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+    return body?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Stop a daemon previously started for `root` by signalling its recorded pid. */
 async function stopDaemon(root: string): Promise<void> {
   const path = serveFilePath(root);
@@ -131,13 +150,20 @@ async function stopDaemon(root: string): Promise<void> {
     logger.warning(`No running openlore serve daemon found for ${root}.`);
     return;
   }
+  // Only signal a PID we've confirmed is our live daemon on the recorded port.
+  // A stale serve.json could otherwise point at a recycled PID belonging to an
+  // unrelated process — SIGTERM to that would be a nasty surprise.
+  if (!(await daemonAlive(desc))) {
+    await unlink(path).catch(() => {});
+    logger.warning(`No live daemon at ${desc.host}:${desc.port}; removed stale ${SERVE_FILE}.`);
+    return;
+  }
   try {
     process.kill(desc.pid, 'SIGTERM');
     logger.success(`Sent SIGTERM to openlore serve (pid ${desc.pid}).`);
   } catch {
-    // Process already gone — clean up the stale descriptor.
     await unlink(path).catch(() => {});
-    logger.warning(`Daemon pid ${desc.pid} not running; removed stale ${SERVE_FILE}.`);
+    logger.warning(`Daemon pid ${desc.pid} not signalable; removed stale ${SERVE_FILE}.`);
   }
 }
 

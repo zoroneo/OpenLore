@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile, access } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, access, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServe, type ServeHandle } from './serve.js';
@@ -118,6 +118,22 @@ describe('openlore serve', () => {
       body: JSON.stringify({ args: { task: 'x' } }),
     });
     expect(withTok.status).toBe(200);
+  });
+
+  it('--stop on a stale serve.json removes it without signalling a recycled PID', async () => {
+    root = await mkdtemp(join(tmpdir(), 'openlore-serve-'));
+    const descPath = join(root, '.openlore', 'serve.json');
+    await mkdir(join(root, '.openlore'), { recursive: true });
+    // Point at a dead port + a PID that is almost certainly not an openlore daemon
+    // (pid 1). daemonAlive() must fail the /health probe → file removed, no kill.
+    await writeFile(
+      descPath,
+      JSON.stringify({ port: 1, pid: 1, host: '127.0.0.1', version: 'x', startedAt: '' }),
+      'utf-8',
+    );
+    const h = await startServe({ directory: root, stop: true });
+    expect(h).toBeUndefined();
+    expect(await fileExists(descPath)).toBe(false); // stale descriptor cleaned up
   });
 
   it('rejects an unknown preset at startup', async () => {
