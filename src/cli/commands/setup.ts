@@ -397,6 +397,7 @@ export const setupCommand = new Command('setup')
       gsd: 'get-shit-done (GSD)',
       bmad: 'BMAD',
       omoa: 'oh-my-openagent (SDD plugins)',
+      pi: 'Pi (pi.dev)',
     };
 
     for (const tool of tools) {

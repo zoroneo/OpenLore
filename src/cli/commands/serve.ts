@@ -121,6 +121,15 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(text);
 }
 
+/** Read <root>/.openlore/serve.json if present. */
+async function readDescriptor(root: string): Promise<ServeDescriptor | null> {
+  try {
+    return JSON.parse(await readFile(serveFilePath(root), 'utf-8')) as ServeDescriptor;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Confirm a descriptor points at a LIVE openlore daemon — not a stale serve.json
  * left by a SIGKILL'd process, nor a recycled port now owned by something else.
@@ -143,10 +152,8 @@ async function daemonAlive(desc: ServeDescriptor): Promise<boolean> {
 /** Stop a daemon previously started for `root` by signalling its recorded pid. */
 async function stopDaemon(root: string): Promise<void> {
   const path = serveFilePath(root);
-  let desc: ServeDescriptor;
-  try {
-    desc = JSON.parse(await readFile(path, 'utf-8')) as ServeDescriptor;
-  } catch {
+  const desc = await readDescriptor(root);
+  if (!desc) {
     logger.warning(`No running openlore serve daemon found for ${root}.`);
     return;
   }
@@ -190,6 +197,23 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
     ).map((t) => t.name),
   );
 
+  // Don't start a second daemon for a root already served by a healthy one —
+  // a concurrent spawn (two MCP clients, or pi + MCP) would otherwise leave two
+  // watchers racing on the same .openlore/analysis. Reuse the live one instead.
+  const existing = await readDescriptor(root);
+  if (existing && (await daemonAlive(existing))) {
+    logger.success(
+      `openlore serve already running for ${root} at http://${existing.host}:${existing.port} — reusing.`,
+    );
+    return {
+      port: existing.port,
+      host: existing.host,
+      token: existing.token,
+      baseUrl: `http://${existing.host}:${existing.port}`,
+      close: async () => {}, // never tear down a daemon this process didn't start
+    };
+  }
+
   const token = options.token ?? (process.env.OPENLORE_SERVE_TOKEN || undefined);
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
@@ -225,10 +249,11 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
 
     if (req.method === 'POST' && url.pathname.startsWith('/tool/')) {
       const name = decodeURIComponent(url.pathname.slice('/tool/'.length));
-      if (!activeNames.has(name)) {
-        sendJson(res, 404, { error: `Tool "${name}" not in active preset "${presetName}"` });
-        return;
-      }
+      // The preset is ADVISORY (reported by /health for clients that want a
+      // curated list, e.g. the Pi extension). The daemon dispatches any known
+      // tool so it can back multiple clients with different surfaces — notably
+      // the MCP server, which delegates all ~45 tools here. Unknown tools 404
+      // via UnknownToolError below.
       let body: Record<string, unknown>;
       try {
         body = await readJsonBody(req);
@@ -364,7 +389,8 @@ export const serveCommand = new Command('serve')
   .option('--host <host>', 'Host to bind', '127.0.0.1')
   .option(
     '--preset <name>',
-    'Tool surface to expose: a named preset (minimal, navigation) or "all" (default: navigation)',
+    'Advisory tool surface reported by /health (minimal, navigation, or all). The daemon still ' +
+      'dispatches any known tool; clients curate their own surface. Default: navigation',
     'navigation',
   )
   .option('--token <token>', 'Require this token as the x-openlore-token header (default: $OPENLORE_SERVE_TOKEN)')

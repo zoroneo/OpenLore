@@ -1,6 +1,6 @@
 /**
- * Tests for the `openlore serve` HTTP daemon: endpoints, preset filtering,
- * token gate, and serve.json discovery-file lifecycle.
+ * Tests for the `openlore serve` HTTP daemon: endpoints, advisory preset,
+ * token gate, dup-daemon reuse, and serve.json discovery-file lifecycle.
  *
  * Served root is a throwaway temp dir (no analysis), so /tool/orient returns a
  * structured "no analysis" object (HTTP 200) without touching the repo's own
@@ -40,12 +40,18 @@ function fileExists(p: string): Promise<boolean> {
   return access(p).then(() => true).catch(() => false);
 }
 
+// fetch().json() is typed `Promise<any>` but strict callers see `unknown`; cast
+// to a loose record so the assertions below read cleanly.
+async function jsonOf(res: Response): Promise<Record<string, unknown>> {
+  return (await res.json()) as Record<string, unknown>;
+}
+
 describe('openlore serve', () => {
   it('GET /health reports version, preset, and active tools', async () => {
     const h = await boot();
     const res = await fetch(`${h.baseUrl}/health`);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonOf(res);
     expect(body.ok).toBe(true);
     expect(typeof body.version).toBe('string');
     expect(body.preset).toBe('navigation');
@@ -66,16 +72,26 @@ describe('openlore serve', () => {
     expect(await fileExists(descPath)).toBe(false);
   });
 
-  it('404s a tool outside the active preset', async () => {
-    const h = await boot();
-    // get_env_vars is a real tool but not in the navigation preset.
+  it('preset is advisory — a non-preset tool is still dispatched (not 404)', async () => {
+    const h = await boot(); // default navigation preset
+    // get_env_vars is a real tool, NOT in the navigation preset. The daemon must
+    // still serve it (preset only advises /health) so it can back the MCP server.
     const res = await fetch(`${h.baseUrl}/tool/get_env_vars`, {
       method: 'POST',
       body: JSON.stringify({ args: {} }),
     });
+    expect(res.status).toBe(200); // dispatched, not gated
+  });
+
+  it('404s a genuinely unknown tool', async () => {
+    const h = await boot();
+    const res = await fetch(`${h.baseUrl}/tool/not_a_real_tool`, {
+      method: 'POST',
+      body: JSON.stringify({ args: {} }),
+    });
     expect(res.status).toBe(404);
-    const body = await res.json();
-    expect(body.error).toMatch(/not in active preset/);
+    const body = await jsonOf(res);
+    expect(body.error).toMatch(/unknown tool/i);
   });
 
   it('dispatches an in-preset tool (orient → structured no-analysis result)', async () => {
@@ -85,7 +101,7 @@ describe('openlore serve', () => {
       body: JSON.stringify({ args: { task: 'anything' } }),
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonOf(res);
     // Temp root has no analysis → handler returns an { error } object, not a throw.
     expect(body.error).toMatch(/No analysis/i);
   });
@@ -93,7 +109,7 @@ describe('openlore serve', () => {
   it('preset "all" exposes non-navigation tools', async () => {
     const h = await boot({ preset: 'all' });
     const res = await fetch(`${h.baseUrl}/health`);
-    const body = await res.json();
+    const body = await jsonOf(res);
     expect(body.preset).toBe('all');
     expect(body.tools).toContain('get_env_vars');
   });
@@ -134,6 +150,18 @@ describe('openlore serve', () => {
     const h = await startServe({ directory: root, stop: true });
     expect(h).toBeUndefined();
     expect(await fileExists(descPath)).toBe(false); // stale descriptor cleaned up
+  });
+
+  it('reuses a live daemon instead of starting a second one for the same root', async () => {
+    const h1 = await boot();
+    // Second start for the same root must detect the live daemon and return its
+    // endpoint (same port), not bind a new server.
+    const h2 = await startServe({ directory: root, port: '0', watch: false });
+    expect(h2).toBeDefined();
+    expect(h2!.port).toBe(h1.port);
+    // close() on the reused handle is a no-op — must not tear down h1.
+    await h2!.close();
+    expect((await fetch(`${h1.baseUrl}/health`)).status).toBe(200);
   });
 
   it('rejects an unknown preset at startup', async () => {

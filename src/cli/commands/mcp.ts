@@ -62,6 +62,7 @@ import {
   handleSearchSpecs,
 } from '../../core/services/mcp-handlers/semantic.js';
 import { dispatchTool, UnknownToolError } from '../../core/services/tool-dispatch.js';
+import { ensureServeDaemon, callServeTool, type ServeEndpoint } from '../../core/services/serve-client.js';
 import {
   handleAnalyzeCodebase,
   handleGetArchitectureOverview,
@@ -1496,6 +1497,20 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
   // --watch-auto: start the watcher on the first tool call that carries a directory
   let autoWatcher: import('../../core/services/mcp-watcher.js').McpWatcher | undefined;
 
+  // Serve-daemon delegation: when a shared `openlore serve` daemon is available
+  // for a directory, forward tool calls to it (one warm process + one watcher
+  // for the repo, shared across agents) instead of dispatching in-process.
+  // Resolved once per directory; null = no daemon, run locally. Auto-spawn is
+  // gated on --watch-auto (the user already opted into background freshness).
+  const daemonByDir = new Map<string, ServeEndpoint | null>();
+  async function resolveDaemon(dir: string): Promise<ServeEndpoint | null> {
+    if (!dir) return null;
+    if (!daemonByDir.has(dir)) {
+      daemonByDir.set(dir, await ensureServeDaemon(dir, { spawn: options.watchAuto === true }));
+    }
+    return daemonByDir.get(dir) ?? null;
+  }
+
   // Agent identity captured from initialize handshake
   let agentName = 'unknown';
   let agentVersion = 'unknown';
@@ -1523,18 +1538,25 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
     if (options.watchAuto && !autoWatcher) {
       const dir = (args as Record<string, unknown>).directory;
       if (typeof dir === 'string') {
-        const { resolve } = await import('node:path');
-        const { McpWatcher } = await import('../../core/services/mcp-watcher.js');
-        const debounceMs = parseInt(options.watchDebounce ?? '400', 10);
-        autoWatcher = new McpWatcher({
-          rootPath: resolve(dir),
-          debounceMs: isNaN(debounceMs) ? 400 : debounceMs,
-          embed: !options.watchNoEmbed,
-        });
-        await autoWatcher.start();
-        const cleanup = () => autoWatcher!.stop().then(() => process.exit(0));
-        process.on('SIGINT',  cleanup);
-        process.on('SIGTERM', cleanup);
+        // Prefer a shared serve daemon — it runs the watcher (+ continuous
+        // call-graph re-analyze) for the whole repo, so we don't start a second
+        // watcher racing it. Only fall back to an in-process watcher when no
+        // daemon can be brought up.
+        const ep = await resolveDaemon(dir);
+        if (!ep) {
+          const { resolve } = await import('node:path');
+          const { McpWatcher } = await import('../../core/services/mcp-watcher.js');
+          const debounceMs = parseInt(options.watchDebounce ?? '400', 10);
+          autoWatcher = new McpWatcher({
+            rootPath: resolve(dir),
+            debounceMs: isNaN(debounceMs) ? 400 : debounceMs,
+            embed: !options.watchNoEmbed,
+          });
+          await autoWatcher.start();
+          const cleanup = () => autoWatcher!.stop().then(() => process.exit(0));
+          process.on('SIGINT',  cleanup);
+          process.on('SIGTERM', cleanup);
+        }
       }
     }
 
@@ -1572,8 +1594,23 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
       // pathological hang can never wedge the server. Slow tools (analysis, LLM) have
       // generous overrides in MCP_TOOL_TIMEOUT_OVERRIDES.
       await withToolTimeout((async () => {
+        // Delegate to a shared serve daemon when one is available (warm caches,
+        // single watcher), else dispatch in-process. A daemon transport failure
+        // falls back to in-process so a flaky daemon never breaks a tool call.
+        const ep = await resolveDaemon(directory);
         try {
-          result = await dispatchTool(name, args as Record<string, unknown>, directory);
+          if (ep) {
+            try {
+              result = await callServeTool(ep, name, args as Record<string, unknown>, directory);
+            } catch {
+              // Daemon unreachable/unknown-tool/transport error → drop it for this
+              // session and run locally (also catches a daemon that died mid-session).
+              daemonByDir.set(directory, null);
+              result = await dispatchTool(name, args as Record<string, unknown>, directory);
+            }
+          } else {
+            result = await dispatchTool(name, args as Record<string, unknown>, directory);
+          }
         } catch (err) {
           if (err instanceof UnknownToolError) {
             _unknownTool = true;
