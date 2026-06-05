@@ -322,6 +322,12 @@ The system SHALL enforce a payload-size budget guard on the MCP tools/list respo
 
 > Decision recorded: d54af0d3
 > Date: 2026-06-03
+### Requirement: KeepPerformanceMetricsOutOfAlwaysloadedSkillContextMakeOrientMeasurementOptinViaMetricsFlag
+
+The system SHALL keep performance metrics out of always-loaded skill context and provide orient measurement only via an opt-in --metrics flag.
+
+> Decision recorded: 37206feb
+> Date: 2026-06-05
 
 ## Technical Notes
 
@@ -418,3 +424,13 @@ Shallow 'who/where' lookups don't need provenance, change-coupling, insertion-po
 MCP has no server-driven lazy-schema mechanism (tools/list always returns full inputSchemas), and the dominant client (Claude Code) already defers schemas client-side. The server's only lossless lever is tool count + bytes; byte savings are ~2% because payload is dominated by irreducible per-tool schema structure. A meta-dispatcher tool was rejected (loses per-tool validation, Spec 11 annotations, discoverable selection surface, reintroduces wrong-tool round-trips). Forcing the navigation preset as install default was also rejected (hides governance tools the decision gate needs, per Spec 25 Phase B).
 
 **Consequences:** tools/list shrinks ~2% losslessly (47,037→46,118 B full; 8,121→8,002 B nav) with zero selection-quality risk. A budget-guard test regresses if surface bloats, making tool additions a conscious budget bump. Structural shallow-task prefix cost is acknowledged as client-controlled and not further reducible server-side; eager clients retain the --preset navigation lever.
+
+### Keep performance metrics out of always-loaded skill context; make orient measurement opt-in via --metrics flag
+
+**Status:** Approved
+**Date:** 2026-06-05
+**ID:** 37206feb
+
+The orient SKILL.md frontmatter description and 'Cost & latency' section embedded scorecard/benchmark numbers and relative ../../README.md links. The description loads into every agent context (pure token overhead) and the relative links break when the skill bundle is copied into a consumer's .claude/skills/. Performance transparency should remain available but opt-in, not baked into the loaded surface.
+
+**Consequences:** SKILL.md description carries no perf claims; the Cost & latency section is removed; transparency content moves to the bundle README (not loaded into context) using absolute GitHub URLs so links never break on copy. A new opt-in `openlore orient --metrics` flag reports wall time + output-size locally. agent-instructions install template drops the embedded metric sentence.

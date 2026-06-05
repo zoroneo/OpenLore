@@ -244,6 +244,18 @@ cp -R skills/openlore-orient /path/to/your-project/.claude/skills/
 
 The skill bundle ships a `SKILL.md` manifest, POSIX + PowerShell wrappers, a worked example, and a redacted real `orient()` JSON output so the model knows the response shape. See [`skills/openlore-orient/README.md`](skills/openlore-orient/README.md) for details.
 
+### What's in `skills/` — and what actually installs
+
+The `skills/` directory holds more than just `openlore-orient/`. Here's the map so nothing looks like a missing install step:
+
+| Path | What it is | How it installs |
+|---|---|---|
+| [`skills/openlore-orient/`](skills/openlore-orient/) | The **canonical** Claude Code skill — the one we recommend everyone install. | `npm run skill:install-local`, or `cp -R` into a project's `.claude/skills/` |
+| The 8 workflow skills (brainstorm, plan-refactor, execute-refactor, write-tests, review-changes, debug, implement-story, analyze-codebase) | Multi-agent **workflow** skills for Claude Code / OpenCode / Mistral Vibe. | `openlore setup` (sources them from [`examples/`](examples/) into `.claude/`, `.opencode/`, or `.vibe/`) |
+| Loose top-level `skills/*.md` (e.g. `claude-openlore.md`, `openlore-plan-refactor.md`) | **Reference prompt templates** — copy-paste starting points, not auto-installed by any command. | Manual copy if you want them |
+
+If you only install one thing, install `openlore-orient`. The workflow skills are opt-in via `openlore setup`; the loose `.md` files are just reference material.
+
 ---
 
 ## Core Features

@@ -1,7 +1,7 @@
 ---
 name: openlore-orient
-version: 2.0
-description: Persistent architectural memory for this codebase. Call `orient(task)` before reading source files to get the relevant functions, callers, spec sections, and insertion points for any task — one structural lookup instead of file-by-file rediscovery (measured −26% agent round-trips on deep traces; see the README Value Scorecard).
+version: 2.1
+description: Persistent architectural memory for this codebase. Call `orient(task)` before reading source files to get the relevant functions, callers, spec sections, and insertion points for any task — one structural lookup instead of file-by-file rediscovery.
 ---
 
 # OpenLore — orient before you read
@@ -53,28 +53,14 @@ For a quick "who calls X" / "where is Y defined" lookup, pass **`lean: true`** (
 
 > **Note:** the `openlore orient --json --task` CLI subcommand is available, so the wrappers use it directly. The MCP fallback in the wrappers only kicks in on older openlore versions that predate the subcommand.
 
+> **Want to measure it on your own repo?** Pass `--metrics` (off by default) to have `orient` report its wall time and output size to stderr. Nothing is measured or printed unless you ask for it.
+
 ## What NOT to do
 
 - **Do not open source files before `orient` has returned.** This is the single most expensive mistake — you'll re-derive what the graph already knows.
 - **Do not call `orient` on every edit.** It's a session-start and re-orient-on-staleness tool, not a per-call helper. Respect the Epistemic Lease signal — if no prefix appears, your context is still fresh.
 - **Do not paraphrase the task** when passing it to `orient`. Use the user's words. The semantic search matches better when the query language matches the eventual prompt.
 - **Do not ignore `specDomains`.** Reading specs first is faster and more accurate than reading code first, in this repo.
-
-## Cost & latency
-
-Typical `orient()` against a warm graph in this repo:
-
-| Measurement | Value |
-|---|---|
-| Wall time | < 500 ms |
-| Output size | ~1–3k tokens of JSON |
-| Network calls | 0 (all local — no LLM, no API key required) |
-
-End-to-end agent benefit is **task-dependent and measured**, not a fixed per-call token figure:
-**−7%→−21% cost / −26% round-trips on deep traces in large repos**, but *added* overhead on small,
-familiar repos — see the [README Value Scorecard](../../README.md#value-scorecard--does-it-pay-for-itself).
-
-Cold-graph first call may take 2–4s if the on-disk index needs to be loaded; subsequent calls in the same session hit the in-memory cache. See the [main README benchmarks](../../README.md) for the published numbers.
 
 ## Failure modes
 

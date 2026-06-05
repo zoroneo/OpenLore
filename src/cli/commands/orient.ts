@@ -16,6 +16,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from '../../utils/logger.js';
 import { handleOrient } from '../../core/services/mcp-handlers/orient.js';
+import { estimateTokens } from '../../core/services/llm-service.js';
 import { OPENLORE_ANALYSIS_REL_PATH } from '../../constants.js';
 
 interface OrientCliOptions {
@@ -25,6 +26,21 @@ interface OrientCliOptions {
   tokenBudget?: string;
   lean?: boolean;
   json?: boolean;
+  metrics?: boolean;
+}
+
+/**
+ * Opt-in performance readout (Issue #128). Off by default — nothing is measured
+ * or printed unless the caller passes --metrics. Reported to stderr so it never
+ * corrupts the JSON on stdout that the skill wrappers parse. Local-only: wall
+ * time plus an estimate of the result's output size; no network, no LLM.
+ */
+function reportMetrics(startNs: bigint, result: Record<string, unknown>): void {
+  const wallMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+  const tokens = estimateTokens(JSON.stringify(result));
+  process.stderr.write(
+    `[orient:metrics] wall=${wallMs.toFixed(1)}ms output≈${tokens} tokens (local, no network)\n`
+  );
 }
 
 /** True once `openlore analyze` has produced an llm-context artifact. */
@@ -124,6 +140,7 @@ export const orientCommand = new Command('orient')
   .option('--token-budget <n>', 'Cap relevantFunctions to ~this many tokens (Spec 25 P4); highest-scored kept, exact duplicates collapsed')
   .option('--lean', 'Return only the navigation core — drop provenance/change-coupling/insertion-points/specs/decisions enrichment (Spec 27)', false)
   .option('--json', 'Emit the full result as JSON instead of a human-readable summary', false)
+  .option('--metrics', 'Report wall time and output size to stderr (opt-in; off by default)', false)
   .addHelpText(
     'after',
     `
@@ -131,6 +148,7 @@ Examples:
   $ openlore orient --task "add a new CLI command"
   $ openlore orient --json --task "fix the analyze cache"
   $ openlore orient --json --task "auth flow" --limit 10
+  $ openlore orient --metrics --task "auth flow"   # opt-in wall-time/output-size readout
 
 Requires "openlore analyze" to have been run at least once. With no --task,
 prints a short session-start primer (used by the install SessionStart hook).
@@ -168,9 +186,11 @@ prints a short session-start primer (used by the install SessionStart hook).
       // In --json mode keep stdout clean (validateDirectory logs to stdout);
       // in human mode let diagnostics through normally.
       const lean = opts.lean ?? false;
+      const startNs = opts.metrics ? process.hrtime.bigint() : 0n;
       const result = (asJson
         ? await withQuietStdout(() => handleOrient(directory, task, limit, tokenBudget, lean))
         : await handleOrient(directory, task, limit, tokenBudget, lean)) as Record<string, unknown>;
+      if (opts.metrics) reportMetrics(startNs, result);
       // Always emit structured results (including the "no analysis" error object)
       // on stdout so wrapper scripts can parse them — mirroring the MCP tool.
       if (asJson) {

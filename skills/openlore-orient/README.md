@@ -43,6 +43,25 @@ Once OpenLore spec-01's `openlore install --agent claude-code` is shipped on npm
 | `examples/example-orient-output.json` | Real (redacted) output captured from this repo, so a reader can see the JSON shape without us writing a schema doc. |
 | `examples/example-task-prompt.md` | A short worked example of the full loop: task → orient call → output → next step. |
 
+## Performance & transparency (opt-in)
+
+`orient` is deterministic and local — no LLM, no API key, no network call. A typical call against a
+warm graph returns in well under a second; a cold first call may take a couple of seconds while the
+on-disk index loads, after which the in-memory cache serves the rest of the session.
+
+We deliberately keep these numbers **out of `SKILL.md`** so nothing is loaded into the agent's context
+unless you ask for it. If you want to measure on your own repo, the capability is built in as a flag:
+
+```sh
+openlore orient --metrics --task "your task"
+# wall time + output size are reported on stderr; the result on stdout is unchanged
+```
+
+The end-to-end, task-dependent benchmark numbers (wins *and* the small-repo loss cases) live in the
+main project README's [Value Scorecard](https://github.com/clay-good/OpenLore#value-scorecard--does-it-pay-for-itself).
+Links here use absolute URLs on purpose: copying this bundle into another project's `.claude/skills/`
+must never produce a broken relative link.
+
 ## Known limitations
 
 The `openlore orient --json --task "..."` CLI subcommand is shipped, and `orient` is also exposed as an MCP tool. The shell wrappers prefer the CLI subcommand and transparently fall back to driving `openlore mcp` over stdio JSON-RPC via the bundled [`scripts/orient-via-mcp.mjs`](scripts/orient-via-mcp.mjs) helper on older openlore versions that predate the subcommand.

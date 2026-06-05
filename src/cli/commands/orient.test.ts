@@ -40,7 +40,7 @@ describe('orient command', () => {
     // orientCommand is a module-level singleton; commander retains option
     // values between parseAsync() calls, so reset them so one test's flags
     // (e.g. --limit 0) don't bleed into the next.
-    for (const opt of ['task', 'directory', 'limit', 'json']) {
+    for (const opt of ['task', 'directory', 'limit', 'json', 'lean', 'tokenBudget', 'metrics']) {
       orientCommand.setOptionValue(opt, undefined);
     }
   });
@@ -67,6 +67,7 @@ describe('orient command', () => {
       expect(longs).toContain('--json');
       expect(longs).toContain('--directory');
       expect(longs).toContain('--limit');
+      expect(longs).toContain('--metrics');
     });
   });
 
@@ -154,6 +155,31 @@ describe('orient command', () => {
       // The stray line was redirected to stderr instead.
       const stderrText = stderrSpy.mock.calls.map(c => String(c[0])).join('');
       expect(stderrText).toContain('Successfully validated');
+      stderrSpy.mockRestore();
+    });
+  });
+
+  describe('--metrics (opt-in performance readout, Issue #128)', () => {
+    it('reports wall time and output size to stderr, leaving stdout JSON clean', async () => {
+      mockHandleOrient.mockResolvedValue({ task: 'x', searchMode: 'hybrid', relevantFunctions: [] });
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      await orientCommand.parseAsync(['--json', '--metrics', '--task', 'x'], { from: 'user' });
+      const stderrText = stderrSpy.mock.calls.map(c => String(c[0])).join('');
+      expect(stderrText).toContain('[orient:metrics]');
+      expect(stderrText).toMatch(/wall=[\d.]+ms/);
+      expect(stderrText).toMatch(/output≈\d+ tokens/);
+      // The metrics line must not leak onto stdout (wrappers parse stdout as JSON).
+      const parsed = JSON.parse(output());
+      expect(parsed.searchMode).toBe('hybrid');
+      stderrSpy.mockRestore();
+    });
+
+    it('writes no metrics line when --metrics is omitted (off by default)', async () => {
+      mockHandleOrient.mockResolvedValue({ task: 'x', searchMode: 'hybrid', relevantFunctions: [] });
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      await orientCommand.parseAsync(['--json', '--task', 'x'], { from: 'user' });
+      const stderrText = stderrSpy.mock.calls.map(c => String(c[0])).join('');
+      expect(stderrText).not.toContain('[orient:metrics]');
       stderrSpy.mockRestore();
     });
   });
