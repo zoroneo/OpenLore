@@ -205,6 +205,45 @@ export async function readCachedContext(directory: string, timeout?: number): Pr
   return load();
 }
 
+/**
+ * Wait for graph rebuild to complete after schema mismatch.
+ *
+ * When a schema version change is detected, EdgeStore resets itself and
+ * McpWatcher spawns a background `openlore analyze --force`. This helper
+ * polls until the rebuild completes (edgeStore is populated) or timeout.
+ *
+ * Used by graph tools (analyze_impact, trace_execution_path) to auto-heal
+ * after version upgrades instead of failing immediately.
+ *
+ * @returns true if rebuild completed (edgeStore now available), false on timeout
+ */
+export async function waitForGraphRebuild(
+  directory: string,
+  timeoutMs = 60_000
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  const pollIntervalMs = 2000;
+
+  while (Date.now() < deadline) {
+    const ctx = await readCachedContext(directory);
+    if (ctx?.edgeStore) {
+      logger.debug(`[waitForGraphRebuild] Graph rebuild completed after ${Date.now() - (deadline - timeoutMs)}ms`);
+      return true;
+    }
+
+    const remaining = deadline - Date.now();
+    if (remaining > 0) {
+      await new Promise(r => setTimeout(r, Math.min(pollIntervalMs, remaining)));
+    }
+  }
+
+  logger.warning(
+    `[waitForGraphRebuild] Graph rebuild did not complete within ${timeoutMs}ms timeout. ` +
+    'Run "openlore analyze --force" manually to rebuild the call graph.'
+  );
+  return false;
+}
+
 // ============================================================================
 // PROJECT FINGERPRINT — content-hash based cache invalidation
 // ============================================================================

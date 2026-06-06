@@ -30,9 +30,10 @@ import { createRequire } from 'node:module';
 import { writeFile, readFile, unlink, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { logger } from '../../utils/logger.js';
-import { OPENLORE_DIR } from '../../constants.js';
+import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR } from '../../constants.js';
 import { dispatchTool, UnknownToolError } from '../../core/services/tool-dispatch.js';
-import { validateDirectory } from '../../core/services/mcp-handlers/utils.js';
+import { validateDirectory, waitForGraphRebuild } from '../../core/services/mcp-handlers/utils.js';
+import { EdgeStore } from '../../core/services/edge-store.js';
 import { McpWatcher } from '../../core/services/mcp-watcher.js';
 import { openloreAnalyze } from '../../api/analyze.js';
 import { TOOL_DEFINITIONS, TOOL_PRESETS, selectActiveTools } from './mcp.js';
@@ -276,6 +277,26 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
         return;
       }
 
+      // Check for schema mismatch (edgeStore was reset after version upgrade)
+      // If detected, wait for background rebuild to complete
+      try {
+        const analysisDir = join(directory, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+        if (EdgeStore.exists(analysisDir)) {
+          const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
+          if (es.wasReset) {
+            logger.debug(`[serve] Schema mismatch detected in tool request — waiting for graph rebuild...`);
+            const rebuilt = await waitForGraphRebuild(directory, 60_000);
+            if (!rebuilt) {
+              logger.warning(`[serve] Graph rebuild did not complete within timeout.`);
+            }
+          }
+          es.close();
+        }
+      } catch (err) {
+        // Ignore errors during rebuild check — let the tool handler deal with missing edgeStore
+        logger.debug(`[serve] Failed to check for schema reset: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
       try {
         const result = await dispatchTool(name, args, directory);
         sendJson(res, 200, result ?? null);
@@ -314,6 +335,24 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
 
   logger.success(`openlore serve listening on http://${host}:${boundPort} (preset: ${presetName})`);
   logger.discovery(`Discovery file: ${serveFilePath(root)}`);
+
+  // Check if schema was reset and warn user about rebuild
+  try {
+    const analysisDir = join(root, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+    if (EdgeStore.exists(analysisDir)) {
+      const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
+      if (es.wasReset) {
+        logger.warning(
+          `[serve] Schema version mismatch detected — graph index is being rebuilt in the background. ` +
+          `Graph-dependent tools (analyze_impact, trace_execution_path, get_subgraph) will wait for completion on first request.`
+        );
+      }
+      es.close();
+    }
+  } catch (err) {
+    // Ignore errors during startup check
+    logger.debug(`[serve] Failed to check schema on startup: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // ── Freshness: watcher (signatures + vector) + debounced call-graph re-analyze ──
   // The watcher keeps signatures/vector fresh between commits and primes the read
