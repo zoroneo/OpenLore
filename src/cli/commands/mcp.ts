@@ -1454,6 +1454,9 @@ export function selectActiveTools<T extends { name: string }>(
 interface McpServerOptions {
   watch?: string;
   watchAuto?: boolean;
+  /** Spawn a shared `openlore serve` daemon when none is running and delegate to
+   * it. Without this, MCP only reuses an already-running daemon. */
+  daemon?: boolean;
   watchDebounce?: string;
   watchNoEmbed?: boolean;
   minimal?: boolean;
@@ -1500,13 +1503,16 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
   // Serve-daemon delegation: when a shared `openlore serve` daemon is available
   // for a directory, forward tool calls to it (one warm process + one watcher
   // for the repo, shared across agents) instead of dispatching in-process.
-  // Resolved once per directory; null = no daemon, run locally. Auto-spawn is
-  // gated on --watch-auto (the user already opted into background freshness).
+  // Resolved once per directory; null = no daemon, run locally. By default we
+  // only DISCOVER and reuse an already-running daemon (started by pi, an explicit
+  // `openlore serve`, or another `--daemon` MCP) — so a plain MCP session never
+  // silently leaves a lingering background process. `--daemon` opts in to
+  // SPAWNING a shared daemon when none is running.
   const daemonByDir = new Map<string, ServeEndpoint | null>();
   async function resolveDaemon(dir: string): Promise<ServeEndpoint | null> {
     if (!dir) return null;
     if (!daemonByDir.has(dir)) {
-      daemonByDir.set(dir, await ensureServeDaemon(dir, { spawn: options.watchAuto === true }));
+      daemonByDir.set(dir, await ensureServeDaemon(dir, { spawn: options.daemon === true }));
     }
     return daemonByDir.get(dir) ?? null;
   }
@@ -1538,10 +1544,10 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
     if (options.watchAuto && !autoWatcher) {
       const dir = (args as Record<string, unknown>).directory;
       if (typeof dir === 'string') {
-        // Prefer a shared serve daemon — it runs the watcher (+ continuous
+        // Prefer a shared serve daemon if one is reachable (reused by default,
+        // or spawned with --daemon) — it runs the watcher (+ continuous
         // call-graph re-analyze) for the whole repo, so we don't start a second
-        // watcher racing it. Only fall back to an in-process watcher when no
-        // daemon can be brought up.
+        // watcher racing it. Fall back to an in-process watcher otherwise.
         const ep = await resolveDaemon(dir);
         if (!ep) {
           const { resolve } = await import('node:path');
@@ -1705,6 +1711,7 @@ export const mcpCommand = new Command('mcp')
   .option('--watch <directory>', 'Watch a project directory and incrementally re-index signatures on file changes')
   .option('--watch-auto', 'Auto-detect the project directory from the first tool call and start watching', true)
   .option('--no-watch-auto', 'Disable auto-watch (use for one-shot tool calls, e.g. the orient skill wrapper)')
+  .option('--daemon', 'Delegate tool calls to a shared `openlore serve` daemon, spawning one if needed (coherent state across agents — one warm process + one watcher per repo). Without it, MCP reuses a daemon only if one is already running, else runs in-process.')
   .option('--watch-debounce <ms>', 'Debounce delay in ms before re-indexing after a file change (default: 400)', '400')
   .option('--watch-no-embed', 'Watch signatures only — skip live vector re-embedding (embeddings refresh at commit). Large repos auto-degrade to this.')
   .option('--minimal', 'Expose only core 5 tools (orient, search_code, record_decision, detect_changes, check_spec_drift). Pair with alwaysLoad: true in Claude Code for always-visible core tools.')

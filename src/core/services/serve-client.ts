@@ -39,6 +39,16 @@ function descriptorPath(directory: string): string {
   return join(directory, OPENLORE_DIR, 'serve.json');
 }
 
+/**
+ * CLI args to spawn the daemon. Exported + asserted in tests because the daemon
+ * MUST accept exactly these — `serve` has only `--no-watch` (watch is the
+ * default), so passing a non-existent `--watch` flag makes commander reject and
+ * the daemon never starts. Keep this in lockstep with serve.ts's options.
+ */
+export function serveSpawnArgs(directory: string): string[] {
+  return ['serve', '--directory', directory];
+}
+
 async function readDescriptor(directory: string): Promise<ServeDescriptor | null> {
   try {
     return JSON.parse(await readFile(descriptorPath(directory), 'utf-8')) as ServeDescriptor;
@@ -68,7 +78,7 @@ function endpointOf(desc: ServeDescriptor): ServeEndpoint {
 
 /**
  * Resolve a live daemon for `directory`: reuse an announced healthy one, else
- * (when `spawn` is true) start `openlore serve --watch` detached and poll until
+ * (when `spawn` is true) start `openlore serve` detached and poll until
  * /health is ready. Returns null if none could be brought up — callers then run
  * in-process. Never kills a daemon; it may serve other clients.
  */
@@ -87,7 +97,7 @@ export async function ensureServeDaemon(
   try {
     const child = spawn(
       process.execPath,
-      [cli, 'serve', '--watch', '--directory', directory],
+      [cli, ...serveSpawnArgs(directory)],
       { cwd: directory, stdio: 'ignore', detached: true },
     );
     child.on('error', () => {}); // swallow — caller falls back to in-process

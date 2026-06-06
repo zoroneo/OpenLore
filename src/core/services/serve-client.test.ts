@@ -13,8 +13,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startServe, type ServeHandle } from '../../cli/commands/serve.js';
-import { ensureServeDaemon, callServeTool } from './serve-client.js';
+import { serveCommand, startServe, type ServeHandle } from '../../cli/commands/serve.js';
+import { ensureServeDaemon, callServeTool, serveSpawnArgs } from './serve-client.js';
 
 let handle: ServeHandle | undefined;
 let root = '';
@@ -32,6 +32,22 @@ async function bootDaemon(): Promise<void> {
 }
 
 describe('serve-client', () => {
+  it('spawn args are accepted by the serve command (no rejected flags)', () => {
+    const args = serveSpawnArgs('/some/dir');
+    expect(args).toEqual(['serve', '--directory', '/some/dir']);
+    // Regression guard: the daemon must accept exactly these. `serve` exposes
+    // `--no-watch`, not `--watch`; commander rejects unknown options, which would
+    // silently kill the spawned daemon. Parse the flags (minus the leading
+    // 'serve') against the real command and assert none are unknown.
+    const known = new Set(serveCommand.options.flatMap((o) => [o.short, o.long].filter(Boolean)));
+    for (const a of args.slice(1)) {
+      if (a.startsWith('-')) {
+        expect(known.has(a), `serve rejects ${a}`).toBe(true);
+      }
+    }
+  });
+
+
   it('discovers a running daemon (spawn disabled)', async () => {
     await bootDaemon();
     const ep = await ensureServeDaemon(root, { spawn: false });

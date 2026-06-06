@@ -87,7 +87,7 @@ async function health(desc: ServeDescriptor): Promise<boolean> {
 
 /**
  * Return a live daemon for `cwd`: reuse an announced one if healthy, otherwise
- * spawn `openlore serve --watch` detached and poll until /health is ready.
+ * spawn `openlore serve` detached and poll until /health is ready.
  * Returns null if no daemon could be brought up (caller degrades gracefully).
  * Never kills a daemon it didn't start — it may serve other clients.
  */
@@ -97,9 +97,10 @@ async function ensureDaemon(cwd: string): Promise<Daemon | null> {
     return { baseUrl: `http://${existing.host}:${existing.port}`, token: existing.token };
   }
 
-  // Spawn detached so the daemon outlives this pi session.
+  // Spawn detached so the daemon outlives this pi session. No --watch flag:
+  // watch is on by default (only --no-watch disables it).
   try {
-    const child = spawn('openlore', ['serve', '--watch', '--directory', cwd], {
+    const child = spawn('openlore', ['serve', '--directory', cwd], {
       detached: true,
       stdio: 'ignore',
     });

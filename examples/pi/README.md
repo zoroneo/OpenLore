@@ -44,7 +44,7 @@ Manual: copy `openlore.ts` into either location.
 ## How it works
 
 On first use the extension looks for `.openlore/serve.json`; if no healthy daemon
-is announced it spawns `openlore serve --watch` detached and waits for `/health`.
+is announced it spawns `openlore serve` detached and waits for `/health`.
 The daemon:
 
 - serves the `navigation` tool preset over `127.0.0.1`,
