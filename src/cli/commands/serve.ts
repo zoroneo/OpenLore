@@ -219,6 +219,11 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
 
+  // Per-directory schema-reset flag. Set once (at startup or first request);
+  // cleared after waitForGraphRebuild() succeeds so subsequent requests don't
+  // re-open EdgeStore. Uses a Map because the daemon can serve multiple dirs.
+  const schemaResetByDir = new Map<string, boolean>();
+
   const server = createServer((req, res) => {
     void handleRequest(req, res).catch((err) => {
       sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
@@ -277,24 +282,32 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
         return;
       }
 
-      // Check for schema mismatch (edgeStore was reset after version upgrade)
-      // If detected, wait for background rebuild to complete
-      try {
-        const analysisDir = join(directory, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
-        if (EdgeStore.exists(analysisDir)) {
-          const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
-          if (es.wasReset) {
-            logger.debug(`[serve] Schema mismatch detected in tool request — waiting for graph rebuild...`);
-            const rebuilt = await waitForGraphRebuild(directory, 60_000);
-            if (!rebuilt) {
-              logger.warning(`[serve] Graph rebuild did not complete within timeout.`);
-            }
+      // Auto-heal schema mismatch: on first request for a directory, open
+      // EdgeStore once to detect wasReset; cache the result so we never
+      // re-open on subsequent requests. If reset, block until rebuild done.
+      if (!schemaResetByDir.has(directory)) {
+        try {
+          const analysisDir = join(directory, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+          if (EdgeStore.exists(analysisDir)) {
+            const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
+            schemaResetByDir.set(directory, es.wasReset);
+            es.close();
+          } else {
+            schemaResetByDir.set(directory, false);
           }
-          es.close();
+        } catch {
+          schemaResetByDir.set(directory, false);
         }
-      } catch (err) {
-        // Ignore errors during rebuild check — let the tool handler deal with missing edgeStore
-        logger.debug(`[serve] Failed to check for schema reset: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      if (schemaResetByDir.get(directory)) {
+        logger.debug(`[serve] Schema mismatch — waiting for graph rebuild before dispatching…`);
+        // waitForGraphRebuild polls readCachedContext until edgeStore is
+        // non-null. readCachedContext invalidates on llm-context.json mtime,
+        // which openloreAnalyze rewrites as its last step — so the poll sees
+        // the rebuilt state as soon as analyze completes.
+        const rebuilt = await waitForGraphRebuild(directory, 60_000);
+        schemaResetByDir.set(directory, !rebuilt);
+        if (!rebuilt) logger.warning(`[serve] Graph rebuild timed out — graph tools may return empty results.`);
       }
 
       try {
@@ -336,22 +349,27 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
   logger.success(`openlore serve listening on http://${host}:${boundPort} (preset: ${presetName})`);
   logger.discovery(`Discovery file: ${serveFilePath(root)}`);
 
-  // Check if schema was reset and warn user about rebuild
+  // Pre-populate the schema-reset flag for the served root so the startup
+  // warning fires immediately and the first request doesn't pay the open cost.
   try {
     const analysisDir = join(root, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
     if (EdgeStore.exists(analysisDir)) {
       const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
-      if (es.wasReset) {
+      const reset = es.wasReset;
+      es.close();
+      schemaResetByDir.set(root, reset);
+      if (reset) {
         logger.warning(
           `[serve] Schema version mismatch detected — graph index is being rebuilt in the background. ` +
-          `Graph-dependent tools (analyze_impact, trace_execution_path, get_subgraph) will wait for completion on first request.`
+          `Graph-dependent tools will wait for completion on first request.`
         );
       }
-      es.close();
+    } else {
+      schemaResetByDir.set(root, false);
     }
   } catch (err) {
-    // Ignore errors during startup check
     logger.debug(`[serve] Failed to check schema on startup: ${err instanceof Error ? err.message : String(err)}`);
+    schemaResetByDir.set(root, false);
   }
 
   // ── Freshness: watcher (signatures + vector) + debounced call-graph re-analyze ──
@@ -396,10 +414,15 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
   // Clean shutdown: drop the descriptor so clients don't reuse a dead port.
   // Signal handlers exit the process; the returned close() is for in-process
   // callers (tests) that must not kill the host.
+  // Store handler refs so teardown() can remove them — without this, every
+  // startServe() call (including each test) adds permanent process listeners
+  // that accumulate and trigger MaxListenersExceededWarning.
   let shuttingDown = false;
   const teardown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    process.off('SIGINT',  onSigInt);
+    process.off('SIGTERM', onSigTerm);
     if (reanalyzeTimer) clearTimeout(reanalyzeTimer);
     if (watcher) await watcher.stop().catch(() => {});
     await unlink(serveFilePath(root)).catch(() => {});
@@ -409,8 +432,10 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
     await teardown();
     process.exit(0);
   };
-  process.on('SIGINT', () => void exitAfterTeardown());
-  process.on('SIGTERM', () => void exitAfterTeardown());
+  const onSigInt  = () => void exitAfterTeardown();
+  const onSigTerm = () => void exitAfterTeardown();
+  process.on('SIGINT',  onSigInt);
+  process.on('SIGTERM', onSigTerm);
 
   return {
     port: boundPort,

@@ -88,6 +88,13 @@ export class UnknownToolError extends Error {
 /**
  * Resolve a tool call to its result. Throws {@link UnknownToolError} for an
  * unregistered name; propagates any handler error unchanged.
+ *
+ * Note on `directory`: most branches destructure `const { directory } = args`
+ * which shadows the top-level param. This is intentional — it preserves the
+ * exact pre-extraction behaviour where handlers read directory from args. The
+ * top-level param is used only by handlers that don't re-destructure (orient,
+ * search_code, suggest_insertion_points). Callers must ensure args.directory
+ * and the directory param are the same resolved path.
  */
 export async function dispatchTool(
   name: string,

@@ -1514,12 +1514,21 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
   // silently leaves a lingering background process. `--daemon` opts in to
   // SPAWNING a shared daemon when none is running.
   const daemonByDir = new Map<string, ServeEndpoint | null>();
-  async function resolveDaemon(dir: string): Promise<ServeEndpoint | null> {
-    if (!dir) return null;
-    if (!daemonByDir.has(dir)) {
-      daemonByDir.set(dir, await ensureServeDaemon(dir, { spawn: options.daemon === true }));
+  const daemonPending = new Map<string, Promise<ServeEndpoint | null>>();
+  function resolveDaemon(dir: string): Promise<ServeEndpoint | null> {
+    if (!dir) return Promise.resolve(null);
+    if (daemonByDir.has(dir)) return Promise.resolve(daemonByDir.get(dir) ?? null);
+    // Dedup concurrent calls for the same dir — without this, two parallel tool
+    // calls both miss the cache and each call ensureServeDaemon, potentially
+    // spawning two daemons (the dup-guard prevents double-start, but two
+    // spawn-and-poll cycles waste time and connections).
+    if (!daemonPending.has(dir)) {
+      const p = ensureServeDaemon(dir, { spawn: options.daemon === true })
+        .then(ep  => { daemonByDir.set(dir, ep);   daemonPending.delete(dir); return ep; })
+        .catch(()  => { daemonByDir.set(dir, null); daemonPending.delete(dir); return null; });
+      daemonPending.set(dir, p);
     }
-    return daemonByDir.get(dir) ?? null;
+    return daemonPending.get(dir)!;
   }
 
   // Agent identity captured from initialize handshake
