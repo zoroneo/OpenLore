@@ -37,9 +37,12 @@ openlore setup --tools pi --global   # → ~/.pi/agent/extensions/openlore.ts (a
 
 Manual: copy `openlore.ts` into either location.
 
-> Imports are verified against pi 0.78 (`Type` from `typebox`, `StringEnum` from
+> Imports are verified against pi 0.78.1 (`Type` from `typebox`, `StringEnum` from
 > `@earendil-works/pi-ai`, extension types from `@earendil-works/pi-coding-agent`).
 > If a future Pi version moves these, adjust the imports at the top of `openlore.ts`.
+>
+> Uses `ctx.mode` (0.78.1+) to adapt injection depth: full digest + orient in `tui`,
+> orient-only in `rpc`, no injection in `json`/`print` (one-shot modes).
 
 ## How it works
 

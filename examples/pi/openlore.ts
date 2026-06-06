@@ -19,8 +19,9 @@
  *
  * Requires `openlore` on PATH and `openlore analyze` to have been run once.
  *
- * Imports verified against pi 0.78 (`Type` from typebox, `StringEnum` from
+ * Imports verified against pi 0.78.1 (`Type` from typebox, `StringEnum` from
  * @earendil-works/pi-ai, extension types from @earendil-works/pi-coding-agent).
+ * Uses ctx.mode (0.78.1+) to adapt injection depth across tui/rpc/json/print modes.
  */
 
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
@@ -261,14 +262,18 @@ const TOOLS: ToolSpec[] = [
 
 // ── Extension entry point ────────────────────────────────────────────────────
 
+/** Pi 0.78.1+ mode. Determines injection depth. */
+type PiMode = 'tui' | 'rpc' | 'json' | 'print' | string;
+
 export default function openlore(pi: ExtensionAPI): void {
   // One daemon per project cwd for this pi process.
   const daemons = new Map<string, Daemon | null>();
   // Inject the heavy session primer only once per session.
   const primed = new Set<string>();
   // before_agent_start receives only `event` (no ctx in pi's API), so capture
-  // the working directory from session_start and reuse it there.
+  // cwd and mode from session_start and reuse them there.
   let sessionCwd = process.cwd();
+  let sessionMode: PiMode = 'tui';
 
   async function getDaemon(cwd: string): Promise<Daemon | null> {
     if (!daemons.has(cwd)) daemons.set(cwd, await ensureDaemon(cwd));
@@ -300,24 +305,42 @@ export default function openlore(pi: ExtensionAPI): void {
   }
 
   // ── Lifecycle: warm the daemon at session start (best-effort) ──
+  // In json/print modes (non-interactive, one-shot) skip daemon startup — there
+  // is no conversation to keep warm, and the user likely wants fast cold output.
   pi.on('session_start', async (_event: unknown, ctx: ExtensionContext) => {
     sessionCwd = ctx.cwd;
-    await getDaemon(ctx.cwd);
+    sessionMode = (ctx as unknown as { mode?: PiMode }).mode ?? 'tui';
+    if (sessionMode !== 'json' && sessionMode !== 'print') {
+      await getDaemon(ctx.cwd);
+    }
   });
 
   // ── C: context injection on the first turn ──
+  // Injection depth varies by mode:
+  //   tui   — full: architecture digest + spec index + task orient (interactive sessions)
+  //   rpc   — orient only: callers want structured context, not the full prose digest
+  //   json/print — none: one-shot output, let the model work without injected noise
   pi.on('before_agent_start', async (event: { systemPrompt: string }) => {
     const cwd = sessionCwd;
+    const mode = sessionMode;
+
+    if (mode === 'json' || mode === 'print') return undefined;
     if (primed.has(cwd)) return undefined;
     primed.add(cwd);
 
+    // In rpc mode, check if upstream already injected openlore context (e.g. from
+    // getSystemPromptOptions) to avoid doubling. Skip digest + spec index; keep orient.
+    const isRpc = mode === 'rpc';
+
     const blocks: string[] = [];
 
-    const digest = await readDigest(cwd);
-    if (digest) blocks.push('# Codebase architecture (openlore)\n\n' + truncate(digest, 8000));
+    if (!isRpc) {
+      const digest = await readDigest(cwd);
+      if (digest) blocks.push('# Codebase architecture (openlore)\n\n' + truncate(digest, 8000));
 
-    const specIndex = await readSpecIndex(cwd);
-    if (specIndex) blocks.push(specIndex);
+      const specIndex = await readSpecIndex(cwd);
+      if (specIndex) blocks.push(specIndex);
+    }
 
     // Task-grounded primer: orient on the user's first message.
     const firstUserMsg = extractFirstUserText(event);
