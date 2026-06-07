@@ -17,6 +17,8 @@ fresh while you edit.
   `openlore_orient`, `openlore_search_code`, `openlore_get_subgraph`,
   `openlore_trace_execution_path`, `openlore_analyze_impact`,
   `openlore_suggest_insertion_points`, `openlore_get_function_skeleton`.
+- **Config wizard**: interactive setup on first run, or anytime via `/openlore`
+  slash command or `openlore_configure` tool.
 
 ## Prerequisites
 
@@ -28,26 +30,49 @@ openlore analyze          # build the structural index at least once
 
 ## Install
 
-Automatic:
+### Recommended — Pi gallery
 
 ```bash
-openlore setup --tools pi            # → .pi/extensions/openlore.ts (this project)
-openlore setup --tools pi --global   # → ~/.pi/agent/extensions/openlore.ts (all projects)
+pi install npm:openlore
 ```
 
-Manual: copy `openlore.ts` into either location.
+Pi discovers the extension automatically via the `"pi"` field in openlore's
+`package.json`. On first session it launches the config wizard.
 
-> Imports are verified against pi 0.78.1 (`Type` from `typebox`, `StringEnum` from
-> `@earendil-works/pi-ai`, extension types from `@earendil-works/pi-coding-agent`).
-> If a future Pi version moves these, adjust the imports at the top of `openlore.ts`.
->
-> Uses `ctx.mode` (0.78.1+): full injection in `tui` and `rpc` (both interactive — `rpc`
-> is headless for IDE/custom UI embedding), no injection in `json`/`print` (one-shot).
+### Alternative — openlore setup
+
+```bash
+openlore setup --tools pi            # → .pi/extensions/openlore.js (this project)
+openlore setup --tools pi --global   # → ~/.pi/agent/extensions/openlore.js (all projects)
+```
+
+> Requires Pi ≥ 0.78.1. The extension uses `ctx.mode` (0.78.1+) for injection
+> depth: full in `tui`/`rpc` (interactive), none in `json`/`print` (one-shot).
+
+## Configuration
+
+On first session (no `.openlore/config.json`) the wizard runs automatically.
+Re-open anytime:
+
+```
+/openlore          # slash command in any Pi session
+```
+
+or ask Pi to call `openlore_configure`.
+
+API keys are never stored in config — set them as environment variables:
+
+| Provider | Env var |
+|----------|---------|
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `openai` | `OPENAI_API_KEY` |
+| `openai-compat` | `OPENAI_COMPAT_API_KEY` |
+| Embedding | `OPENLORE_EMBEDDING_API_KEY` |
 
 ## How it works
 
-On first use the extension looks for `.openlore/serve.json`; if no healthy daemon
-is announced it spawns `openlore serve` detached and waits for `/health`.
+On `session_start` the extension looks for `.openlore/serve.json`; if no healthy
+daemon is announced it spawns `openlore serve` detached and waits for `/health`.
 The daemon:
 
 - serves the `navigation` tool preset over `127.0.0.1`,

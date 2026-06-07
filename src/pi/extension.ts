@@ -199,12 +199,14 @@ async function configureEmbedding(
       '',
     )) || existingModel;
   }
-  const embedKey = await ui.input('Embedding API key', '(blank if not needed)') ?? '';
+  const embedApiKey = process.env['OPENLORE_EMBEDDING_API_KEY'];
+  if (!embedApiKey) {
+    ui.notify('Embedding API key: set OPENLORE_EMBEDDING_API_KEY in your shell environment (leave unset for Ollama/local endpoints)', 'info');
+  }
 
   return {
     baseUrl: embedUrl,
     model: embedModel,
-    ...(embedKey && embedKey !== '(blank if not needed)' ? { apiKey: embedKey } : {}),
     ...(embedSsl ? { skipSslVerify: true } : {}),
   };
 }
