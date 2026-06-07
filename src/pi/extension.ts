@@ -127,9 +127,15 @@ async function configureGeneration(
     skipSslVerify = await ui.confirm('Skip SSL verification?', 'Required for local servers with self-signed certificates');
   }
 
-  if (!SYSTEM_AUTH_PROVIDERS.has(provider)) {
-    const key = await ui.input('API key', '(blank to skip / keep existing)');
-    apiKey = key && key !== '(blank to skip / keep existing)' ? key : undefined;
+  const PROVIDER_ENV_VARS: Record<string, string> = {
+    anthropic: 'ANTHROPIC_API_KEY',
+    openai: 'OPENAI_API_KEY',
+    'openai-compat': 'OPENAI_COMPAT_API_KEY',
+    copilot: 'COPILOT_API_KEY',
+  };
+  if (!SYSTEM_AUTH_PROVIDERS.has(provider) && PROVIDER_ENV_VARS[provider]) {
+    ui.notify(`API key: set ${PROVIDER_ENV_VARS[provider]} in your shell environment`, 'info');
+    apiKey = process.env[PROVIDER_ENV_VARS[provider]];
   }
 
   let model: string;
