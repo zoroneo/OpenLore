@@ -119,12 +119,13 @@ async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig 
   // ui.select / ui.input / ui.confirm: undefined = cancelled, '' = empty.
   // For edits, always fall back to existing values so partial navigation never destroys data.
 
-  // Put existing provider first so select starts on the current value.
+  // Put existing provider first with a star marker so it's visually obvious.
   const existingProvider = existing?.generation?.provider;
   const providerList = existingProvider
-    ? [existingProvider, ...PROVIDERS.filter((p) => p !== existingProvider)]
+    ? [`${existingProvider} *`, ...PROVIDERS.filter((p) => p !== existingProvider)]
     : PROVIDERS;
-  const provider = await ui.select('LLM provider', providerList) ?? providerList[0];
+  const selectedProvider = await ui.select('LLM provider', providerList) ?? providerList[0];
+  const provider = selectedProvider.replace(/ \*$/, '');
 
   let baseUrl: string | undefined = existing?.generation?.openaiCompatBaseUrl;
   let genSkipSsl = existing?.generation?.skipSslVerify ?? false;
