@@ -13,7 +13,7 @@
  */
 
 import { dirname, join as joinPath } from 'node:path';
-import Parser, { Query as TsQuery } from 'tree-sitter';
+import Parser from 'tree-sitter';
 import { FunctionRegistryTrie } from './function-registry-trie.js';
 import type { ImportMap } from './import-resolver-bridge.js';
 import { inferTypesFromSource, resolveViaTypeInference } from './type-inference-engine.js';
