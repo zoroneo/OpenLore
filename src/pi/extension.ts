@@ -387,7 +387,7 @@ export default function openlore(pi: ExtensionAPI): void {
   });
 
   // ── /configure slash command ──
-  pi.registerCommand('configure', {
+  pi.registerCommand('openlore', {
     description: 'Open the openlore configuration wizard',
     async handler(_args, ctx) {
       if (!ctx.hasUI) {
