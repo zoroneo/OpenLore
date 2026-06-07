@@ -92,7 +92,8 @@ const SYSTEM_AUTH_PROVIDERS = new Set(['copilot', 'claude-code', 'gemini-cli', '
 
 async function fetchModels(baseUrl: string, apiKey?: string): Promise<string[] | null> {
   try {
-    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/models`, {
+    const base = baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
+    const res = await fetch(`${base}/v1/models`, {
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
       signal: AbortSignal.timeout(3000),
     });
