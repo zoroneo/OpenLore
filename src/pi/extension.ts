@@ -108,6 +108,14 @@ async function fetchModels(baseUrl: string, apiKey?: string): Promise<string[] |
 async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig | null): Promise<void> {
   const { ui } = ctx;
 
+  if (existing?.generation) {
+    const g = existing.generation;
+    const parts = [`provider: ${g.provider ?? '—'}`, `model: ${g.model ?? '—'}`];
+    if (g.openaiCompatBaseUrl) parts.push(`url: ${g.openaiCompatBaseUrl}`);
+    if (existing.embedding) parts.push(`embedding: ${existing.embedding.baseUrl}`);
+    ui.notify(`Current config — ${parts.join(' · ')}`, 'info');
+  }
+
   // ui.select / ui.input / ui.confirm: undefined = cancelled, '' = empty.
   // For edits, always fall back to existing values so partial navigation never destroys data.
 
