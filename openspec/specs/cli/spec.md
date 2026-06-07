@@ -334,6 +334,12 @@ The system SHALL The serve daemon SHALL trigger a background `analyze --force` r
 
 > Decision recorded: 55d797b9
 > Date: 2026-06-07
+### Requirement: UnifySchemaresetAndWatcherRebuildsThroughASingleflightCoordinator
+
+The system SHALL ensure that at most one forced graph rebuild runs per directory at a time, coalescing additional triggers into a single follow-up run.
+
+> Decision recorded: f0885af9
+> Date: 2026-06-07
 
 ## Technical Notes
 
@@ -450,3 +456,13 @@ The orient SKILL.md frontmatter description and 'Cost & latency' section embedde
 EdgeStore.open() consumes the wasReset flag on first open, so the watcher's self-heal (which also keys off wasReset) never fires; the serve daemon must initiate `analyze --force` itself or waitForGraphRebuild polls an empty store until timeout
 
 **Consequences:** Serve now carries a deduplication Set and spawns background analyze processes; if the analyze binary is unavailable the daemon logs a warning but requests hang until timeout
+
+### Unify schema-reset and watcher rebuilds through a single-flight coordinator
+
+**Status:** Approved
+**Date:** 2026-06-07
+**ID:** f0885af9
+
+Two independent code paths (schema-reset healer and watcher-debounced re-analyze) both invoked `openloreAnalyze --force` on the same directory, risking concurrent non-atomic EdgeStore clear+repopulate that could tear the graph. Merging them into one coordinator with a running/pending state machine eliminates the race.
+
+**Consequences:** All forced rebuilds in serve now share one lock per directory; a trigger arriving mid-rebuild is coalesced into exactly one follow-up run. The served root directory re-enters the debounce path to avoid back-to-back analyzes under sustained editing, while per-request directories re-run immediately.

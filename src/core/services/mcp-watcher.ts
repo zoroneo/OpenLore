@@ -31,6 +31,7 @@ import { spawn } from 'node:child_process';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { extractSignatures, detectLanguage } from '../analyzer/signature-extractor.js';
 import type { FunctionNode } from '../analyzer/call-graph.js';
+import { isTestFile } from '../analyzer/test-file.js';
 import { EdgeStore } from './edge-store.js';
 import { primeContextCache, type CachedContext } from './mcp-handlers/utils.js';
 import {
@@ -669,14 +670,10 @@ export class McpWatcher {
 }
 
 // ── Module helpers ──────────────────────────────────────────────────────────────
-
-function isTestFile(relPath: string): boolean {
-  return (
-    relPath.includes('.test.') ||
-    relPath.includes('.spec.') ||
-    relPath.includes('__tests__')
-  );
-}
+// isTestFile is the shared cross-language predicate (../analyzer/test-file.js).
+// Incremental graph updates MUST classify tests identically to a full `analyze`,
+// or the watcher would add test files (e.g. foo_test.go, tests/foo.py) that a
+// full rebuild drops — leaving the incremental graph divergent from the rebuilt one.
 
 /**
  * Re-parse changedFile + up to CALLER_REPARSE_LIMIT callerFiles.

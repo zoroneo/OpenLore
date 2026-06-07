@@ -184,7 +184,15 @@ const CONFIG_PATTERNS = [
 ];
 
 /**
- * Test file/directory patterns
+ * Test file/directory patterns.
+ *
+ * NOTE: deliberately distinct from the shared call-graph predicate in
+ * ../analyzer/test-file.ts. This classifier sets FileMetadata.isTest, which feeds
+ * the repository map / significance scorer (a different view), and is intentionally
+ * broader — it excludes whole test/spec DIRECTORIES and any extension. The shared
+ * predicate is per-language and precise for graph-node classification. Do not merge
+ * them: narrowing this one would let directory-convention test code back into the
+ * repo map, and broadening the shared one would over-classify graph nodes.
  */
 const TEST_DIR_PATTERNS = [
   /\/test\//,
