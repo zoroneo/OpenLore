@@ -90,6 +90,13 @@ const PROVIDER_MODEL_DEFAULTS: Record<string, string> = {
 
 const SYSTEM_AUTH_PROVIDERS = new Set(['copilot', 'claude-code', 'gemini-cli', 'mistral-vibe', 'cursor-agent']);
 
+const PROVIDER_ENV_VARS: Record<string, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  'openai-compat': 'OPENAI_COMPAT_API_KEY',
+  copilot: 'COPILOT_API_KEY',
+};
+
 async function fetchModels(baseUrl: string, apiKey?: string): Promise<string[] | null> {
   try {
     const base = baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
@@ -107,17 +114,17 @@ async function fetchModels(baseUrl: string, apiKey?: string): Promise<string[] |
 
 async function configureGeneration(
   ui: ExtensionContext['ui'],
-  existing?: OpenLoreConfig | null,
+  existing?: OpenLoreConfig['generation'],
 ): Promise<OpenLoreConfig['generation']> {
-  const existingProvider = existing?.generation?.provider;
+  const existingProvider = existing?.provider;
   const providerList = existingProvider
     ? [`${existingProvider} *`, ...PROVIDERS.filter((p) => p !== existingProvider)]
     : PROVIDERS;
   const selectedProvider = await ui.select('LLM provider', providerList) ?? providerList[0];
   const provider = selectedProvider.replace(/ \*$/, '');
 
-  let baseUrl: string | undefined = existing?.generation?.openaiCompatBaseUrl;
-  let skipSslVerify = existing?.generation?.skipSslVerify ?? false;
+  let baseUrl: string | undefined = existing?.openaiCompatBaseUrl;
+  let skipSslVerify = existing?.skipSslVerify ?? false;
   let apiKey: string | undefined;
 
   if (provider === 'openai-compat') {
@@ -127,12 +134,6 @@ async function configureGeneration(
     skipSslVerify = await ui.confirm('Skip SSL verification?', 'Required for local servers with self-signed certificates');
   }
 
-  const PROVIDER_ENV_VARS: Record<string, string> = {
-    anthropic: 'ANTHROPIC_API_KEY',
-    openai: 'OPENAI_API_KEY',
-    'openai-compat': 'OPENAI_COMPAT_API_KEY',
-    copilot: 'COPILOT_API_KEY',
-  };
   if (!SYSTEM_AUTH_PROVIDERS.has(provider) && PROVIDER_ENV_VARS[provider]) {
     ui.notify(`API key: set ${PROVIDER_ENV_VARS[provider]} in your shell environment`, 'info');
     apiKey = process.env[PROVIDER_ENV_VARS[provider]];
@@ -143,15 +144,15 @@ async function configureGeneration(
   const models = apiBase ? await fetchModels(apiBase, apiKey) : null;
 
   if (models && models.length > 0) {
-    const currentModel = existing?.generation?.model;
+    const currentModel = existing?.model;
     const modelList = currentModel && models.includes(currentModel)
       ? [`${currentModel} *`, ...models.filter((m) => m !== currentModel)]
       : models;
     const selectedModel = await ui.select('Model', modelList) ?? modelList[0];
     model = selectedModel.replace(/ \*$/, '');
   } else {
-    const existingModel = existing?.generation?.model ?? PROVIDER_MODEL_DEFAULTS[provider] ?? '';
-    const modelTitle = existing?.generation?.model ? `Model (current: ${existing.generation.model})` : 'Model';
+    const existingModel = existing?.model ?? PROVIDER_MODEL_DEFAULTS[provider] ?? '';
+    const modelTitle = existing?.model ? `Model (current: ${existing.model})` : 'Model';
     model = (await ui.input(modelTitle, PROVIDER_MODEL_DEFAULTS[provider] ?? '')) || existingModel;
   }
 
@@ -229,7 +230,7 @@ async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig 
     if (choice === 'Save & close') break;
 
     if (choice === genLabel) {
-      generation = await configureGeneration(ui, { ...existing, generation } as OpenLoreConfig);
+      generation = await configureGeneration(ui, generation);
     } else if (choice === embedLabel) {
       embedding = await configureEmbedding(ui, embedding);
     } else if (choice === analysisLabel) {
@@ -262,15 +263,24 @@ async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig 
   );
   if (runNow) {
     ui.notify('Running openlore analyze…', 'info');
-    const exitCode = await new Promise<number>((resolve) => {
-      const proc = spawn('openlore', ['analyze'], { cwd: ctx.cwd, stdio: 'ignore' });
-      proc.on('close', resolve);
-      proc.on('error', () => resolve(1));
+    const [exitCode, errText] = await new Promise<[number, string]>((resolve) => {
+      // Try `openlore` in PATH; fall back to `npx openlore` if not found.
+      const trySpawn = (cmd: string, args: string[]) => new Promise<[number, string] | null>((res) => {
+        const chunks: Buffer[] = [];
+        const proc = spawn(cmd, args, { cwd: ctx.cwd, stdio: ['ignore', 'ignore', 'pipe'] });
+        proc.stderr?.on('data', (d: Buffer) => chunks.push(d));
+        proc.on('close', (code) => res([code ?? 1, Buffer.concat(chunks).toString().trim()]));
+        proc.on('error', () => res(null));
+      });
+      trySpawn('openlore', ['analyze']).then((r) => {
+        if (r !== null) return resolve(r);
+        return trySpawn('npx', ['openlore', 'analyze']).then((r2) => resolve(r2 ?? [1, 'openlore not found in PATH']));
+      });
     });
     if (exitCode === 0) {
       ui.notify('Analysis complete — openlore tools are ready.', 'info');
     } else {
-      ui.notify('openlore analyze failed — check that openlore is installed and run it manually.', 'error');
+      ui.notify(`openlore analyze failed — run it manually. ${errText ? '(' + errText.slice(0, 120) + ')' : ''}`.trim(), 'error');
     }
   }
 }
