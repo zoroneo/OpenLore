@@ -88,6 +88,28 @@ describe('consolidateDrafts — empty store', () => {
   });
 });
 
+describe('consolidateDrafts — id anchoring', () => {
+  it('reuses a draft id when the LLM echoes it back, instead of re-minting from the title', async () => {
+    // The LLM keeps the source draft's id but rewords the title. Without anchoring,
+    // the consolidated decision would mint a fresh id from the reworded title, so the
+    // gate would advertise an id that no longer maps to the recorded draft.
+    const response = JSON.stringify([{
+      id: 'draft0000',
+      title: 'A reworded title that would otherwise produce a different id',
+      rationale: 'r',
+      consequences: 'c',
+      affectedDomains: ['api'],
+      affectedFiles: [],
+      proposedRequirement: 'The system SHALL do x',
+    }]);
+    const llm = makeLLM(response);
+    const store = makeStore([{ title: 'Original draft title' }]); // → draft0000
+    const result = await consolidateDrafts(store, llm);
+    expect(result.decisions).toHaveLength(1);
+    expect(result.decisions[0].id).toBe('draft0000');
+  });
+});
+
 // ============================================================================
 // Happy path
 // ============================================================================

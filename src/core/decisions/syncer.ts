@@ -149,6 +149,10 @@ function addSourceFiles(content: string, newFiles: string[]): string {
 }
 
 function appendRequirement(content: string, decision: PendingDecision): string {
+  // Idempotent: if this decision's requirement was already synced (by id), don't
+  // append a second copy. Re-syncs and consolidation ID churn would otherwise
+  // duplicate the block. The id marker is the stable dedupe key.
+  if (content.includes(`> Decision recorded: ${decision.id}`)) return content;
   const slug = toPascalCase(decision.title);
   const req = decision.proposedRequirement ?? '';
   const reqText = /^the system shall\b/i.test(req.trim()) ? req.trim() : `The system SHALL ${req}`;
@@ -177,6 +181,8 @@ ${reqText}
 }
 
 function appendDecisionSection(content: string, decision: PendingDecision): string {
+  // Idempotent: skip if this decision's entry (by id) is already present.
+  if (content.includes(`**ID:** ${decision.id}`)) return content;
   const entry = buildDecisionEntry(decision);
 
   if (content.includes('## Decisions')) {

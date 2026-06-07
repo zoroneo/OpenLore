@@ -919,7 +919,8 @@ export async function handleGetMinimalContext(
   const candidates = cg.nodes.filter(n =>
     n.name === functionName &&
     !n.isExternal && !n.isTest &&
-    (!filePath || n.filePath.endsWith(filePath)),
+    // Anchor on a path separator so "config.ts" doesn't also match "app-config.ts".
+    (!filePath || n.filePath === filePath || n.filePath.endsWith('/' + filePath.replace(/^\//, ''))),
   );
   if (candidates.length === 0) return { error: `Function "${functionName}" not found. Run analyze_codebase first.` };
   const target = candidates[0];

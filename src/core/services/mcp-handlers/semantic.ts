@@ -339,12 +339,16 @@ export async function handleSuggestInsertionPoints(
 
         const role = classifyRole(callerNode.fanIn, callerNode.fanOut, false, false);
         const strategy = deriveStrategy(role);
-        // Graph-expanded candidates score slightly lower than the semantic seed
-        const score = compositeScore(seedResult.score + 0.15, role) * 0.85;
+        // Graph-expanded candidates score slightly lower than the semantic seed.
+        // Use the NORMALISED seed score so this is on the same scale as the seed
+        // candidates above (raw RRF scores top out ~0.03, which would otherwise
+        // rank every expanded node below — and report a misleading semanticScore).
+        const expandedSemantic = normalise(seedResult.score) + 0.15;
+        const score = compositeScore(expandedSemantic, role) * 0.85;
         candidates.push({
           rank: 0,
           score,
-          semanticScore: seedResult.score + 0.15,
+          semanticScore: expandedSemantic,
           name: callerNode.name,
           filePath: callerNode.filePath,
           className: callerNode.className,

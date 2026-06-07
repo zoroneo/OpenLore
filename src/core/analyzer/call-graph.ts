@@ -20,6 +20,7 @@ import { inferTypesFromSource, resolveViaTypeInference } from './type-inference-
 import { extractAllHttpEdges } from './http-route-parser.js';
 import { buildProjectedIac } from './iac/index.js';
 import { isIacLanguage } from './iac/types.js';
+import { isTestFile } from './test-file.js';
 import { logger } from '../../utils/logger.js';
 
 // ============================================================================
@@ -501,9 +502,18 @@ function extractDocstringBefore(
 ): string | undefined {
   // ── Python: scan forward past the colon into the function body ──────────
   if (language === 'Python') {
-    // Find the colon that ends the `def` line
+    // Find the colon that ends the `def` line. Track bracket depth so a colon
+    // inside a parameter annotation (`def f(x: int) -> T:`) doesn't end the scan
+    // prematurely — mirrors the depth handling in extractDeclaration below.
     let i = startIndex;
-    while (i < source.length && source[i] !== ':') i++;
+    let depth = 0;
+    while (i < source.length) {
+      const c = source[i];
+      if (c === '(' || c === '[' || c === '{') depth++;
+      else if (c === ')' || c === ']' || c === '}') depth--;
+      else if (c === ':' && depth === 0) break;
+      i++;
+    }
     // Skip past the colon
     i++;
     // Skip whitespace / newline
@@ -2416,15 +2426,11 @@ function buildClassNodes(
 // EXTERNAL NODE HELPER
 // ============================================================================
 
-const TEST_FILE_PATTERNS = [
-  /\.test\.[tj]sx?$/, /\.spec\.[tj]sx?$/,
-  /_test\.py$/, /test_[^/]+\.py$/,
-  /_spec\.rb$/, /_test\.go$/, /[A-Z][^/]*Test\.java$/,
-];
-
-function isTestFile(filePath: string): boolean {
-  return TEST_FILE_PATTERNS.some(p => p.test(filePath));
-}
+// isTestFile is imported at the top of the file from ./test-file.js — the shared
+// cross-language predicate, so call-graph classification can't drift from the
+// artifact generator's. (A narrower local copy previously let test code in
+// tests/, __tests__/, *Spec.kt, etc. leak into the production graph and dropped
+// `tested_by` edges for those layouts.)
 
 const EXTERNAL_HTTP_RE = /^(fetch|axios|got|superagent|node-fetch|ky|request|https?|xmlhttprequest|grpc|undici|requests|aiohttp|httpx|urllib|urllib2|urllib3|curl|curleasy|pycurl|http|httpclient|httpurlconnection|reqwest|hyper|ureq|isahc|surf|net|faraday|httparty|rest|typhoeus|excon|okhttp|retrofit|feign|resttemplate|webclient|urlsession|alamofire|moya)$/;
 const EXTERNAL_DB_RE = /^(pg|mysql|mysql2|sqlite|sqlite3|redis|ioredis|mongoose|mongo|mongodb|prisma|knex|sequelize|typeorm|drizzle|cassandra|dynamodb|firestore|supabase|neo4j|influxdb|clickhouse|kysely|psycopg2|psycopg|sqlalchemy|pymysql|asyncpg|motor|aiomysql|tortoise|sql|gorm|sqlx|pgx|bun|diesel|seaorm|rusqlite|activerecord|sequel|jdbc|hibernate|jpa|entitymanager|datasource|jdbctemplate|r2dbc|coredata|grdb|realm)$/;

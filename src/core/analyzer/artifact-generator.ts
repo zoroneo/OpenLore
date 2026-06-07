@@ -31,30 +31,11 @@ import type { RouteInventory } from './http-route-parser.js';
 import type { MiddlewareEntry } from './middleware-extractor.js';
 import type { EnvVar } from './env-extractor.js';
 
-/**
- * Heuristic to detect test/spec files across languages.
- * Excludes them from call graph analysis — test helpers inflate fanIn,
- * and test functions are never "unreachable" by definition.
- *
- * Patterns covered:
- *   TypeScript/JS: *.test.ts, *.spec.ts, *.test.tsx, __tests__/*, test_*.ts
- *   Python:        test_*.py, *_test.py, tests/*.py
- *   Go:            *_test.go
- *   Rust:          files with #[cfg(test)] (not detectable here — excluded by directory pattern)
- *   Java/Kotlin:   *Test.java, *Spec.kt
- */
-export function isTestFile(filePath: string): boolean {
-  const name = filePath.replace(/\\/g, '/');
-  return (
-    /\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$/.test(name) ||   // JS/TS: foo.test.ts
-    /(^|\/)__tests__\//.test(name) ||                          // JS/TS: __tests__/
-    /(^|\/)test_[^/]+\.(ts|js|py)$/.test(name) ||             // Python/TS: test_foo.py
-    /[^/]+_test\.(py|go)$/.test(name) ||                      // Python/Go: foo_test.py, foo_test.go
-    /(^|\/)tests?\/[^/]+\.(py|ts|js|rb|php)$/.test(name) ||  // tests/ directory
-    /[A-Z][a-zA-Z0-9]*Test\.(java|kt|scala)$/.test(name) ||  // Java: FooTest.java
-    /[A-Z][a-zA-Z0-9]*Spec\.(kt|scala|rb)$/.test(name)       // Kotlin/Ruby: FooSpec.kt
-  );
-}
+// Canonical cross-language test-file predicate. Re-exported here for the many
+// existing importers (e.g. spec-pipeline); the call-graph builder imports the
+// same shared definition so the two can no longer drift.
+export { isTestFile } from './test-file.js';
+import { isTestFile } from './test-file.js';
 
 // ============================================================================
 // TYPES

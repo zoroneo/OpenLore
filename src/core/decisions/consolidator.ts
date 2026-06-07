@@ -111,6 +111,12 @@ export async function consolidateDrafts(
   // are purged from the store after sync, so this set is empty in the common case.
   const existing = store.decisions.filter((d) => d.status !== 'draft' && d.status !== 'rejected' && d.status !== 'phantom');
   const existingIds = new Set(existing.map((d) => d.id));
+  // A consolidated decision that echoes back its source DRAFT's id should keep that
+  // id — replaceDecisions() assumes consolidated decisions share ids with their
+  // drafts. Without this, a single-draft consolidation re-mints a fresh id from the
+  // (LLM-reworded) title, so the gate advertises an id that no longer maps to the
+  // recorded draft, and approve/sync operate on a different logical record.
+  const reusableIds = new Set([...existingIds, ...drafts.map((d) => d.id)]);
 
   const userContent = JSON.stringify(
     {
@@ -160,7 +166,7 @@ export async function consolidateDrafts(
     // Prefer LLM-supplied ID when it matches a known existing decision — this is the
     // traceability anchor that prevents duplicate IDs across consolidation runs.
     const id =
-      c.id && existingIds.has(c.id)
+      c.id && reusableIds.has(c.id)
         ? c.id
         : makeDecisionId(store.sessionId, domain, c.title);
     return {

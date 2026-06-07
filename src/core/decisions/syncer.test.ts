@@ -161,6 +161,28 @@ describe('syncApprovedDecisions — filesystem writes', () => {
     expect(occurrences).toBe(1);
   });
 
+  it('is idempotent — re-syncing the same decision does not duplicate blocks', async () => {
+    const specDir = join(tmpDir, 'openspec', 'specs', 'services');
+    await mkdir(specDir, { recursive: true });
+    const specPath = join(specDir, 'spec.md');
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(specPath, MINIMAL_SPEC, 'utf-8');
+
+    const specMap = makeSpecMap('services', 'openspec/specs/services/spec.md');
+    const opts = { rootPath: tmpDir, openspecPath: join(tmpDir, 'openspec'), specMap };
+
+    // Sync the same decision (same id) twice. A re-sync — or consolidation re-minting
+    // an id — would otherwise append a SECOND requirement + decision block, the exact
+    // spec corruption observed in the field.
+    await syncApprovedDecisions(makeStore([makeDecision()]), opts);
+    await syncApprovedDecisions(makeStore([makeDecision()]), opts);
+
+    const content = await readFile(specPath, 'utf-8');
+    expect((content.match(/### Requirement: UseRedisForCaching/g) ?? []).length).toBe(1);
+    expect((content.match(/\*\*ID:\*\* aaaabbbb/g) ?? []).length).toBe(1);
+    expect((content.match(/### Use Redis for caching/g) ?? []).length).toBe(1);
+  });
+
   it('adds new source files to > Source files: header', async () => {
     const specDir = join(tmpDir, 'openspec', 'specs', 'services');
     await mkdir(specDir, { recursive: true });

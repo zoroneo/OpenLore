@@ -39,7 +39,10 @@ function runTransaction(db: DatabaseSync, fn: () => void): void {
     if (depth === 0) {
       db.exec('ROLLBACK');
     } else {
+      // ROLLBACK TO reverts the savepoint's work but leaves it on the stack;
+      // RELEASE pops it so a caught nested-tx error doesn't orphan a savepoint.
       db.exec(`ROLLBACK TO ${sp}`);
+      db.exec(`RELEASE ${sp}`);
     }
     throw err;
   } finally {

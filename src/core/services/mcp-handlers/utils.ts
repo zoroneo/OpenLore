@@ -115,6 +115,10 @@ interface ContextCacheEntry {
 /** One entry per project directory. Invalidated by llm-context.json mtime change. */
 const _contextCache = new Map<string, ContextCacheEntry>();
 
+/** Grace period before closing an evicted EdgeStore so concurrent in-flight
+ * requests holding the old handle across an await can drain first. */
+const STALE_STORE_CLOSE_DELAY_MS = 30_000;
+
 /** Test-only: clear in-memory context cache to force cold path. */
 export function _resetContextCacheForTesting(): void {
   for (const entry of _contextCache.values()) entry.ctx.edgeStore?.close();
@@ -184,7 +188,20 @@ export async function readCachedContext(directory: string, timeout?: number): Pr
           ctx.edgeStore = es;
         }
       }
+      // Evict + close the previous entry's EdgeStore — otherwise each cache miss
+      // (every `analyze` rewrites llm-context.json's mtime) leaks an open SQLite
+      // connection + its WAL fd for the life of a long-lived daemon. The close is
+      // DEFERRED: serve dispatches requests concurrently, and a handler may hold
+      // the old handle across an await (e.g. get_subgraph awaits a vector search
+      // between edgeStore reads). A grace delay lets in-flight requests drain
+      // before release, bounding live handles to ~grace/reanalyze-interval.
+      const prev = _contextCache.get(directory);
       _contextCache.set(directory, { ctx, mtime });
+      if (prev?.ctx.edgeStore && prev.ctx.edgeStore !== ctx.edgeStore) {
+        const stale = prev.ctx.edgeStore;
+        const t = setTimeout(() => { try { stale.close(); } catch { /* already closed */ } }, STALE_STORE_CLOSE_DELAY_MS);
+        t.unref?.();
+      }
       emit(directory, 'cache', { event: 'cache_read', hit: true });
       return ctx;
     } catch {

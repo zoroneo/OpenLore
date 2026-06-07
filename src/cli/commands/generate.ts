@@ -68,6 +68,8 @@ import { createProgress } from '../../utils/progress.js';
 interface ExtendedGenerateOptions extends GenerateOptions {
   merge?: boolean;
   noOverwrite?: boolean;
+  /** Commander's storage key for `--no-overwrite` (default true; false when passed). */
+  overwrite?: boolean;
   yes?: boolean;
   outputDir?: string;
   force?: boolean;
@@ -199,8 +201,7 @@ export const generateCommand = new Command('generate')
   )
   .option(
     '--no-overwrite',
-    'Skip any existing spec files',
-    false
+    'Skip any existing spec files'
   )
   .option(
     '-y, --yes',
@@ -281,7 +282,8 @@ Each spec.md follows OpenSpec conventions:
       adr: options.adr ?? false,
       adrOnly: options.adrOnly ?? false,
       merge: options.merge ?? false,
-      noOverwrite: options.noOverwrite ?? false,
+      // commander stores `--no-overwrite` under the `overwrite` key (default true).
+      noOverwrite: options.overwrite === false,
       yes: options.yes ?? false,
       outputDir: options.outputDir,
       quiet: false,
