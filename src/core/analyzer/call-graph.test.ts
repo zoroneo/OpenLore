@@ -9,7 +9,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { CallGraphBuilder } from './call-graph.js';
+import { CallGraphBuilder, callDistance, CALL_DISTANCE_COSTS } from './call-graph.js';
+import type { CallEdge, EdgeConfidence } from './call-graph.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -913,5 +914,44 @@ describe('CallGraphBuilder — Swift', () => {
 
     const node = Array.from(result.nodes.values()).find(n => n.name === 'fetchData');
     expect(node?.isAsync).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// callDistance — confidence-weighted edge cost
+// ---------------------------------------------------------------------------
+
+describe('callDistance', () => {
+  const edge = (confidence: EdgeConfidence): CallEdge =>
+    ({ callerId: 'a::f', calleeId: 'b::g', calleeName: 'g', confidence });
+
+  // Pin every confidence level to its cost. Adding an EdgeConfidence member
+  // breaks compilation of CALL_DISTANCE_COSTS, forcing an explicit cost choice.
+  const expected: Record<EdgeConfidence, number> = {
+    import: 1, same_file: 1, self_cls: 1, http_endpoint: 1,
+    type_inference: 2, type_name: 2,
+    name_only: 3,
+    external: Infinity,
+  };
+
+  for (const [confidence, cost] of Object.entries(expected) as [EdgeConfidence, number][]) {
+    it(`maps ${confidence} → ${cost}`, () => {
+      expect(callDistance(edge(confidence))).toBe(cost);
+      expect(CALL_DISTANCE_COSTS[confidence]).toBe(cost);
+    });
+  }
+
+  it('ranks strongly-resolved edges nearer than heuristic ones', () => {
+    expect(callDistance(edge('import'))).toBeLessThan(callDistance(edge('name_only')));
+  });
+
+  it('excludes external edges from internal traversal (Infinity)', () => {
+    expect(Number.isFinite(callDistance(edge('external')))).toBe(false);
+  });
+
+  it('falls back to a finite cost for a malformed/legacy confidence', () => {
+    // Real data never carries this, but the runtime default must not throw.
+    const bad = { callerId: 'a::f', calleeId: 'b::g', calleeName: 'g', confidence: 'exact' } as unknown as CallEdge;
+    expect(callDistance(bad)).toBe(3);
   });
 });

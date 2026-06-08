@@ -29,6 +29,8 @@ vi.mock('./utils.js', () => ({
 import {
   buildAdjacency,
   bfs,
+  buildWeightedAdjacency,
+  weightedBfs,
   computeRiskScore,
   recommendStrategy,
   nodeToSummary,
@@ -43,7 +45,7 @@ import {
   handleTraceExecutionPath,
 } from './graph.js';
 import { readCachedContext } from './utils.js';
-import type { FunctionNode, SerializedCallGraph, CallEdge } from '../../analyzer/call-graph.js';
+import type { FunctionNode, SerializedCallGraph, CallEdge, EdgeConfidence } from '../../analyzer/call-graph.js';
 
 // ============================================================================
 // TEST HELPERS
@@ -885,5 +887,92 @@ describe('cross-domain impact — analyze_impact', () => {
     const result = await handleAnalyzeImpact(dir, 'foo', 2) as { crossDomain?: unknown; blastRadius: { infrastructure?: number } };
     expect(result.crossDomain).toBeUndefined();
     expect(result.blastRadius.infrastructure).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// buildWeightedAdjacency + weightedBfs (call-distance scoping)
+// ============================================================================
+
+function edgeC(callerId: string, calleeId: string, confidence: EdgeConfidence): CallEdge {
+  return { callerId, calleeId, calleeName: calleeId.split('::')[1] ?? calleeId, confidence };
+}
+
+describe('buildWeightedAdjacency', () => {
+  it('weights edges by call-distance and excludes external (Infinity) edges', () => {
+    const a = makeNode({ id: 'a.ts::a' });
+    const b = makeNode({ id: 'b.ts::b' });
+    const ext = makeNode({ id: 'external::fetch', isExternal: true });
+    const cg = makeGraph([a, b, ext], [
+      edgeC(a.id, b.id, 'import'),       // cost 1
+      edgeC(a.id, ext.id, 'external'),   // Infinity → omitted
+    ]);
+
+    const { forward, backward } = buildWeightedAdjacency(cg);
+    expect(forward.get(a.id)).toEqual([{ to: b.id, cost: 1 }]);
+    expect(backward.get(b.id)).toEqual([{ to: a.id, cost: 1 }]);
+    // external edge omitted entirely
+    expect(forward.get(a.id)!.some(e => e.to === ext.id)).toBe(false);
+  });
+
+  it('only includes call edges, not tested_by / other kinds', () => {
+    const a = makeNode({ id: 'a.ts::a' });
+    const t = makeNode({ id: 'a.test.ts::t' });
+    const cg = makeGraph([a, t], [
+      { callerId: a.id, calleeId: t.id, calleeName: 't', confidence: 'import', kind: 'tested_by' },
+    ]);
+    const { forward } = buildWeightedAdjacency(cg);
+    expect(forward.get(a.id)).toBeUndefined();
+  });
+});
+
+describe('weightedBfs', () => {
+  it('accumulates minimal distance, hops, and a reconstructable predecessor chain', () => {
+    // A →(import,1) B →(name_only,3) C
+    const a = makeNode({ id: 'a.ts::a' });
+    const b = makeNode({ id: 'b.ts::b' });
+    const c = makeNode({ id: 'c.ts::c' });
+    const cg = makeGraph([a, b, c], [
+      edgeC(a.id, b.id, 'import'),
+      edgeC(b.id, c.id, 'name_only'),
+    ]);
+    const { forward } = buildWeightedAdjacency(cg);
+
+    const reach = weightedBfs([a.id], forward, 10);
+    expect(reach.get(a.id)).toEqual({ distance: 0, hops: 0, predecessor: null });
+    expect(reach.get(b.id)).toEqual({ distance: 1, hops: 1, predecessor: a.id });
+    expect(reach.get(c.id)).toEqual({ distance: 4, hops: 2, predecessor: b.id });
+
+    // Reconstruct the cheapest path C → B → A via predecessors.
+    const path: string[] = [];
+    for (let cur: string | null = c.id; cur; cur = reach.get(cur)!.predecessor) path.push(cur);
+    expect(path).toEqual([c.id, b.id, a.id]);
+  });
+
+  it('prefers the strong longer path over a weak shorter one (cost, not hops)', () => {
+    // A →(name_only,3) Z  (1 hop, distance 3)
+    // A →(import,1) M →(import,1) Z  (2 hops, distance 2)  ← cheaper
+    const a = makeNode({ id: 'a.ts::a' });
+    const m = makeNode({ id: 'm.ts::m' });
+    const z = makeNode({ id: 'z.ts::z' });
+    const cg = makeGraph([a, m, z], [
+      edgeC(a.id, z.id, 'name_only'),
+      edgeC(a.id, m.id, 'import'),
+      edgeC(m.id, z.id, 'import'),
+    ]);
+    const { forward } = buildWeightedAdjacency(cg);
+    const reach = weightedBfs([a.id], forward, 10);
+    expect(reach.get(z.id)).toEqual({ distance: 2, hops: 2, predecessor: m.id });
+  });
+
+  it('does not expand nodes beyond the distance budget', () => {
+    // A →(name_only,3) B — budget 2 excludes B.
+    const a = makeNode({ id: 'a.ts::a' });
+    const b = makeNode({ id: 'b.ts::b' });
+    const cg = makeGraph([a, b], [edgeC(a.id, b.id, 'name_only')]);
+    const { forward } = buildWeightedAdjacency(cg);
+    const reach = weightedBfs([a.id], forward, 2);
+    expect(reach.has(b.id)).toBe(false);
+    expect(reach.has(a.id)).toBe(true);
   });
 });

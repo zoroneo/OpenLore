@@ -901,6 +901,41 @@ describe('handleGetMinimalContext', () => {
     expect(result.testedBy).toHaveLength(1);
     expect(result.testedBy[0].confidence).toBe('imported');
   });
+
+  it('scopes callers by nearest call-distance: a strong 2-hop chain beats a weak direct caller', async () => {
+    const mk = (id: string, fanIn = 0, fanOut = 0) => ({
+      id, name: id.split('::')[1], filePath: `${tmpDir}/${id.split('::')[0]}`,
+      signature: `${id.split('::')[1]}()`, language: 'typescript',
+      fanIn, fanOut, startLine: 1, endLine: 3, isExternal: false, isTest: false,
+    });
+    // weakCaller →(name_only,3)→ target   [direct but weak: distance 3 > low budget 2 → dropped]
+    // strongCaller →(import,1)→ mid →(import,1)→ target   [2 hops, distance 2 ≤ budget → kept]
+    const target = mk('src/t.ts::target', /* fanIn */ 2);
+    readCachedContext.mockResolvedValue({
+      callGraph: makeCallGraph({
+        nodes: [target, mk('src/w.ts::weakCaller'), mk('src/m.ts::mid'), mk('src/s.ts::strongCaller')],
+        edges: [
+          { callerId: 'src/w.ts::weakCaller', calleeId: 'src/t.ts::target', calleeName: 'target', confidence: 'name_only', kind: 'calls' },
+          { callerId: 'src/m.ts::mid', calleeId: 'src/t.ts::target', calleeName: 'target', confidence: 'import', kind: 'calls' },
+          { callerId: 'src/s.ts::strongCaller', calleeId: 'src/m.ts::mid', calleeName: 'mid', confidence: 'import', kind: 'calls' },
+        ],
+      }),
+    });
+    const { handleGetMinimalContext } = await import('./analysis.js');
+    const result = await handleGetMinimalContext(tmpDir, 'target') as {
+      callers: Array<{ name: string; distance: number; hops: number }>;
+    };
+    const names = result.callers.map(c => c.name);
+    expect(names).toContain('mid');
+    expect(names).toContain('strongCaller'); // 2 hops away, distance 2, within budget
+    expect(names).not.toContain('weakCaller'); // direct but distance 3 > budget 2
+    // each neighbour carries its provenance
+    for (const c of result.callers) {
+      expect(typeof c.distance).toBe('number');
+      expect(typeof c.hops).toBe('number');
+    }
+    expect(result.callers.find(c => c.name === 'strongCaller')!.hops).toBe(2);
+  });
 });
 
 // ============================================================================

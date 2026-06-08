@@ -37,6 +37,7 @@ import {
   TRACE_PATH_MAX_PATHS,
 } from '../../../constants.js';
 import type { SerializedCallGraph, FunctionNode } from '../../analyzer/call-graph.js';
+import { callDistance } from '../../analyzer/call-graph.js';
 import type { DecisionNode } from '../../decisions/project.js';
 import { isIacLanguage } from '../../analyzer/iac/types.js';
 import { getFileGodFunctions, extractSubgraph } from '../../analyzer/subgraph-extractor.js';
@@ -151,6 +152,77 @@ export function bfsFromDB(
     frontier = nextFrontier;
   }
   return visited;
+}
+
+/** A node's minimal accumulated call-distance from the seed set. */
+export interface WeightedReach {
+  /** Sum of edge call-distances along the cheapest path from a seed. */
+  distance: number;
+  /** Hop count along that cheapest-distance path. */
+  hops: number;
+  /** Predecessor node id on that path, or null for a seed. */
+  predecessor: string | null;
+}
+
+/**
+ * Build weighted forward/backward adjacency from `calls` edges, each weighted by
+ * {@link callDistance}. External (Infinity-cost) edges are omitted so internal
+ * scoping never routes through synthetic stdlib/HTTP leaves.
+ */
+export function buildWeightedAdjacency(cg: SerializedCallGraph) {
+  const forward  = new Map<string, Array<{ to: string; cost: number }>>(); // callerId → callees
+  const backward = new Map<string, Array<{ to: string; cost: number }>>(); // calleeId → callers
+  for (const e of cg.edges) {
+    if (!e.calleeId) continue;
+    if (e.kind && e.kind !== 'calls') continue; // only call edges carry call-distance
+    const cost = callDistance(e);
+    if (!Number.isFinite(cost)) continue; // skip external/unresolved
+    if (!forward.has(e.callerId))  forward.set(e.callerId,  []);
+    if (!backward.has(e.calleeId)) backward.set(e.calleeId, []);
+    forward.get(e.callerId)!.push({ to: e.calleeId, cost });
+    backward.get(e.calleeId)!.push({ to: e.callerId, cost });
+  }
+  return { forward, backward };
+}
+
+/**
+ * Dijkstra over a weighted adjacency (small in-memory neighbourhoods; a linear
+ * min-frontier scan is cheaper than a heap here). Returns each reachable node's
+ * minimal accumulated call-distance, the hop count along that cheapest path, and
+ * its predecessor — sufficient to reconstruct the path. Seeds start at distance
+ * 0; nodes whose distance would exceed `maxDistance` are never expanded.
+ */
+export function weightedBfs(
+  seeds: string[],
+  adjacency: Map<string, Array<{ to: string; cost: number }>>,
+  maxDistance: number,
+): Map<string, WeightedReach> {
+  const best = new Map<string, WeightedReach>();
+  const frontier = new Map<string, number>(); // node → tentative distance
+  for (const s of seeds) {
+    best.set(s, { distance: 0, hops: 0, predecessor: null });
+    frontier.set(s, 0);
+  }
+
+  while (frontier.size > 0) {
+    // Pop the minimum-distance node — finalized, since all edge costs are ≥ 0.
+    let cur = '';
+    let curDist = Infinity;
+    for (const [id, d] of frontier) if (d < curDist) { curDist = d; cur = id; }
+    frontier.delete(cur);
+
+    const curHops = best.get(cur)!.hops;
+    for (const { to, cost } of adjacency.get(cur) ?? []) {
+      const nd = curDist + cost;
+      if (nd > maxDistance) continue;
+      const existing = best.get(to);
+      if (!existing || nd < existing.distance) {
+        best.set(to, { distance: nd, hops: curHops + 1, predecessor: cur });
+        frontier.set(to, nd);
+      }
+    }
+  }
+  return best;
 }
 
 /**

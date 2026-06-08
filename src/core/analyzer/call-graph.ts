@@ -117,6 +117,62 @@ export interface CallEdge {
   callType?: CallType;
 }
 
+/**
+ * Deterministic call-distance cost per edge resolution confidence. A lower cost
+ * means a structurally *nearer* (more strongly resolved) edge. Used by
+ * {@link callDistance} and the weighted traversal that scopes context by nearest
+ * neighbour instead of by a fixed neighbour count.
+ *
+ * `external` is `Infinity`: external nodes are synthetic stdlib/HTTP leaves and
+ * are never traversed *through* for internal scoping (see `weightedBfs`).
+ */
+export const CALL_DISTANCE_COSTS: Record<EdgeConfidence, number> = {
+  // Strongly resolved — concrete symbol/route match.
+  import: 1,
+  same_file: 1,
+  self_cls: 1,
+  http_endpoint: 1,
+  // Moderately resolved — receiver type inferred or treated as a type name.
+  type_inference: 2,
+  type_name: 2,
+  // Heuristic — last-resort first-candidate-by-name match.
+  name_only: 3,
+  // Unresolved external/stdlib leaf — excluded from internal traversal.
+  external: Infinity,
+};
+
+/** Fallback cost for a malformed/legacy confidence value not in the enum. */
+const CALL_DISTANCE_FALLBACK = 3;
+
+/**
+ * Deterministic distance cost for a single call edge, derived solely from its
+ * resolution confidence — a pure function of static analysis, no learned or
+ * stochastic component. The switch is exhaustive over {@link EdgeConfidence}
+ * (the `never` assignment fails compilation if a member is added without a
+ * cost); the runtime `default` defends against malformed/legacy edge data.
+ */
+export function callDistance(edge: CallEdge): number {
+  switch (edge.confidence) {
+    case 'import':
+    case 'same_file':
+    case 'self_cls':
+    case 'http_endpoint':
+      return 1;
+    case 'type_inference':
+    case 'type_name':
+      return 2;
+    case 'name_only':
+      return 3;
+    case 'external':
+      return Infinity;
+    default: {
+      const _exhaustive: never = edge.confidence;
+      void _exhaustive;
+      return CALL_DISTANCE_FALLBACK;
+    }
+  }
+}
+
 export interface LayerViolation {
   callerId: string;
   calleeId: string;

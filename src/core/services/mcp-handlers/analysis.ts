@@ -44,6 +44,7 @@ import {
 } from '../../drift/index.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { validateDirectory, readCachedContext, isCacheFresh, safeJoin } from './utils.js';
+import { buildWeightedAdjacency, weightedBfs } from './graph.js';
 import type { SerializedCallGraph } from '../../analyzer/call-graph.js';
 import type { MappingArtifact } from '../../generator/mapping-generator.js';
 import { openloreAudit } from '../../../api/audit.js';
@@ -925,61 +926,72 @@ export async function handleGetMinimalContext(
   if (candidates.length === 0) return { error: `Function "${functionName}" not found. Run analyze_codebase first.` };
   const target = candidates[0];
 
-  // Risk-aware depth: high fan-in/out functions get more caller/callee context
+  // Risk tier → distance budget + k cap. The tier (from fan-in/out) selects how
+  // far in call-distance to scope and how many neighbours to keep; neighbours are
+  // then ranked by nearest call-distance rather than taken in arbitrary edge order,
+  // so a tightly-coupled chain two hops away can outrank a weakly-resolved direct
+  // neighbour (see analyzer spec: MinimalContextScopedByNearestDistance).
   const riskLevel: 'high' | 'medium' | 'low' =
     target.fanIn >= 30 || target.fanOut >= 15 ? 'high' :
     target.fanIn >= 15 || target.fanOut >= 8  ? 'medium' : 'low';
-  const callerLimit = riskLevel === 'high' ? 24 : riskLevel === 'medium' ? 18 : 12;
-  const calleeLimit = riskLevel === 'high' ? 24 : riskLevel === 'medium' ? 18 : 12;
+  const distanceBudget = riskLevel === 'high' ? 4 : riskLevel === 'medium' ? 3 : 2;
+  const kCap = riskLevel === 'high' ? 24 : riskLevel === 'medium' ? 18 : 12;
 
-  // Direct callers and callees from calls edges
   const callsEdges = cg.edges.filter(e => !e.kind || e.kind === 'calls');
 
   const sig = (n: (typeof cg.nodes)[0]) =>
     n.signature ?? n.name + (n.isExternal ? ' [external]' : '');
 
-  // Build per-callee edge list to get callType
-  const edgesForCallee = new Map<string, Array<{ callerId: string; callType?: string }>>();
-  const edgesForCaller = new Map<string, Array<{ calleeId: string; callType?: string }>>();
-  for (const e of callsEdges) {
-    if (!edgesForCallee.has(e.calleeId)) edgesForCallee.set(e.calleeId, []);
-    edgesForCallee.get(e.calleeId)!.push({ callerId: e.callerId, callType: e.callType });
-    if (!edgesForCaller.has(e.callerId)) edgesForCaller.set(e.callerId, []);
-    edgesForCaller.get(e.callerId)!.push({ calleeId: e.calleeId, callType: e.callType });
-  }
+  // callType of each direct call edge, keyed (callerId → calleeId) so the last hop
+  // on a scoped path can report how that neighbour is reached.
+  const callTypeByEdge = new Map<string, string>();
+  for (const e of callsEdges) callTypeByEdge.set(`${e.callerId} ${e.calleeId}`, e.callType ?? 'direct');
 
-  const callerEdges = edgesForCallee.get(target.id) ?? [];
-  const calleeEdgeList = edgesForCaller.get(target.id) ?? [];
+  const { forward, backward } = buildWeightedAdjacency(cg);
 
-  const callerIds = callerEdges.map(e => e.callerId);
-  const calleeIds = calleeEdgeList.map(e => e.calleeId);
-
-  const callers = [...new Set(callerIds)]
-    .map(id => {
+  // Callers: nearest-by-call-distance over the backward (callee→caller) adjacency.
+  const callers = [...weightedBfs([target.id], backward, distanceBudget).entries()]
+    .filter(([id]) => id !== target.id)
+    .map(([id, r]) => {
       const n = nodeMap.get(id);
       if (!n || n.isExternal) return null;
-      const edge = callerEdges.find(e => e.callerId === id);
-      return { name: n.name, file: relative(absDir, n.filePath), sig: sig(n), callType: edge?.callType ?? 'direct', isExternal: false };
+      const callType = callTypeByEdge.get(`${id} ${r.predecessor}`) ?? 'direct';
+      return { name: n.name, file: relative(absDir, n.filePath), sig: sig(n), callType, isExternal: false, distance: r.distance, hops: r.hops, _rank: n.fanIn };
     })
     .filter((n): n is NonNullable<typeof n> => !!n)
-    .slice(0, callerLimit);
+    .sort((a, b) => a.distance - b.distance || b._rank - a._rank)
+    .slice(0, kCap)
+    .map(({ _rank, ...rest }) => rest);
 
-  const callees = [...new Set(calleeIds)]
-    .map(id => {
+  // Callees: nearest-by-call-distance over the forward (caller→callee) adjacency,
+  // plus direct external callees (synthetic leaves the weighted pass skips) so the
+  // function's external dependencies (fetch, db, fs) stay visible.
+  const internalCallees = [...weightedBfs([target.id], forward, distanceBudget).entries()]
+    .filter(([id]) => id !== target.id)
+    .map(([id, r]) => {
       const n = nodeMap.get(id);
-      if (!n) return null;
-      const edge = calleeEdgeList.find(e => e.calleeId === id);
-      return {
-        name: n.isExternal ? `[external] ${n.name}` : n.name,
-        file: n.isExternal ? 'external' : relative(absDir, n.filePath),
-        sig: sig(n),
-        callType: edge?.callType ?? 'direct',
-        isExternal: n.isExternal ?? false,
-        kind: n.externalKind,
-      };
+      if (!n || n.isExternal) return null;
+      const callType = callTypeByEdge.get(`${r.predecessor} ${id}`) ?? 'direct';
+      return { name: n.name, file: relative(absDir, n.filePath), sig: sig(n), callType, isExternal: false, kind: undefined as string | undefined, distance: r.distance, hops: r.hops, _rank: n.fanOut };
     })
-    .filter((n): n is NonNullable<typeof n> => !!n)
-    .slice(0, calleeLimit);
+    .filter((n): n is NonNullable<typeof n> => !!n);
+
+  const seenExternal = new Set<string>();
+  const externalCallees = callsEdges
+    .filter(e => e.callerId === target.id)
+    .map(e => nodeMap.get(e.calleeId))
+    .filter((n): n is NonNullable<typeof n> => !!n && !!n.isExternal)
+    .filter(n => !seenExternal.has(n.id) && (seenExternal.add(n.id), true))
+    .map(n => ({
+      name: `[external] ${n.name}`, file: 'external', sig: sig(n),
+      callType: callTypeByEdge.get(`${target.id} ${n.id}`) ?? 'direct',
+      isExternal: true, kind: n.externalKind as string | undefined, distance: 1, hops: 1, _rank: 0,
+    }));
+
+  const callees = [...internalCallees, ...externalCallees]
+    .sort((a, b) => a.distance - b.distance || b._rank - a._rank)
+    .slice(0, kCap)
+    .map(({ _rank, ...rest }) => rest);
 
   // Test coverage — distinguish import-based vs call-based tracing
   const seenTestNames = new Set<string>();
