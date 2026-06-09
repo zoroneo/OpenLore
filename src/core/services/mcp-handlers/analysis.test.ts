@@ -902,22 +902,25 @@ describe('handleGetMinimalContext', () => {
     expect(result.testedBy[0].confidence).toBe('imported');
   });
 
-  it('scopes callers by nearest call-distance: a strong 2-hop chain beats a weak direct caller', async () => {
+  it('ranks callers by nearest call-distance, surfaces a strong 2-hop chain, keeps weak direct, bounds far-weak', async () => {
     const mk = (id: string, fanIn = 0, fanOut = 0) => ({
       id, name: id.split('::')[1], filePath: `${tmpDir}/${id.split('::')[0]}`,
       signature: `${id.split('::')[1]}()`, language: 'typescript',
       fanIn, fanOut, startLine: 1, endLine: 3, isExternal: false, isTest: false,
     });
-    // weakCaller →(name_only,3)→ target   [direct but weak: distance 3 > low budget 2 → dropped]
-    // strongCaller →(import,1)→ mid →(import,1)→ target   [2 hops, distance 2 ≤ budget → kept]
+    // mid          →(import,1)→ target                 [direct strong:  distance 1]
+    // strongCaller →(import,1)→ mid →(import,1)→ target[2-hop strong:   distance 2]
+    // weakCaller   →(name_only,3)→ target              [direct weak:    distance 3, retained — floors at 3]
+    // farWeak      →(name_only,3)→ strongCaller        [3-hop weak:     distance 5 > low budget 3 → excluded]
     const target = mk('src/t.ts::target', /* fanIn */ 2);
     readCachedContext.mockResolvedValue({
       callGraph: makeCallGraph({
-        nodes: [target, mk('src/w.ts::weakCaller'), mk('src/m.ts::mid'), mk('src/s.ts::strongCaller')],
+        nodes: [target, mk('src/w.ts::weakCaller'), mk('src/m.ts::mid'), mk('src/s.ts::strongCaller'), mk('src/f.ts::farWeak')],
         edges: [
-          { callerId: 'src/w.ts::weakCaller', calleeId: 'src/t.ts::target', calleeName: 'target', confidence: 'name_only', kind: 'calls' },
           { callerId: 'src/m.ts::mid', calleeId: 'src/t.ts::target', calleeName: 'target', confidence: 'import', kind: 'calls' },
           { callerId: 'src/s.ts::strongCaller', calleeId: 'src/m.ts::mid', calleeName: 'mid', confidence: 'import', kind: 'calls' },
+          { callerId: 'src/w.ts::weakCaller', calleeId: 'src/t.ts::target', calleeName: 'target', confidence: 'name_only', kind: 'calls' },
+          { callerId: 'src/f.ts::farWeak', calleeId: 'src/s.ts::strongCaller', calleeName: 'strongCaller', confidence: 'name_only', kind: 'calls' },
         ],
       }),
     });
@@ -926,15 +929,38 @@ describe('handleGetMinimalContext', () => {
       callers: Array<{ name: string; distance: number; hops: number }>;
     };
     const names = result.callers.map(c => c.name);
-    expect(names).toContain('mid');
-    expect(names).toContain('strongCaller'); // 2 hops away, distance 2, within budget
-    expect(names).not.toContain('weakCaller'); // direct but distance 3 > budget 2
+    // nearest-first ordering: direct strong, then 2-hop strong, then weak direct
+    expect(names).toEqual(['mid', 'strongCaller', 'weakCaller']);
+    expect(names).not.toContain('farWeak'); // budget still bounds far weakly-resolved chains
+    // no regression: the weakly-resolved direct caller is retained, not dropped
+    expect(names).toContain('weakCaller');
     // each neighbour carries its provenance
     for (const c of result.callers) {
       expect(typeof c.distance).toBe('number');
       expect(typeof c.hops).toBe('number');
     }
     expect(result.callers.find(c => c.name === 'strongCaller')!.hops).toBe(2);
+    expect(result.callers.find(c => c.name === 'weakCaller')!.distance).toBe(3);
+  });
+
+  it('does not return empty callers for a low-risk function whose only direct caller is weakly resolved', async () => {
+    const mk = (id: string) => ({
+      id, name: id.split('::')[1], filePath: `${tmpDir}/${id.split('::')[0]}`,
+      signature: `${id.split('::')[1]}()`, language: 'typescript',
+      fanIn: 1, fanOut: 0, startLine: 1, endLine: 3, isExternal: false, isTest: false,
+    });
+    const target = mk('src/t.ts::soloTarget');
+    readCachedContext.mockResolvedValue({
+      callGraph: makeCallGraph({
+        nodes: [target, mk('src/c.ts::onlyCaller')],
+        edges: [
+          { callerId: 'src/c.ts::onlyCaller', calleeId: 'src/t.ts::soloTarget', calleeName: 'soloTarget', confidence: 'name_only', kind: 'calls' },
+        ],
+      }),
+    });
+    const { handleGetMinimalContext } = await import('./analysis.js');
+    const result = await handleGetMinimalContext(tmpDir, 'soloTarget') as { callers: Array<{ name: string }> };
+    expect(result.callers.map(c => c.name)).toEqual(['onlyCaller']);
   });
 });
 

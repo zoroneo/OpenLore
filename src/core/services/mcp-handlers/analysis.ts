@@ -926,15 +926,17 @@ export async function handleGetMinimalContext(
   if (candidates.length === 0) return { error: `Function "${functionName}" not found. Run analyze_codebase first.` };
   const target = candidates[0];
 
-  // Risk tier → distance budget + k cap. The tier (from fan-in/out) selects how
-  // far in call-distance to scope and how many neighbours to keep; neighbours are
-  // then ranked by nearest call-distance rather than taken in arbitrary edge order,
-  // so a tightly-coupled chain two hops away can outrank a weakly-resolved direct
-  // neighbour (see analyzer spec: MinimalContextScopedByNearestDistance).
+  // Risk tier → distance budget + k cap. Neighbours are ranked by nearest
+  // call-distance (not arbitrary edge order), so a tightly-coupled chain two hops
+  // away can outrank a far neighbour, and when there are more than k the weakest/
+  // farthest are dropped first. The budget floors at the maximum direct-edge cost
+  // (`name_only` = 3) so a function's DIRECT neighbours are never dropped merely
+  // because their resolution is weak; the tier governs only how far past direct a
+  // chain is pulled in (see analyzer spec: MinimalContextScopedByNearestDistance).
   const riskLevel: 'high' | 'medium' | 'low' =
     target.fanIn >= 30 || target.fanOut >= 15 ? 'high' :
     target.fanIn >= 15 || target.fanOut >= 8  ? 'medium' : 'low';
-  const distanceBudget = riskLevel === 'high' ? 4 : riskLevel === 'medium' ? 3 : 2;
+  const distanceBudget = riskLevel === 'high' ? 6 : riskLevel === 'medium' ? 4 : 3;
   const kCap = riskLevel === 'high' ? 24 : riskLevel === 'medium' ? 18 : 12;
 
   const callsEdges = cg.edges.filter(e => !e.kind || e.kind === 'calls');
