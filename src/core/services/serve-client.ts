@@ -98,7 +98,7 @@ export async function ensureServeDaemon(
     const child = spawn(
       process.execPath,
       [cli, ...serveSpawnArgs(directory)],
-      { cwd: directory, stdio: 'ignore', detached: true },
+      { cwd: directory, stdio: 'ignore', detached: true, windowsHide: true },
     );
     child.on('error', () => {}); // swallow — caller falls back to in-process
     child.unref();
