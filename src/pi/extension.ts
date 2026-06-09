@@ -28,12 +28,12 @@ import type {
   SessionStartEvent,
 } from '@earendil-works/pi-coding-agent';
 import { StringEnum } from '@earendil-works/pi-ai';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { Type, type TObject, type TSchema } from 'typebox';
 
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 
 // ── Config types & helpers ────────────────────────────────────────────────────
 
@@ -131,149 +131,162 @@ async function fetchModels(baseUrl: string, apiKey?: string): Promise<string[] |
 
 // ── Config wizard ─────────────────────────────────────────────────────────────
 
-async function configureGeneration(
-  ui: ExtensionContext['ui'],
-  existing?: OpenLoreConfig['generation'],
-): Promise<OpenLoreConfig['generation']> {
-  const existingProvider = existing?.provider;
-  const providerList = existingProvider
-    ? [`${existingProvider} *`, ...PROVIDERS.filter((p) => p !== existingProvider)]
-    : PROVIDERS;
-  const selectedProvider = await ui.select('LLM provider', providerList) ?? providerList[0];
-  const provider = stripMarker(selectedProvider);
+const FIELD_PAD = 16; // must be >= longest label length ("Max files" = 9)
+const SEP_WIDTH = 36;
 
-  let baseUrl: string | undefined = existing?.openaiCompatBaseUrl;
-  let skipSslVerify = existing?.skipSslVerify ?? false;
-  let apiKey: string | undefined;
-
-  if (provider === 'openai-compat') {
-    const urlTitle = baseUrl ? `Base URL (current: ${baseUrl})` : 'Base URL';
-    const rawUrl = await ui.input(urlTitle, 'http://localhost:11434');
-    baseUrl = rawUrl || baseUrl || '';
-    skipSslVerify = await ui.confirm(
-      'Skip SSL verification?',
-      'Only enable for local servers with self-signed certificates (e.g. Ollama on localhost). Do NOT enable for remote/cloud endpoints.',
-    );
-  }
-
-  if (!SYSTEM_AUTH_PROVIDERS.has(provider) && PROVIDER_ENV_VARS[provider]) {
-    apiKey = process.env[PROVIDER_ENV_VARS[provider]];
-    if (!apiKey) {
-      ui.notify(`API key: set ${PROVIDER_ENV_VARS[provider]} in your shell environment`, 'warning');
-    }
-  }
-
-  let model: string;
-  const apiBase = provider === 'openai' ? 'https://api.openai.com' : (baseUrl ?? '');
-  const models = apiBase ? await fetchModels(apiBase, apiKey) : null;
-
-  if (models && models.length > 0) {
-    const currentModel = existing?.model;
-    const modelList = currentModel && models.includes(currentModel)
-      ? [`${currentModel} *`, ...models.filter((m) => m !== currentModel)]
-      : models;
-    const selectedModel = await ui.select('Model', modelList) ?? modelList[0];
-    model = stripMarker(selectedModel);
-  } else {
-    const existingModel = existing?.model ?? PROVIDER_MODEL_DEFAULTS[provider] ?? '';
-    const modelTitle = existing?.model ? `Model (current: ${existing.model})` : 'Model';
-    model = (await ui.input(modelTitle, PROVIDER_MODEL_DEFAULTS[provider] ?? '')) || existingModel;
-  }
-
-  return {
-    provider,
-    model,
-    ...(baseUrl ? { openaiCompatBaseUrl: baseUrl } : {}),
-    ...(skipSslVerify ? { skipSslVerify: true } : {}),
-  };
+function fmtField(label: string, value: string): string {
+  return `${label.padEnd(FIELD_PAD)}${value}`;
 }
 
-async function configureEmbedding(
-  ui: ExtensionContext['ui'],
-  existing?: OpenLoreConfig['embedding'],
-): Promise<OpenLoreConfig['embedding'] | undefined> {
-  const embedUrl = (await ui.input(
-    existing?.baseUrl ? `Embedding base URL (current: ${existing.baseUrl})` : 'Embedding base URL',
-    existing?.baseUrl ?? 'http://localhost:11434',
-  )) || existing?.baseUrl || '';
-  if (!embedUrl) return undefined;
-
-  const embedSsl = await ui.confirm(
-    'Skip SSL verification for embedding?',
-    'Only enable for local servers with self-signed certificates (e.g. Ollama on localhost). Do NOT enable for remote/cloud endpoints.',
-  );
-  const embedModels = await fetchModels(embedUrl);
-  let embedModel: string;
-  if (embedModels && embedModels.length > 0) {
-    const currentEmbedModel = existing?.model;
-    const embedModelList = currentEmbedModel && embedModels.includes(currentEmbedModel)
-      ? [`${currentEmbedModel} *`, ...embedModels.filter((m) => m !== currentEmbedModel)]
-      : embedModels;
-    const selectedEmbedModel = await ui.select('Embedding model', embedModelList) ?? embedModelList[0];
-    embedModel = stripMarker(selectedEmbedModel);
-  } else {
-    const existingModel = existing?.model ?? '';
-    embedModel = (await ui.input(
-      existing?.model ? `Embedding model (current: ${existing.model})` : 'Embedding model',
-      '',
-    )) || existingModel;
-  }
-  const embedApiKey = process.env['OPENLORE_EMBEDDING_API_KEY'];
-  if (!embedApiKey) {
-    ui.notify('Embedding API key: set OPENLORE_EMBEDDING_API_KEY in your shell environment (leave unset for Ollama/local endpoints)', 'info');
-  }
-
-  return {
-    baseUrl: embedUrl,
-    model: embedModel,
-    ...(embedSsl ? { skipSslVerify: true } : {}),
-  };
+function fmtSep(title?: string): string {
+  if (!title) return '─'.repeat(SEP_WIDTH);
+  const padded = ` ${title} `;
+  const remaining = Math.max(4, SEP_WIDTH - padded.length);
+  const left = Math.floor(remaining / 2);
+  return '─'.repeat(left) + padded + '─'.repeat(remaining - left);
 }
+
+const SEP_GENERATION = fmtSep('Generation (LLM)');
+const SEP_EMBEDDING  = fmtSep('Embedding (retrieval)');
+const SEP_ANALYSIS   = fmtSep('Analysis');
+const SEP_DIVIDER    = fmtSep();
+
 
 async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig | null): Promise<void> {
   const { ui } = ctx;
 
-  // Mutable working copy — sections update independently until "Save".
-  let generation = existing?.generation ?? {};
+  let generation: OpenLoreConfig['generation'] = existing?.generation ?? {};
   let embedding = existing?.embedding;
   let maxFiles = existing?.analysis?.maxFiles ?? 500;
+  const prevProvider = existing?.generation?.provider;
+  const prevModel = existing?.generation?.model;
 
-  // Pi never persists API keys (they belong in env vars). If an older config
-  // written by the CLI carried an embedding apiKey, drop it on save and tell the
-  // user — keeps behaviour consistent whether or not they edit the embedding.
   if (embedding?.apiKey) {
     embedding = { baseUrl: embedding.baseUrl, model: embedding.model, ...(embedding.skipSslVerify ? { skipSslVerify: true } : {}) };
-    ui.notify('Removed stored embedding API key from config — set OPENLORE_EMBEDDING_API_KEY in your shell instead.', 'warning');
+    ui.notify('Removed stored embedding API key — set OPENLORE_EMBEDDING_API_KEY in your shell instead.', 'warning');
   }
 
-  // Menu loop — user picks which section to edit, repeats until Done.
   while (true) {
-    const genLabel = generation.provider
-      ? `Generation  ${generation.provider} · ${generation.model ?? '—'}${generation.openaiCompatBaseUrl ? ' · ' + generation.openaiCompatBaseUrl : ''}`
-      : 'Generation  (not configured)';
-    const embedLabel = embedding
-      ? `Embedding   ${embedding.baseUrl} · ${embedding.model || '—'}`
-      : 'Embedding   (not configured)';
-    const analysisLabel = `Analysis    maxFiles=${maxFiles}`;
+    // Build menu as parallel (label, handler) pairs so duplicate labels (Model,
+    // Skip SSL appear in both sections) dispatch to the correct handler by index.
+    type Handler = (() => Promise<void>) | undefined;
+    const menu: Array<{ label: string; handler: Handler }> = [];
+    const sep  = (s: string)  => menu.push({ label: s, handler: undefined });
+    const row  = (label: string, value: string, handler: () => Promise<void>) =>
+      menu.push({ label: fmtField(label, value), handler });
 
-    const choice = await ui.select('openlore config — what to change?', [
-      genLabel,
-      embedLabel,
-      analysisLabel,
-      'Save & close',
-    ]);
+    sep(SEP_GENERATION);
+    row('Provider', generation.provider ?? '—', async () => {
+      const list = generation.provider
+        ? [`${generation.provider} *`, ...PROVIDERS.filter((p) => p !== generation.provider)]
+        : PROVIDERS;
+      const sel = await ui.select('Provider', list);
+      if (sel) {
+        const next = stripMarker(sel);
+        if (next !== generation.provider) {
+          generation = { provider: next };
+          if (!SYSTEM_AUTH_PROVIDERS.has(next) && PROVIDER_ENV_VARS[next] && !process.env[PROVIDER_ENV_VARS[next]]) {
+            ui.notify(`Set ${PROVIDER_ENV_VARS[next]} in your shell environment`, 'warning');
+          }
+        }
+      }
+    });
 
-    if (!choice) return; // escaped — discard all changes
-    if (choice === 'Save & close') break;
-
-    if (choice === genLabel) {
-      generation = await configureGeneration(ui, generation);
-    } else if (choice === embedLabel) {
-      embedding = await configureEmbedding(ui, embedding);
-    } else if (choice === analysisLabel) {
-      const raw = await ui.input(`Max files to analyze (current: ${maxFiles})`, '500');
-      maxFiles = parseInt(raw ?? '', 10) || maxFiles;
+    if (generation.provider) {
+      row('Model', generation.model ?? '—', async () => {
+        const apiBase = generation.provider === 'openai' ? 'https://api.openai.com' : (generation.openaiCompatBaseUrl ?? '');
+        const apiKey = generation.provider ? process.env[PROVIDER_ENV_VARS[generation.provider] ?? ''] : undefined;
+        const models = apiBase ? await fetchModels(apiBase, apiKey) : null;
+        if (models && models.length > 0) {
+          const modelList = generation.model && models.includes(generation.model)
+            ? [`${generation.model} *`, ...models.filter((m) => m !== generation.model)]
+            : models;
+          const sel = await ui.select('Model', modelList);
+          if (sel) generation = { ...generation, model: stripMarker(sel) };
+        } else {
+          const input = await ui.input(
+            generation.model ? `Model (current: ${generation.model})` : 'Model',
+            PROVIDER_MODEL_DEFAULTS[generation.provider ?? ''] ?? '',
+          );
+          if (input) generation = { ...generation, model: input };
+        }
+      });
     }
+
+    if (generation.provider === 'openai-compat') {
+      row('Base URL', generation.openaiCompatBaseUrl ?? '—', async () => {
+        const input = await ui.input(
+          generation.openaiCompatBaseUrl ? `Base URL (current: ${generation.openaiCompatBaseUrl})` : 'Base URL',
+          'http://localhost:11434',
+        );
+        if (input) generation = { ...generation, openaiCompatBaseUrl: input };
+      });
+      row('Skip SSL', generation.skipSslVerify ? 'yes' : 'no', async () => {
+        generation = { ...generation, skipSslVerify: await ui.confirm(
+          'Skip SSL verification?',
+          'Only enable for local servers with self-signed certificates (e.g. Ollama on localhost). Do NOT enable for remote/cloud endpoints.',
+        ) };
+      });
+    }
+
+    sep(SEP_EMBEDDING);
+    row('URL', embedding?.baseUrl ?? '—', async () => {
+      const input = await ui.input(
+        embedding?.baseUrl ? `Embedding URL (current: ${embedding.baseUrl})` : 'Embedding URL (leave empty to skip)',
+        embedding?.baseUrl ?? 'http://localhost:11434',
+      );
+      if (input) {
+        embedding = { baseUrl: input, model: embedding?.model ?? '', ...(embedding?.skipSslVerify ? { skipSslVerify: true } : {}) };
+        if (!process.env['OPENLORE_EMBEDDING_API_KEY']) {
+          ui.notify('Set OPENLORE_EMBEDDING_API_KEY in your shell (leave unset for Ollama/local endpoints)', 'info');
+        }
+      }
+    });
+
+    if (embedding?.baseUrl) {
+      row('Model', embedding.model || '(none)', async () => {
+        const models = embedding?.baseUrl ? await fetchModels(embedding.baseUrl) : null;
+        if (models && models.length > 0) {
+          const cur = embedding?.model;
+          const modelList = cur && models.includes(cur)
+            ? [`${cur} *`, ...models.filter((m) => m !== cur)]
+            : models;
+          const sel = await ui.select('Embedding model', modelList);
+          if (sel && embedding) embedding = { ...embedding, model: stripMarker(sel) };
+        } else {
+          const input = await ui.input(
+            embedding?.model ? `Model (current: ${embedding.model})` : 'Model',
+            '',
+          );
+          if (input && embedding) embedding = { ...embedding, model: input };
+        }
+      });
+      row('Skip SSL', embedding.skipSslVerify ? 'yes' : 'no', async () => {
+        if (embedding) embedding = { ...embedding, skipSslVerify: await ui.confirm(
+          'Skip SSL for embedding?',
+          'Only enable for local servers with self-signed certificates (e.g. Ollama on localhost). Do NOT enable for remote/cloud endpoints.',
+        ) };
+      });
+      menu.push({ label: '✕ Remove embedding', handler: async () => { embedding = undefined; } });
+    }
+
+    sep(SEP_ANALYSIS);
+    row('Max files', String(maxFiles), async () => {
+      const raw = await ui.input(`Max files to analyze (current: ${maxFiles})`, String(maxFiles));
+      maxFiles = parseInt(raw ?? '', 10) || maxFiles;
+    });
+    sep(SEP_DIVIDER);
+    menu.push({ label: '✓ Save & close',    handler: undefined });
+    menu.push({ label: '✕ Discard & close', handler: undefined });
+
+    const labels = menu.map((m) => m.label);
+    const choice = await ui.select('openlore config', labels);
+
+    if (!choice || choice === '✕ Discard & close') return;
+    if (choice === '✓ Save & close') break;
+
+    const idx = labels.indexOf(choice);
+    if (idx !== -1) await menu[idx].handler?.();
   }
 
   const config: OpenLoreConfig = {
@@ -294,33 +307,32 @@ async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig 
   await writeConfig(ctx.cwd, config);
   ui.notify('Configuration saved.', 'info');
 
-  const runNow = await ui.confirm(
-    'Run openlore analyze now?',
-    'Builds the structural index required for navigation tools (~30s–2min depending on codebase size)',
-  );
-  if (runNow) {
-    ui.notify('Running openlore analyze…', 'info');
-    const [exitCode, errText] = await new Promise<[number, string]>((resolve) => {
-      // Try `openlore` in PATH; fall back to `npx openlore` if not found.
-      // On Windows, npm installs .cmd wrappers — shell: true is required for
-      // Node's spawn() to resolve them without an explicit .cmd suffix.
-      const isWin = process.platform === 'win32';
-      const trySpawn = (cmd: string, args: string[]) => new Promise<[number, string] | null>((res) => {
-        const chunks: Buffer[] = [];
-        const proc = spawn(cmd, args, { cwd: ctx.cwd, stdio: ['ignore', 'ignore', 'pipe'], shell: isWin });
-        proc.stderr?.on('data', (d: Buffer) => chunks.push(d));
-        proc.on('close', (code) => res([code ?? 1, Buffer.concat(chunks).toString().trim()]));
-        proc.on('error', () => res(null));
+  const generationChanged = generation.provider !== prevProvider || generation.model !== prevModel;
+  if (generationChanged) {
+    const runNow = await ui.confirm(
+      'Run openlore analyze now?',
+      'Builds the structural index required for navigation tools (~30s–2min depending on codebase size)',
+    );
+    if (runNow) {
+      ui.notify('Running openlore analyze…', 'info');
+      const [exitCode, errText] = await new Promise<[number, string]>((resolve) => {
+        const trySpawn = (cmd: string, args: string[]) => new Promise<[number, string] | null>((res) => {
+          const chunks: Buffer[] = [];
+          const proc = spawn(cmd, args, { cwd: ctx.cwd, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, ...(process.platform === 'win32' ? { shell: true } : {}) });
+          proc.stderr?.on('data', (d: Buffer) => chunks.push(d));
+          proc.on('close', (code) => res([code ?? 1, Buffer.concat(chunks).toString().trim()]));
+          proc.on('error', () => res(null));
+        });
+        trySpawn('openlore', ['analyze']).then((r) => {
+          if (r !== null) return resolve(r);
+          return trySpawn('npx', ['openlore', 'analyze']).then((r2) => resolve(r2 ?? [1, 'openlore not found in PATH']));
+        });
       });
-      trySpawn('openlore', ['analyze']).then((r) => {
-        if (r !== null) return resolve(r);
-        return trySpawn('npx', ['openlore', 'analyze']).then((r2) => resolve(r2 ?? [1, 'openlore not found in PATH']));
-      });
-    });
-    if (exitCode === 0) {
-      ui.notify('Analysis complete — openlore tools are ready.', 'info');
-    } else {
-      ui.notify(`openlore analyze failed — run it manually. ${errText ? '(' + errText.slice(0, 120) + ')' : ''}`.trim(), 'error');
+      if (exitCode === 0) {
+        ui.notify('Analysis complete — openlore tools are ready.', 'info');
+      } else {
+        ui.notify(`openlore analyze failed — run it manually. ${errText ? '(' + errText.slice(0, 120) + ')' : ''}`.trim(), 'error');
+      }
     }
   }
 }
@@ -353,9 +365,7 @@ async function ensureDaemon(cwd: string): Promise<Daemon | null> {
   const existing = await readDescriptor(cwd);
   if (existing && (await healthy(existing))) return { baseUrl: `http://${existing.host}:${existing.port}`, token: existing.token };
   try {
-    // On Windows, npm installs .cmd wrappers — shell: true lets spawn()
-    // resolve them without an explicit suffix.
-    spawn('openlore', ['serve', '--directory', cwd], { detached: true, stdio: 'ignore', shell: process.platform === 'win32' }).unref();
+    spawn('openlore', ['serve', '--directory', cwd], { detached: true, stdio: 'ignore', windowsHide: true, ...(process.platform === 'win32' ? { shell: true } : {}) }).unref();
   } catch { return null; }
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -579,5 +589,5 @@ export default function openlore(pi: ExtensionAPI): void {
 
 export const installPaths = {
   project: (cwd: string) => join(cwd, '.pi', 'extensions', 'openlore.js'),
-  global: () => join(getAgentDir(), 'extensions', 'openlore.js'),
+  global: () => join(homedir(), '.pi', 'agent', 'extensions', 'openlore.js'),
 };
