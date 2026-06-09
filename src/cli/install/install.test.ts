@@ -160,6 +160,15 @@ describe('openlore install (end-to-end)', () => {
     expect(await exists(join(dir, 'AGENTS.md'))).toBe(false);
   });
 
+  it('--uninstall removes CLAUDE.md when install created it (no stray empty file)', async () => {
+    // No pre-existing CLAUDE.md → install creates it OpenLore-only.
+    await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
+    expect(await exists(join(dir, 'CLAUDE.md'))).toBe(true);
+    await runInstall({ cwd: dir, agent: 'claude-code', uninstall: true });
+    // Must be deleted, not left behind as an empty file.
+    expect(await exists(join(dir, 'CLAUDE.md'))).toBe(false);
+  });
+
   it('preserves user-defined SessionStart hooks alongside ours', async () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
     await mkdir(join(dir, '.claude'), { recursive: true });

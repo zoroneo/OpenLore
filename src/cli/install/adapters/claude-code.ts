@@ -179,7 +179,11 @@ export const claudeCodeAdapter: Adapter = {
   },
 
   async uninstall(ctx: ApplyContext): Promise<ApplyResult> {
-    const md = await uninstallMarkdownBlock(ctx, MD_FILE, false);
+    // deleteIfBlockOnly: remove CLAUDE.md when stripping our block empties it
+    // (i.e. install created it). A CLAUDE.md with the user's own content is left
+    // in place — only the OpenLore block is removed — so this never clobbers user
+    // notes; it just avoids leaving a stray empty file behind.
+    const md = await uninstallMarkdownBlock(ctx, MD_FILE, true);
 
     // Strip mcpServers.openlore from .mcp.json; delete the file if it was ours.
     const mcpPath = join(ctx.root, MCP_PATH);
