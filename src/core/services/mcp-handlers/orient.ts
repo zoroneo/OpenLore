@@ -536,7 +536,7 @@ export async function handleOrient(
   // runs in full mode only (lean skips the work).
   const ORIENT_LANDMARK_MAX_DISTANCE = 4;
   const ORIENT_LANDMARK_LIMIT = 6;
-  let landmarks: Array<{ name: string; file: string; distance: number; hops: number; signals: unknown[] }> | undefined;
+  let landmarks: Array<{ id: string; name: string; file: string; distance: number; hops: number; signals: unknown[] }> | undefined;
   if (!lean && llmCtx?.callGraph) {
     try {
       const cg = llmCtx.callGraph as SerializedCallGraph;
@@ -582,7 +582,7 @@ export async function handleOrient(
           .slice(0, ORIENT_LANDMARK_LIMIT);
         if (ranked.length > 0) {
           landmarks = ranked.map(({ lm, distance, hops }) => ({
-            name: lm.name, file: relative(absDir, lm.filePath), distance, hops, signals: lm.signals,
+            id: lm.id, name: lm.name, file: relative(absDir, lm.filePath), distance, hops, signals: lm.signals,
           }));
         }
       }
@@ -596,8 +596,15 @@ export async function handleOrient(
   if (relevantFunctions.some(f => f.isHub)) _suggested.push('analyze_impact');
   if (insertionPoints.length > 0) _suggested.push('get_subgraph');
   if (specDomains.length > 0) _suggested.push('get_spec');
+  // Landmarks already surface the task's structural anchors; suggest get_landmarks
+  // when the matches are themselves anchors, so the agent can pull the whole set.
+  if (landmarks !== undefined && landmarks.length > 0) _suggested.push('get_landmarks');
   const _taskLow = task.toLowerCase();
   if (/\b(debug|trace|flow|path|reach|call.?chain)\b/.test(_taskLow)) _suggested.push('trace_execution_path');
+  // Goal-conditioned routing: "how does A get to B", by name/role/landmark.
+  if (/\b(path|route|reach|get from|how does|connect|flow (in|to|from))\b/.test(_taskLow)) _suggested.push('find_path');
+  // Coarse-to-fine orientation: the lay of the land and where regions connect.
+  if (/\b(architect|overview|structure|lay of the land|map|navigat|regions?|modules?|organi[sz])\b/.test(_taskLow)) _suggested.push('get_map');
   if (/\b(schema|database|db|model|table|entity|migration)\b/.test(_taskLow)) _suggested.push('get_schema_inventory');
   if (/\b(route|endpoint|api|http|rest|request|handler)\b/.test(_taskLow)) _suggested.push('get_route_inventory');
   if (/\b(test|coverage|spec.?driven)\b/.test(_taskLow)) _suggested.push('get_test_coverage');

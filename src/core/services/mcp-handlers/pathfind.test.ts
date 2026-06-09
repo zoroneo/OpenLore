@@ -131,6 +131,13 @@ describe('handleFindPath', () => {
     mockCtx.mockResolvedValue({ callGraph: cg } as never);
     expect((await handleFindPath('/p', 'role:nope', 'main') as { error: string }).error).toMatch(/Unknown "from" selector/);
   });
+
+  it('returns a clear note when from and to are the same endpoint (no traversal needed)', async () => {
+    mockCtx.mockResolvedValue({ callGraph: cg } as never);
+    const r = await handleFindPath('/p', 'main', 'main') as { path: null; note: string };
+    expect(r.path).toBeNull();
+    expect(r.note).toMatch(/same function/);
+  });
 });
 
 describe('find_path tool surface', () => {

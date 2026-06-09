@@ -209,6 +209,17 @@ describe('handleOrient', () => {
     expect('landmarks' in lean).toBe(false); // lean omits the enrichment
   });
 
+  it('suggests the navigation tools by task intent (find_path / get_map)', async () => {
+    vi.mocked(VectorIndex.exists).mockReturnValue(true);
+    vi.mocked(VectorIndex.search).mockResolvedValue([makeSearchResult({ name: 'doFoo', filePath: 'src/foo.ts' })]);
+
+    const route = await handleOrient('/p', 'how does the request route reach the db writer', 3) as { suggestedTools: string[] };
+    expect(route.suggestedTools).toContain('find_path');
+
+    const map = await handleOrient('/p', 'give me an overview of the architecture and how modules connect', 3) as { suggestedTools: string[] };
+    expect(map.suggestedTools).toContain('get_map');
+  });
+
   it('lean mode skips the enrichment WORK, not just the payload (Spec 27 deepened)', async () => {
     vi.mocked(VectorIndex.exists).mockReturnValue(true);
     vi.mocked(VectorIndex.search).mockResolvedValue([

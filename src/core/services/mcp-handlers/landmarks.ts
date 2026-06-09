@@ -79,6 +79,7 @@ export async function handleGetLandmarks(
     labelCounts,
     orderedBy: 'fanIn (single structural metric, not a salience score)',
     landmarks: landmarks.slice(0, limit).map(l => ({
+      id: l.id, // pass to find_path as landmark:<id> to route to/from this anchor
       name: l.name,
       file: relative(absDir, l.filePath),
       signals: l.signals,

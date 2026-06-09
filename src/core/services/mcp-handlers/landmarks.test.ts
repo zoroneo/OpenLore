@@ -49,7 +49,7 @@ describe('handleGetLandmarks', () => {
 
     const r = await handleGetLandmarks('/p') as {
       total: number; labelCounts: Record<string, number>; orderedBy: string;
-      landmarks: Array<{ name: string; file: string; signals: Array<{ label: string; evidence: unknown }> }>;
+      landmarks: Array<{ id: string; name: string; file: string; signals: Array<{ label: string; evidence: unknown }> }>;
     };
     const names = r.landmarks.map(l => l.name);
     expect(names).toEqual(expect.arrayContaining(['hubFn', 'orchestrate', 'main']));
@@ -58,6 +58,8 @@ describe('handleGetLandmarks', () => {
     expect(r.labelCounts.hub).toBe(1);
     expect(r.labelCounts.chokepoint).toBe(1); // hub ∧ ¬orchestrator
     expect(JSON.stringify(r.landmarks)).not.toMatch(/"score"|"salience"/);
+    // each landmark exposes its node id so it can be routed to via find_path's landmark:<id>
+    expect(r.landmarks.every(l => typeof l.id === 'string' && l.id.length > 0)).toBe(true);
   });
 
   it('filters to a single label', async () => {

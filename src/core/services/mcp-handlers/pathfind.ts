@@ -144,14 +144,23 @@ export async function handleFindPath(
   if (fromRes.nodes.length === 0) return { error: `"${from}" resolved to no functions.` };
   if (toRes.nodes.length === 0) return { error: `"${to}" resolved to no functions.` };
 
-  const useCallDistance = opts.useCallDistance !== false;
-  const result = findCheapestPath(cg, fromRes.nodes.map(n => n.id), toRes.nodes.map(n => n.id), { useCallDistance, forward });
-
   const describe = (r: ResolvedEndpoint, selector: string) => ({
     selector, kind: r.kind, matched: r.nodes.length, sample: r.nodes.slice(0, 5).map(n => n.name),
   });
   const resolvedFrom = describe(fromRes, from);
   const resolvedTo = describe(toRes, to);
+
+  // Same-endpoint query: every resolved target is also a source — no traversal needed.
+  const fromIds = new Set(fromRes.nodes.map(n => n.id));
+  if (toRes.nodes.every(n => fromIds.has(n.id))) {
+    return {
+      from, to, resolvedFrom, resolvedTo, path: null,
+      note: 'from and to resolve to the same function(s) — no path to compute.',
+    };
+  }
+
+  const useCallDistance = opts.useCallDistance !== false;
+  const result = findCheapestPath(cg, fromRes.nodes.map(n => n.id), toRes.nodes.map(n => n.id), { useCallDistance, forward });
   const toChain = (p: { ids: string[]; hops: number; distance: number }) => ({
     chain: p.ids.map(id => { const n = nodeMap.get(id); return { name: n?.name ?? id, file: n ? relative(absDir, n.filePath) : '' }; }),
     hops: p.hops,
