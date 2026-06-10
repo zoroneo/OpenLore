@@ -127,6 +127,34 @@ describe('generateCodebaseDigest', () => {
     expect(content).toContain('godFn');
   });
 
+  it('excludes test and external nodes from god functions and overview counts', async () => {
+    // Regression (#138): on Java projects, a high-fan-out test helper such as
+    // FooTest.checkOption was surfacing as a "god function" and inflating the
+    // function/entry-point counts. The digest is production-only.
+    const tmpDir = await mkdtemp(join(tmpdir(), 'digest-test-'));
+    const cg = makeCallGraph({
+      nodes: [
+        { id: 'src/main/Prod.java::Prod.orchestrate', name: 'orchestrate', className: 'Prod', filePath: 'src/main/Prod.java', fanIn: 1, fanOut: 12, isAsync: false, language: 'Java', startIndex: 0, endIndex: 10 },
+        { id: 'src/test/FooTest.java::FooTest.checkOption', name: 'checkOption', className: 'FooTest', filePath: 'src/test/FooTest.java', fanIn: 0, fanOut: 27, isAsync: false, language: 'Java', startIndex: 0, endIndex: 10, isTest: true },
+        { id: 'java.util.List::add', name: 'add', filePath: 'java.util.List', fanIn: 0, fanOut: 9, isAsync: false, language: 'Java', startIndex: 0, endIndex: 10, isExternal: true },
+      ],
+      entryPoints: [
+        { id: 'src/main/Prod.java::Prod.orchestrate', name: 'orchestrate', className: 'Prod', filePath: 'src/main/Prod.java', fanIn: 0, fanOut: 12, isAsync: false, language: 'Java', startIndex: 0, endIndex: 10 },
+      ],
+    });
+
+    await generateCodebaseDigest(makeContext(cg), null, { rootPath: tmpDir, outputDir: tmpDir });
+    const content = await readFile(join(tmpDir, 'CODEBASE.md'), 'utf-8');
+
+    // God functions: production orchestrator only — no test helper, no library call.
+    expect(content).toContain('orchestrate');
+    expect(content).not.toContain('checkOption');
+    expect(content).not.toContain('java.util.List');
+    // Overview counts production nodes (1) and the filtered entry-point list (1).
+    expect(content).toContain('**1** functions / methods analyzed');
+    expect(content).toContain('**1** entry points');
+  });
+
   it('includes layer violations section when violations are present', async () => {
     const tmpDir = await mkdtemp(join(tmpdir(), 'digest-test-'));
     const cg = makeCallGraph({

@@ -19,7 +19,7 @@ import { matchThenClauses } from './then-matchers.js';
 import type { ThenMatch } from './then-matchers.js';
 import { renderTests } from './renderers/index.js';
 import { toKebabCase } from './scenario-parser.js';
-import { toSnakeCase } from './renderers/shared.js';
+import { toSnakeCase, toPascalCase } from './renderers/shared.js';
 import { FRAMEWORK_EXTENSIONS } from '../../types/test-generator.js';
 
 // ============================================================================
@@ -90,6 +90,8 @@ async function enrichWithLlm(
     pytest: 'pytest (Python) — use assert statements',
     gtest: 'Google Test (C++) — use EXPECT_EQ, EXPECT_TRUE, EXPECT_EQ etc.',
     catch2: 'Catch2 (C++) — use REQUIRE, CHECK macros',
+    junit: 'JUnit 5 (Java) — use assertEquals, assertTrue, assertNotNull, assertThrows (static imports)',
+    gotest: 'Go testing (standard library) — use t.Errorf / t.Fatal with if-condition checks, no assert library',
   };
 
   const systemPrompt =
@@ -162,6 +164,15 @@ function outputFilename(
   }
   if (framework === 'gtest' || framework === 'catch2') {
     return `${toSnakeCase(domain)}/${toSnakeCase(requirement)}_test.cpp`;
+  }
+  if (framework === 'gotest') {
+    return `${toSnakeCase(domain)}/${toSnakeCase(requirement)}_test.go`;
+  }
+  if (framework === 'junit') {
+    // Java requires the public class name to match the file basename; the
+    // junit renderer emits `class <Requirement>Test`, so the file must be
+    // `<Requirement>Test.java` (PascalCase, no kebab/snake separators).
+    return `${toPascalCase(domain)}/${toPascalCase(requirement)}Test.java`;
   }
   return `${toKebabCase(domain)}/${toKebabCase(requirement)}${ext}`;
 }

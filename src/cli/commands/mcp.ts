@@ -1142,7 +1142,8 @@ export const TOOL_DEFINITIONS = [
     name: 'generate_tests',
     description:
       'Generate spec-driven test files from OpenSpec scenarios. ' +
-      'Supports vitest, playwright, pytest (Python), gtest and catch2 (C++). ' +
+      'Supports vitest, playwright (JS/TS), pytest (Python), gtest and catch2 (C++), ' +
+      'junit (Java/Kotlin) and gotest (Go). ' +
       'A THEN clause pattern engine emits real assertions for common patterns ' +
       '(HTTP status codes, property presence, error messages) without any LLM call. ' +
       'Pass useLlm:true to enrich unmatched clauses using mapped function source. ' +
@@ -1163,7 +1164,7 @@ export const TOOL_DEFINITIONS = [
         },
         framework: {
           type: 'string',
-          enum: ['vitest', 'playwright', 'pytest', 'gtest', 'catch2', 'auto'],
+          enum: ['vitest', 'playwright', 'pytest', 'gtest', 'catch2', 'junit', 'gotest', 'auto'],
           description: 'Test framework (default: auto-detect from project files)',
         },
         useLlm: {

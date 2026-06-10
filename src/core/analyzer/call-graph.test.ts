@@ -467,6 +467,143 @@ public class OrderService {
     expect(createNode?.className).toBe('OrderService');
   });
 
+  it('does not drop calls to methods named after C++/Swift builtins', async () => {
+    // Regression (#138): IGNORED_CALLEES was global, so C++/Swift stdlib names
+    // (find/contains/remove/insert/size/...) silently dropped legitimate Java
+    // calls — e.g. a repository `find(id)` or a cache `remove(k)`.
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'Repo.java',
+      language: 'Java',
+      content: `
+public class Repo {
+    public Item lookup(int id) {
+        return find(id);
+    }
+    private Item find(int id) { return null; }
+}
+      `,
+    }]);
+
+    // The internal `find` method must keep its caller edge (not be ignored).
+    expect(edgePairs(result)).toContain('lookup→find');
+    expect(fanIn(result, 'find')).toBe(1);
+  });
+
+  it('emits one edge per qualified call (no bare/qualified duplication)', async () => {
+    // Regression (#138): JAVA_CALL_QUERY matched a qualified `Money.of(...)` with
+    // BOTH the qualified and the bare pattern, emitting two edges (a `Money.of`
+    // external node AND a bare `of`). That doubled fan-out and let bare names
+    // falsely resolve to unrelated same-named methods.
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'Pay.java',
+      language: 'Java',
+      content: `
+public class Pay {
+    public Receipt process(Order o) {
+        Money m = Money.of(o.total());
+        return repo.save(m);
+    }
+}
+      `,
+    }]);
+
+    // No bare duplicates of the qualified callees.
+    const externalNames = Array.from(result.nodes.values()).filter(n => n.isExternal).map(n => n.name);
+    expect(externalNames).not.toContain('of');    // only `Money.of`
+    expect(externalNames).not.toContain('save');  // only `repo.save`
+    // process makes exactly three distinct outgoing calls: Money.of, o.total, repo.save.
+    expect(fanOut(result, 'process')).toBe(3);
+  });
+
+  it('captures constructor calls, method references, and chained calls', async () => {
+    // Java patterns previously missing/dropped: `new Foo()` (object_creation),
+    // `this::m` (method_reference), and the outer call of a chain `a.b().c()`
+    // distinct calls keyed by callee-name position so both survive the dedup).
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'Svc.java',
+      language: 'Java',
+      content: `
+public class Svc {
+    void run(java.util.List items) {
+        Helper h = new Helper();        // constructor call
+        items.forEach(this::handle);    // method reference -> internal handle
+        items.stream().collect();       // chained: stream() AND collect() must both appear
+    }
+    void handle(Object o) {}
+}
+class Helper {}
+      `,
+    }]);
+
+    const pairs = edgePairs(result);
+    expect(pairs).toContain('run→Helper');        // new Helper()
+    expect(pairs).toContain('run→handle');        // this::handle resolved internally
+    // Both ends of the chain `items.stream().collect()` must appear: the inner
+    // qualified call is labeled by its receiver, the outer bare call by name.
+    expect(pairs).toContain('run→items.stream');  // inner chained call
+    expect(pairs).toContain('run→collect');       // outer chained call (regression)
+  });
+
+  it('attributes record methods to the record, not the enclosing class', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'Order.java',
+      language: 'Java',
+      content: `
+public class Order {
+    record LineItem(String sku, int qty) {
+        int subtotal() { return qty * 10; }
+    }
+}
+      `,
+    }]);
+
+    const subtotal = Array.from(result.nodes.values()).find(n => n.name === 'subtotal');
+    expect(subtotal?.className).toBe('LineItem');
+  });
+
+  it('resolves a static call to an internal class (Money.of)', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'Money.java',
+      language: 'Java',
+      content: `
+class Money {
+    static Money of(long cents) { return new Money(cents); }
+    Money(long c) {}
+}
+class Service {
+    Money compute() { return Money.of(100); }
+}
+      `,
+    }]);
+
+    // Money.of must resolve to the internal node, not a synthetic external one.
+    expect(edgePairs(result)).toContain('compute→of');
+    const ofNode = Array.from(result.nodes.values()).find(n => n.name === 'of');
+    expect(ofNode?.isExternal).toBeFalsy();
+  });
+
+  it('collapses overloaded methods to a single node', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'Api.java',
+      language: 'Java',
+      content: `
+public class Api {
+    public void send(String a) {}
+    public void send(String a, int b) {}
+}
+      `,
+    }]);
+
+    const sends = Array.from(result.nodes.values()).filter(n => n.name === 'send');
+    expect(sends).toHaveLength(1);
+  });
+
   it('extracts constructors as nodes', async () => {
     const builder = new CallGraphBuilder();
     const result = await builder.build([{

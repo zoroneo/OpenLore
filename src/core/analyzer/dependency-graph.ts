@@ -30,6 +30,22 @@ const CLUSTER_PALETTE = [
   '#ffb347',
 ];
 
+/**
+ * Directory segments that carry no business meaning and should be skipped when
+ * deriving a domain name from a path. Covers generic source roots plus
+ * language build layouts (Maven/Gradle `src/main/java`, Go `pkg`/`internal`)
+ * and reverse-DNS package roots (`com`, `org`, `io`, …) so that Java/Kotlin/Go
+ * projects don't get nonsense domains like "main", "java", or "com".
+ */
+const DOMAIN_NOISE_DIRS = new Set([
+  'src', 'lib', 'app', 'apps', 'source', 'sources',
+  'main', 'java', 'kotlin', 'scala', 'groovy', 'resources',
+  'test', 'tests', 'spec', 'specs', '__tests__',
+  'target', 'build', 'out', 'dist', 'bin', 'obj', 'gen', 'generated',
+  'pkg', 'internal', 'cmd', 'node_modules', 'vendor',
+  'com', 'org', 'io', 'net', 'gov', 'edu', 'co',
+]);
+
 // ============================================================================
 // INTERFACES
 // ============================================================================
@@ -589,12 +605,17 @@ export class DependencyGraphBuilder {
       [/^lib$/i, ''],
       [/^app$/i, ''],
       [/^(api|routes|endpoints?)$/i, 'api'],
-      [/^(models?|entities|schemas?)$/i, 'domain'],
+      [/^(models?|entities|entity|schemas?|domain)$/i, 'domain'],
       [/^(services?)$/i, 'services'],
-      [/^(controllers?)$/i, 'controllers'],
+      [/^(controllers?|resources?)$/i, 'controllers'],
+      [/^(repositor(y|ies)|repos?|dao|daos)$/i, 'repositories'],
+      [/^(handlers?)$/i, 'handlers'],
+      [/^(middlewares?)$/i, 'middleware'],
       [/^(utils?|helpers?|common)$/i, 'utilities'],
       [/^(components?)$/i, 'components'],
       [/^(hooks?)$/i, 'hooks'],
+      [/^(config|configuration|settings)$/i, 'config'],
+      [/^(dto|dtos)$/i, 'dto'],
       [/^(auth|authentication)$/i, 'authentication'],
       [/^(users?)$/i, 'users'],
       [/^(products?)$/i, 'products'],
@@ -603,23 +624,26 @@ export class DependencyGraphBuilder {
       [/^(core)$/i, 'core'],
     ];
 
-    // Try to find a meaningful name
+    // Try to find a meaningful name, walking from the most specific
+    // (deepest) directory segment outward. Skip build-layout and language
+    // package noise (Maven/Gradle's main/java/kotlin/test, Go's pkg/internal,
+    // reverse-DNS package roots like com/org/io) so Java/Kotlin/Go projects
+    // get business-domain names instead of "main", "java", or "com".
     for (const part of parts.reverse()) {
+      if (DOMAIN_NOISE_DIRS.has(part.toLowerCase())) continue;
       for (const [pattern, replacement] of patterns) {
         if (pattern.test(part)) {
           return replacement || part.toLowerCase();
         }
       }
-      // If no pattern matches, use the part as-is
-      if (!/^(src|lib|app)$/i.test(part)) {
-        return part.toLowerCase().replace(/[^a-z0-9]/g, '-');
-      }
+      // First meaningful, non-noise segment — use it as the domain name
+      return part.toLowerCase().replace(/[^a-z0-9]/g, '-');
     }
 
-    // Fallback: use first file's name pattern
+    // Fallback: derive from the first file's name (any language extension)
     if (files.length > 0) {
       const firstFile = this.nodes.get(files[0])?.file.name ?? 'unknown';
-      return firstFile.replace(/\.(ts|js|tsx|jsx|py)x?$/, '').toLowerCase();
+      return firstFile.replace(/\.[a-z0-9]+$/i, '').toLowerCase().replace(/[^a-z0-9]/g, '-');
     }
 
     return 'misc';

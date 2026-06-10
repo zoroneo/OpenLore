@@ -97,11 +97,16 @@ export async function generateCodebaseDigest(
 
     // ── Overview ──────────────────────────────────────────────────────────────
     if (cg) {
-      const dominated = cg.nodes.filter(n => n.fanIn === 0).length;
+      // Production functions only: cg.nodes also carries test and external (library)
+      // nodes so the test-impact tools can use them. The digest describes the
+      // production surface, so exclude both — otherwise test helpers and stdlib
+      // calls inflate the counts and leak into the god-function list (e.g. a Java
+      // `FooTest.checkOption` showing up as an orchestrator).
+      const prodNodes = cg.nodes.filter(n => !n.isTest && !n.isExternal);
       lines.push('## Overview');
-      lines.push(`- **${cg.nodes.length}** functions / methods analyzed`);
+      lines.push(`- **${prodNodes.length}** functions / methods analyzed`);
       lines.push(`- **${cg.stats?.totalEdges ?? '?'}** internal call edges`);
-      lines.push(`- **${dominated}** entry points (no internal callers)`);
+      lines.push(`- **${cg.entryPoints?.length ?? 0}** entry points (no internal callers)`);
       lines.push(`- **${cg.hubFunctions?.length ?? 0}** hub functions (high fan-in)`);
       if (cg.stats?.avgFanIn !== undefined) {
         lines.push(`- avg fan-in: **${cg.stats.avgFanIn.toFixed(2)}**, avg fan-out: **${cg.stats.avgFanOut.toFixed(2)}**`);
@@ -148,8 +153,10 @@ export async function generateCodebaseDigest(
 
     // ── God functions ─────────────────────────────────────────────────────────
     if (cg?.nodes?.length) {
+      // Production functions only — test helpers and external (library) nodes are
+      // not orchestrators of this codebase (see Overview note above).
       const gods = cg.nodes
-        .filter(n => n.fanOut >= 8)
+        .filter(n => !n.isTest && !n.isExternal && n.fanOut >= 8)
         .sort((a, b) => b.fanOut - a.fanOut)
         .slice(0, maxGodFunctions);
 

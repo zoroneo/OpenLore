@@ -16,6 +16,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { fileExists } from '../../utils/command-helpers.js';
+import { isTestFile } from '../analyzer/test-file.js';
 import { parseScenarios } from './scenario-parser.js';
 import type {
   ParsedScenario,
@@ -30,15 +31,6 @@ import type { DriftResult } from '../../types/index.js';
 // ============================================================================
 // FILE WALKING
 // ============================================================================
-
-const TEST_FILE_PATTERNS = [
-  /\.spec\.[tj]s$/,
-  /\.test\.[tj]s$/,
-  /_test\.py$/,
-  /test_.*\.py$/,
-  /_test\.cpp$/,
-  /_test\.cc$/,
-];
 
 async function walkTestFiles(dir: string, rootPath: string): Promise<string[]> {
   const results: string[] = [];
@@ -56,9 +48,10 @@ async function walkTestFiles(dir: string, rootPath: string): Promise<string[]> {
       if (['node_modules', '.git', 'dist', 'build', '.openlore'].includes(entry)) continue;
 
       const fullPath = join(current, entry);
-      // Check if it looks like a test file
-      if (TEST_FILE_PATTERNS.some((p) => p.test(entry))) {
-        results.push(relative(rootPath, fullPath));
+      // Check if it looks like a test file (canonical cross-language predicate)
+      const rel = relative(rootPath, fullPath);
+      if (isTestFile(rel)) {
+        results.push(rel);
         continue;
       }
       // Recurse into directories (heuristic: no extension = directory)

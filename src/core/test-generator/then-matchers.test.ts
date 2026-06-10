@@ -103,6 +103,52 @@ describe('matchThenClauses', () => {
       expect(match.fromPattern).toBe(false);
       expect(match.lines[0]).toContain('SUCCEED()');
     });
+
+    it('junit: returns assertTrue(true) placeholder', () => {
+      const [match] = matchThenClauses([clause], 'junit');
+      expect(match.fromPattern).toBe(false);
+      expect(match.lines[0]).toContain('assertTrue(true)');
+    });
+
+    it('gotest: returns TODO placeholder', () => {
+      const [match] = matchThenClauses([clause], 'gotest');
+      expect(match.fromPattern).toBe(false);
+      expect(match.lines[0]).toContain('TODO');
+    });
+  });
+
+  // ── JUnit (Java) assertions ───────────────────────────────────────────────
+  describe('framework: junit', () => {
+    it('emits assertEquals for status + error', () => {
+      const clause = 'the system returns status 401 with error "Invalid credentials"';
+      const [match] = matchThenClauses([clause], 'junit');
+      expect(match.fromPattern).toBe(true);
+      const joined = match.lines.join('\n');
+      expect(joined).toContain('assertEquals(401, response.status());');
+      expect(joined).toContain('assertEquals("Invalid credentials", response.body().get("error"));');
+    });
+
+    it('emits assertThrows for thrown errors', () => {
+      const [match] = matchThenClauses(['the action throws an error'], 'junit');
+      expect(match.fromPattern).toBe(true);
+      expect(match.lines.join('\n')).toContain('assertThrows(Exception.class');
+    });
+  });
+
+  // ── Go (testing) assertions ───────────────────────────────────────────────
+  describe('framework: gotest', () => {
+    it('emits t.Errorf if-checks for status', () => {
+      const [match] = matchThenClauses(['the system returns status 200'], 'gotest');
+      expect(match.fromPattern).toBe(true);
+      expect(match.lines.join('\n')).toContain('if response.Status != 200');
+      expect(match.lines.join('\n')).toContain('t.Errorf');
+    });
+
+    it('emits a nil-error check for thrown errors', () => {
+      const [match] = matchThenClauses(['the action raises an exception'], 'gotest');
+      expect(match.fromPattern).toBe(true);
+      expect(match.lines.join('\n')).toContain('if err == nil');
+    });
   });
 
   // ── Multiple THEN clauses ─────────────────────────────────────────────────

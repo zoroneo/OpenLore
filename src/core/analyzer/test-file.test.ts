@@ -23,6 +23,14 @@ describe('isTestFile', () => {
       'src/FooTest.java',
       'src/FooSpec.kt',                // ← missed
       'src/FooTest.scala',             // ← missed
+      'src/FooTests.java',             // JUnit plural suffix (Spring convention)
+      'src/PaymentIT.java',            // Maven failsafe integration test
+      'src/main/PaymentIT.kt',         // Kotlin integration test
+      'src/test/java/com/example/AnythingHere.java', // Maven/Gradle src/test tree
+      'src/test/kotlin/com/example/Svc.kt',
+      'pkg/widget_test.cpp',           // C++ test
+      'pkg/widget_test.cc',            // C++ test
+      'pkg/widget_test.cxx',           // C++ test
     ];
     for (const f of tests) expect(isTestFile(f), f).toBe(true);
   });
@@ -35,6 +43,9 @@ describe('isTestFile', () => {
       'src/latest.ts',
       'lib/protest.py',
       'src/Foo.java',
+      'src/main/java/com/example/Payment.java',  // production Java source
+      'src/Unit.java',                            // ends in "it" lowercase, not IT
+      'src/main/resources/app.properties',        // src/main, not src/test
     ];
     for (const f of nonTests) expect(isTestFile(f), f).toBe(false);
   });

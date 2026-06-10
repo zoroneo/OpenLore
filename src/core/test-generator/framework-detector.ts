@@ -7,10 +7,17 @@
  * Detection order (first match wins):
  *   1. vitest     — package.json has vitest dependency
  *   2. playwright — package.json has @playwright/test dependency
- *   3. pytest     — pyproject.toml, setup.cfg, or pytest.ini exists
- *   4. gtest      — CMakeLists.txt contains GTest or googletest
- *   5. catch2     — CMakeLists.txt contains Catch2, or catch2 header exists
+ *   3. junit      — pom.xml (Maven) or build.gradle[.kts] (Gradle) exists
+ *   4. gotest     — go.mod exists
+ *   5. pytest     — pyproject.toml, setup.cfg, or pytest.ini exists
+ *   6. gtest      — CMakeLists.txt contains GTest or googletest
+ *   7. catch2     — CMakeLists.txt contains Catch2, or catch2 header exists
  *   → falls back to 'vitest' when nothing is detected
+ *
+ * Order rationale: JS/TS markers are checked first because a polyglot repo's
+ * package.json names a specific runner; Java/Go build manifests are
+ * language-unambiguous, so they precede the file-existence-only Python and
+ * CMake checks.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -35,7 +42,22 @@ export async function detectFramework(rootPath: string): Promise<TestFramework> 
     }
   }
 
-  // ── 2. Check for Python pytest ───────────────────────────────────────────
+  // ── 2. Check for Java/Kotlin (Maven or Gradle → JUnit) ───────────────────
+  const javaMarkers = [
+    join(rootPath, 'pom.xml'),
+    join(rootPath, 'build.gradle'),
+    join(rootPath, 'build.gradle.kts'),
+    join(rootPath, 'settings.gradle'),
+    join(rootPath, 'settings.gradle.kts'),
+  ];
+  for (const marker of javaMarkers) {
+    if (await fileExists(marker)) return 'junit';
+  }
+
+  // ── 3. Check for Go (go.mod → go test) ───────────────────────────────────
+  if (await fileExists(join(rootPath, 'go.mod'))) return 'gotest';
+
+  // ── 4. Check for Python pytest ───────────────────────────────────────────
   const pythonMarkers = [
     join(rootPath, 'pyproject.toml'),
     join(rootPath, 'setup.cfg'),
@@ -46,7 +68,7 @@ export async function detectFramework(rootPath: string): Promise<TestFramework> 
     if (await fileExists(marker)) return 'pytest';
   }
 
-  // ── 3. Check CMakeLists.txt for C++ frameworks ───────────────────────────
+  // ── 5. Check CMakeLists.txt for C++ frameworks ───────────────────────────
   const cmakePath = join(rootPath, 'CMakeLists.txt');
   if (await fileExists(cmakePath)) {
     try {
@@ -58,6 +80,6 @@ export async function detectFramework(rootPath: string): Promise<TestFramework> 
     }
   }
 
-  // ── 4. Default ───────────────────────────────────────────────────────────
+  // ── 6. Default ───────────────────────────────────────────────────────────
   return 'vitest';
 }

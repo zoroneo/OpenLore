@@ -472,8 +472,17 @@ function inferDomains(files: ScoredFile[]): Record<string, ScoredFile[]> {
     // Extract potential domain from path
     const pathParts = file.path.split('/');
 
-    // Check for domain-like directory names (skip common non-domain dirs)
-    const skipDirs = new Set(['src', 'lib', 'app', 'core', 'common', 'shared', 'utils', 'helpers', 'config']);
+    // Check for domain-like directory names (skip common non-domain dirs).
+    // Includes language build-layout and reverse-DNS package noise so Java
+    // (src/main/java/com/...), Kotlin, and Go (pkg/internal) projects don't
+    // surface "main", "java", or "com" as domains.
+    const skipDirs = new Set([
+      'src', 'lib', 'app', 'core', 'common', 'shared', 'utils', 'helpers', 'config',
+      'main', 'java', 'kotlin', 'scala', 'groovy', 'resources',
+      'test', 'tests', 'target', 'build', 'out', 'dist', 'bin', 'obj', 'gen',
+      'pkg', 'internal', 'cmd', 'vendor',
+      'com', 'org', 'io', 'net', 'gov', 'edu',
+    ]);
 
     for (const part of pathParts) {
       if (part && !skipDirs.has(part.toLowerCase()) && !part.startsWith('.')) {

@@ -478,6 +478,41 @@ describe('DependencyGraphBuilder', () => {
       expect(apiCluster?.suggestedDomain).toBe('api');
     });
 
+    it('derives a business domain from a Java Maven package path (not build noise)', async () => {
+      const dir = 'src/main/java/com/example/inventory';
+      await mkdir(join(tempDir, dir), { recursive: true });
+      const fileA = await createFile(tempDir, `${dir}/StockLevel.java`, 'class StockLevel {}');
+      const fileB = await createFile(tempDir, `${dir}/Warehouse.java`, 'class Warehouse {}');
+
+      const files: ScoredFile[] = [
+        createScoredFile({ absolutePath: fileA, name: 'StockLevel.java', extension: '.java', directory: dir }),
+        createScoredFile({ absolutePath: fileB, name: 'Warehouse.java', extension: '.java', directory: dir }),
+      ];
+
+      const result = await buildDependencyGraph(files, { rootDir: tempDir });
+
+      const cluster = result.clusters.find(c => c.name === dir);
+      // Must be the leaf package "inventory" — not "main", "java", or "com".
+      expect(cluster?.suggestedDomain).toBe('inventory');
+    });
+
+    it('maps a Java services package to the canonical "services" domain', async () => {
+      const dir = 'src/main/java/com/acme/service';
+      await mkdir(join(tempDir, dir), { recursive: true });
+      const fileA = await createFile(tempDir, `${dir}/OrderService.java`, 'class OrderService {}');
+      const fileB = await createFile(tempDir, `${dir}/UserService.java`, 'class UserService {}');
+
+      const files: ScoredFile[] = [
+        createScoredFile({ absolutePath: fileA, name: 'OrderService.java', extension: '.java', directory: dir }),
+        createScoredFile({ absolutePath: fileB, name: 'UserService.java', extension: '.java', directory: dir }),
+      ];
+
+      const result = await buildDependencyGraph(files, { rootDir: tempDir });
+
+      const cluster = result.clusters.find(c => c.name === dir);
+      expect(cluster?.suggestedDomain).toBe('services');
+    });
+
     it('should calculate cluster cohesion and coupling', async () => {
       await mkdir(join(tempDir, 'cluster1'), { recursive: true });
       await mkdir(join(tempDir, 'cluster2'), { recursive: true });

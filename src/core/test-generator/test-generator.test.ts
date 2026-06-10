@@ -123,6 +123,38 @@ describe('generateTests', () => {
     expect(file.content).toContain('REQUIRE(response.status == 401)');
   });
 
+  it('generates junit file with class name matching the file basename', async () => {
+    const [file] = await generateTests({
+      scenarios: [MOCK_SCENARIO_2],
+      framework: 'junit',
+      outputDir: 'spec-tests',
+      rootPath: '/tmp',
+    });
+
+    expect(file.content).toContain('import org.junit.jupiter.api.Test;');
+    expect(file.content).toContain('import static org.junit.jupiter.api.Assertions.*;');
+    expect(file.content).toContain('class UserLoginTest {');
+    expect(file.content).toContain('@Test');
+    expect(file.content).toContain('assertEquals(401, response.status());');
+    // Java requires the public class name to equal the file basename.
+    expect(file.outputPath).toBe('spec-tests/Auth/UserLoginTest.java');
+  });
+
+  it('generates gotest file with a TestXxx function and testing import', async () => {
+    const [file] = await generateTests({
+      scenarios: [MOCK_SCENARIO_2],
+      framework: 'gotest',
+      outputDir: 'spec-tests',
+      rootPath: '/tmp',
+    });
+
+    expect(file.content).toContain('package auth_test');
+    expect(file.content).toContain('import "testing"');
+    expect(file.content).toContain('func TestUserLoginInvalidCredentials(t *testing.T) {');
+    expect(file.content).toContain('if response.Status != 401');
+    expect(file.outputPath).toBe('spec-tests/auth/user_login_test.go');
+  });
+
   it('uses correct output path for each framework', async () => {
     const vitestFiles = await generateTests({
       scenarios: [MOCK_SCENARIO],

@@ -13,7 +13,8 @@
  *
  * Adding a new pattern:
  *   1. Add a ThenPattern to PATTERNS below
- *   2. Add assertions for all five frameworks in its `assertions` object
+ *   2. Add assertions for every framework in its `assertions` object
+ *      (the Record<TestFramework, …> type makes the compiler enforce this)
  */
 
 import type { TestFramework } from '../../types/test-generator.js';
@@ -69,6 +70,14 @@ const PATTERNS: ThenPattern[] = [
         `REQUIRE(response.status == ${status});`,
         `REQUIRE(response.body["error"] == "${msg}");`,
       ],
+      junit: ([, status, msg]) => [
+        `assertEquals(${status}, response.status());`,
+        `assertEquals("${msg}", response.body().get("error"));`,
+      ],
+      gotest: ([, status, msg]) => [
+        `if response.Status != ${status} { t.Errorf("status = %d, want ${status}", response.Status) }`,
+        `if response.Body["error"] != "${msg}" { t.Errorf("error = %v, want ${msg}", response.Body["error"]) }`,
+      ],
     },
   },
 
@@ -81,6 +90,10 @@ const PATTERNS: ThenPattern[] = [
       pytest: ([, status]) => [`assert response.status_code == ${status}`],
       gtest: ([, status]) => [`EXPECT_EQ(response.status, ${status});`],
       catch2: ([, status]) => [`REQUIRE(response.status == ${status});`],
+      junit: ([, status]) => [`assertEquals(${status}, response.status());`],
+      gotest: ([, status]) => [
+        `if response.Status != ${status} { t.Errorf("status = %d, want ${status}", response.Status) }`,
+      ],
     },
   },
 
@@ -106,6 +119,12 @@ const PATTERNS: ThenPattern[] = [
       catch2: ([, propsStr]) => extractProps(propsStr).map(
         (p) => `REQUIRE(response.body.contains("${p}"));`
       ),
+      junit: ([, propsStr]) => extractProps(propsStr).map(
+        (p) => `assertTrue(response.body().has("${p}"));`
+      ),
+      gotest: ([, propsStr]) => extractProps(propsStr).map(
+        (p) => `if _, ok := response.Body["${p}"]; !ok { t.Errorf("missing property ${p}") }`
+      ),
     },
   },
 
@@ -129,6 +148,12 @@ const PATTERNS: ThenPattern[] = [
       ],
       catch2: ([, field, value]) => [
         `REQUIRE(result.${field} == "${value}");`,
+      ],
+      junit: ([, field, value]) => [
+        `assertEquals("${value}", result.get("${field}"));`,
+      ],
+      gotest: ([, field, value]) => [
+        `if result["${field}"] != "${value}" { t.Errorf("${field} = %v, want ${value}", result["${field}"]) }`,
       ],
     },
   },
@@ -156,6 +181,14 @@ const PATTERNS: ThenPattern[] = [
         `REQUIRE(response.status == ${status});`,
         `REQUIRE(!response.body.empty());`,
       ],
+      junit: ([, status]) => [
+        `assertEquals(${status}, response.status());`,
+        `assertNotNull(response.body());`,
+      ],
+      gotest: ([, status]) => [
+        `if response.Status != ${status} { t.Errorf("status = %d, want ${status}", response.Status) }`,
+        `if response.Body == nil { t.Error("expected non-nil body") }`,
+      ],
     },
   },
 
@@ -168,6 +201,8 @@ const PATTERNS: ThenPattern[] = [
       pytest: () => [`with pytest.raises(Exception):\n        action()`],
       gtest: () => [`EXPECT_THROW(action(), std::exception);`],
       catch2: () => [`REQUIRE_THROWS(action());`],
+      junit: () => [`assertThrows(Exception.class, () -> action());`],
+      gotest: () => [`if err == nil { t.Error("expected an error") }`],
     },
   },
 
@@ -180,6 +215,8 @@ const PATTERNS: ThenPattern[] = [
       pytest: () => [`assert result is None  # TODO: verify negative case`],
       gtest: () => [`EXPECT_FALSE(result.has_value()); // TODO: verify negative case`],
       catch2: () => [`REQUIRE_FALSE(result.has_value()); // TODO: verify negative case`],
+      junit: () => [`assertNull(result); // TODO: verify negative case`],
+      gotest: () => [`if result != nil { t.Error("expected nil result") } // TODO: verify negative case`],
     },
   },
 ];
@@ -223,6 +260,8 @@ const PLACEHOLDER: Record<TestFramework, string> = {
   pytest: `assert True  # TODO: implement assertion`,
   gtest: `SUCCEED(); // TODO: implement assertion`,
   catch2: `SUCCEED(); // TODO: implement assertion`,
+  junit: `assertTrue(true); // TODO: implement assertion`,
+  gotest: `// TODO: implement assertion`,
 };
 
 /**

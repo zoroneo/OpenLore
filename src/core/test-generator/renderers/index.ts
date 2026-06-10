@@ -12,8 +12,10 @@ import { renderPlaywright } from './playwright.js';
 import { renderPytest } from './pytest.js';
 import { renderGtest } from './gtest.js';
 import { renderCatch2 } from './catch2.js';
+import { renderJunit } from './junit.js';
+import { renderGotest } from './gotest.js';
 
-export { renderVitest, renderPlaywright, renderPytest, renderGtest, renderCatch2 };
+export { renderVitest, renderPlaywright, renderPytest, renderGtest, renderCatch2, renderJunit, renderGotest };
 
 /**
  * Render a set of scenarios (all belonging to the same domain + requirement)
@@ -37,6 +39,10 @@ export function renderTests(
       return renderGtest(domain, requirement, scenarios, matchesByScenario);
     case 'catch2':
       return renderCatch2(domain, requirement, scenarios, matchesByScenario);
+    case 'junit':
+      return renderJunit(domain, requirement, scenarios, matchesByScenario);
+    case 'gotest':
+      return renderGotest(domain, requirement, scenarios, matchesByScenario);
     default: {
       const _never: never = framework;
       throw new Error(`Unknown framework: ${String(_never)}`);

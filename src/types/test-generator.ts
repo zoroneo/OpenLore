@@ -11,7 +11,14 @@
 // FRAMEWORK
 // ============================================================================
 
-export type TestFramework = 'vitest' | 'playwright' | 'pytest' | 'gtest' | 'catch2';
+export type TestFramework =
+  | 'vitest'
+  | 'playwright'
+  | 'pytest'
+  | 'gtest'
+  | 'catch2'
+  | 'junit'
+  | 'gotest';
 
 /** Maps framework → generated file extension */
 export const FRAMEWORK_EXTENSIONS: Record<TestFramework, string> = {
@@ -20,6 +27,8 @@ export const FRAMEWORK_EXTENSIONS: Record<TestFramework, string> = {
   pytest: '_test.py',
   gtest: '_test.cpp',
   catch2: '_test.cpp',
+  junit: '.java',
+  gotest: '_test.go',
 };
 
 // ============================================================================
