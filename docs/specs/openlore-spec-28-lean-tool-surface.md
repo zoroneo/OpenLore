@@ -36,7 +36,7 @@ publish is the number we measured, including a win that turns out small.
   older runtimes) the server's only levers are tool **count** (presets, Spec 14/25) and schema **bytes**
   — and the lossless byte-lever is only ~2%, because the payload is dominated by irreducible per-tool
   schema structure plus the selection text an agent genuinely needs to pick the right tool.
-- [ ] **P3 — Meta-dispatcher tool (explored, NOT implemented).** Collapsing the rarely-used long tail
+- [ ] **P3 — Meta-dispatcher tool (DEFERRED — explored, deliberately NOT implemented).** Collapsing the rarely-used long tail
   (inventories, reports) behind a single `openlore(action, …)` tool would shrink the eager-client
   surface further, but it **trades the wrong way**: it discards per-tool schema validation, the
   read/write/open-world annotations (Spec 11), and the discoverable surface an agent selects from —

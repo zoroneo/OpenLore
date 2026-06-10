@@ -27,7 +27,7 @@ Branch: `openlore-spec-13-context-substrate`. Direction locked; claims verified;
 - [x] Repo ground-truth established (what actually ships vs. what was claimed)
 - [x] Theses adversarially stress-tested; positioning corrected to survive the strongest attack
 - [x] **Spec 13.1** — Make Incremental Freshness Cheap (Watch-Mode Performance). **Shipped in v2.0.6** (PRs #102/#103/#106). Field-validated on enklayve's real 2.1 MB corpus: a 15-file burst dropped from ~5,900 ms / 46 stderr lines (2.0.5) to 443 ms / 2 (2.0.6); next-call read after a save from a 4.6 ms cold re-parse to a 0.03 ms cache hit. → [openlore-spec-13.1-watch-mode-performance.md](openlore-spec-13.1-watch-mode-performance.md)
-- [ ] **Spec 14** — Agent Token-Efficiency Benchmark Harness (WITH vs WITHOUT). *Do this first (after 13.1).* → [openlore-spec-14-agent-benchmark-harness.md](openlore-spec-14-agent-benchmark-harness.md)
+- [x] **Spec 14** — Agent Token-Efficiency Benchmark Harness (WITH vs WITHOUT). **Done** — harness built, two-tier benchmark run, README cited (see spec-14). → [openlore-spec-14-agent-benchmark-harness.md](openlore-spec-14-agent-benchmark-harness.md)
 - [x] **Spec 15** — Decision & Drift Governance Dogfooding (turn the gate on in our own repo). **Done** (PR #109). → [openlore-spec-15-governance-dogfooding.md](openlore-spec-15-governance-dogfooding.md)
 - [x] **Spec 16** — Architectural Decisions as First-Class Graph Nodes (`affects` edges). **Done** — decision store projects to `decision::` nodes + `affects` edges; `analyze_impact`/`get_subgraph`/`orient` surface governing decisions; `SCHEMA_VERSION` 2→3. → [openlore-spec-16-decisions-as-graph-nodes.md](openlore-spec-16-decisions-as-graph-nodes.md)
 - [x] **Spec 17** — Cross-Domain Impact Analysis (Code ↔ Infrastructure). **Done** — `linkCodeToInfra` connects embedded IaC to its provisioning code; `analyze_impact` surfaces a typed `crossDomain` block. → [openlore-spec-17-cross-domain-impact.md](openlore-spec-17-cross-domain-impact.md)
@@ -37,7 +37,11 @@ Branch: `openlore-spec-13-context-substrate`. Direction locked; claims verified;
 - [x] **Spec 21** — Structural Change Analysis (Graph Diff). **Done** — `structural_diff`: added/removed/signature-changed functions, stale callers, rename flags. → [openlore-spec-21-structural-change-analysis.md](openlore-spec-21-structural-change-analysis.md)
 - [x] **Spec 22** — Change-Coupling & Volatility Analysis. **Done** — `get_change_coupling`: co-change + churn mined from git, surfaced in `orient`; advisory signal, bulk commits filtered. → [openlore-spec-22-change-coupling-volatility.md](openlore-spec-22-change-coupling-volatility.md)
 - [x] **Spec 23** — Architecture Invariant Guardrails. **Done** (PR #119) — `check_architecture`: declarative opt-in rules (`layers`/`forbidden`/`allowedOnly`) checked deterministically over the dependency graph, answered **pre-edit** ("may A import B?") + a full violation scan; optional decision-sourced invariants; reuses the `classifyLayerEdge` primitive; surfaced additively in `orient`. **Closes the 13–23 arc.** → [openlore-spec-23-architecture-invariants.md](openlore-spec-23-architecture-invariants.md)
-- [ ] **Horizon 3 (optional, may never ship)** — cloud OAuth connectors as a fire-walled plugin. Deliberately *not* a numbered spec until 14–23 land and prove the local-first thesis.
+- [ ] **Horizon 3 (DEFERRED — optional, may never ship)** — cloud OAuth connectors as a fire-walled plugin. Deliberately *not* a numbered spec and **not buildable work**: a strategy placeholder, revisited only if the local-first thesis is proven and demand appears.
+
+> **Status (verified 2026-06-09): the 13–23 arc is COMPLETE.** Specs 13.1 and 14–23 all shipped
+> (see the **Done** markers above). The only unchecked item is Horizon 3, which is a deliberately-
+> deferred strategy placeholder ("may never ship"), not pending work.
 
 ---
 

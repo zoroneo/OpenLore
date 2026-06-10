@@ -8,6 +8,13 @@
 
 Branch: `openlore-spec-05-federation-manifest`. Emitter + validator shipped; federation index deferred per scope.
 
+> **Status (verified 2026-06-09): IMPLEMENTED (core).** The manifest emitter, JSON Schema, and
+> `manifest emit`/`validate` CLI shipped. The remaining open boxes below are **deferred-by-design,
+> not pending work**: the four `TODO(spec-05-followup)` items are analyzer enhancements (HTTP-route
+> detectors, events/gRPC surfacing, per-package first-use) that need new analyzer capability, and the
+> federation index is explicitly "a separate, larger spec." Do not treat these as buildable in a
+> routine open-work sweep.
+
 - [x] JSON Schema `schemas/openlore-manifest-v1.json` (version `1`); added `schemas/` to `package.json` `files` so it ships and `validate` can load it at runtime
 - [x] `openlore manifest emit [--out --project-root --include-private --max-symbols]` and `openlore manifest validate <path>` (`src/cli/manifest/`, registered in `src/cli/index.ts`)
 - [x] Detectors reuse existing analyzer output only: `public-symbols.ts` (entry-point exports resolved to definitions via dependency-graph + call graph; public methods of exported classes), `http-routes.ts` (route inventory verbatim), `events.ts` (empty + TODOs — analyzer doesn't surface events/RPC)

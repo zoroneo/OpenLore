@@ -6,7 +6,18 @@
 
 ## Progress
 
-Branch: `openlore-spec-12-mcp-protocol-conformance`. **DONE** (in PR #117).
+Branch: `openlore-spec-12-mcp-protocol-conformance`. **DONE** — handler behavior in PR #117;
+the SDK-`Client` conformance suite (acceptance #13) added in PR #137.
+
+> Status update (2026-06-09): the wire-layer behavior below shipped in PR #117. The one remaining
+> gap was acceptance #13 — a suite driving the server through the **real SDK `Client`** (the prior
+> e2e test used raw JSON-RPC, not the SDK Client). Added as
+> [mcp.conformance.integration.test.ts](../../src/cli/commands/mcp.conformance.integration.test.ts):
+> 7 passing checks over a stdio `Client` — handshake + version negotiation, single-sourced
+> `serverInfo` (version === `package.json`), `tools`-only capabilities, complete single-page
+> ListTools, a CallTool round-trip, `-32602` for invalid args, and the unknown-tool `isError`
+> posture. The SDK Client parsing successfully also proves stdout hygiene and a clean `close()`.
+> Behavior-neutral: no handler/dispatch/protocol code changed.
 
 > The `Initialize` handler in [mcp.ts](../../src/cli/commands/mcp.ts) now negotiates protocol version
 > against the SDK's pinned `SUPPORTED_PROTOCOL_VERSIONS` (echo the client's version when supported,
@@ -16,18 +27,18 @@ Branch: `openlore-spec-12-mcp-protocol-conformance`. **DONE** (in PR #117).
 > input validation throwing `McpError(ErrorCode.InvalidParams)`; tool-execution failures stay
 > `isError: true` results.
 
-- [ ] Pin the MCP protocol version the installed SDK targets and document it in the spec / PR.
-- [ ] Conformance audit of the `Initialize` / `ListTools` / `CallTool` handlers against that protocol version.
-- [ ] Make the advertised `capabilities` object honest (only `tools`, with `listChanged` only if implemented).
-- [ ] Make `serverInfo` correct and consistent (single source for name + real package version).
-- [ ] Protocol-version handling in the initialize result follows the spec negotiation rule.
-- [ ] Map argument/validation failures (spec-10) to JSON-RPC `-32602`; keep tool-execution failures as `isError: true` results.
-- [ ] Unknown tool name and unknown method return the correct error shape (`-32601` for unknown method).
-- [ ] Decide and implement `ListTools` pagination posture (cursor support, or single-page with a test that proves it).
-- [ ] stdout hygiene guard: a test proves only JSON-RPC bytes reach stdout in mcp mode.
-- [ ] Clean shutdown on stdin EOF / SIGTERM / SIGINT; no unhandled-rejection crash.
-- [ ] Protocol conformance test suite using the SDK `Client` over an in-memory / piped transport.
-- [ ] `lint`, `typecheck`, `test:run`, `build` all green; integration suite green.
+- [x] Pin the MCP protocol version the installed SDK targets and document it in the spec / PR.
+- [x] Conformance audit of the `Initialize` / `ListTools` / `CallTool` handlers against that protocol version.
+- [x] Make the advertised `capabilities` object honest (only `tools`, with `listChanged` only if implemented).
+- [x] Make `serverInfo` correct and consistent (single source for name + real package version).
+- [x] Protocol-version handling in the initialize result follows the spec negotiation rule.
+- [x] Map argument/validation failures (spec-10) to JSON-RPC `-32602`; keep tool-execution failures as `isError: true` results.
+- [x] Unknown tool name and unknown method return the correct error shape (`-32601` for unknown method).
+- [x] Decide and implement `ListTools` pagination posture (cursor support, or single-page with a test that proves it).
+- [x] stdout hygiene guard: a test proves only JSON-RPC bytes reach stdout in mcp mode.
+- [x] Clean shutdown on stdin EOF / SIGTERM / SIGINT; no unhandled-rejection crash.
+- [x] Protocol conformance test suite using the SDK `Client` over an in-memory / piped transport.
+- [x] `lint`, `typecheck`, `test:run`, `build` all green; integration suite green.
 
 ## Context for you (the agent)
 

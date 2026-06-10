@@ -25,7 +25,7 @@ re-measured live and refreshed honestly (Spec 25 honesty contract applies).
   orient call (lean or rich) — one extra round-trip + its response — costs more than the whole answer.
   Lean cuts the *payload* 40% (helps every orient call, especially deep ones and borderline cases) but
   cannot remove the *round-trip*, which is the dominant cost on trivial tasks. Reported, not buried.
-- [ ] **P4 — Advisory orientation (explored, NOT implemented).** The only lever left for the trivial
+- [ ] **P4 — Advisory orientation (DEFERRED — explored, deliberately NOT implemented).** The only lever left for the trivial
   case is *not making the orient round-trip at all* — but the data is a coin-flip (chalk benefits from
   orienting, express doesn't), and an agent can't reliably tell ahead of time, so forcing the choice
   risks the deep-task win. We deliberately do not ship a heuristic that guesses. The honest answer

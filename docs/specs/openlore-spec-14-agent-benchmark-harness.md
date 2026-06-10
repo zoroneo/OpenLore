@@ -36,7 +36,7 @@ Branch: `openlore-spec-14-agent-benchmark-harness`. **DONE — harness built, tw
       round-trips, scaling with repo size (−21% on ~640–790-file repos), 100% correct.** Two-tier
       verdict (loses on small/shallow, wins on large/deep) documented in `docs/AGENT-BENCHMARKS.md`;
       README corrected to cite the measured numbers. Resolves the #108 kill-signal.
-- [ ] **Future levers (not blocking):** response compaction (CodeGraph-style "adaptive sizing") to
+- [ ] **Future levers (DEFERRED — not blocking; spec is DONE):** response compaction (CodeGraph-style "adaptive sizing") to
       grow the cost win toward their 25–35%; capture real tool-call counts via `--output-format
       stream-json`; add to CI as a tracked (non-paid by default) artifact.
 
