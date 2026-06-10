@@ -1362,6 +1362,14 @@ const JAVA_CALL_QUERY = `
 
   (method_invocation
     name: (identifier) @call.name) @call.node
+
+  (object_creation_expression
+    type: (type_identifier) @call.name) @call.node
+
+  (object_creation_expression
+    type: (generic_type (type_identifier) @call.name)) @call.node
+
+  (method_reference (identifier) @call.name .) @call.node
 `;
 
 /**
@@ -1386,7 +1394,13 @@ function dedupeOverlappingCalls(
     const objectCapture = match.captures.find(c => c.name === 'call.object');
     if (!nameCapture || !nodeCapture) continue;
 
-    const key = nodeCapture.node.startIndex;
+    // Key by the callee NAME position, not the invocation node: in a chained
+    // call like `a.b().c()` the inner and outer method_invocation nodes share a
+    // startIndex (both begin at `a`), so keying by the node would collapse them
+    // and drop the outer `.c()` call. The name identifiers (`b`, `c`) are at
+    // distinct positions, while the two overlapping patterns for ONE call (the
+    // bug we are deduping) capture the SAME name node — exactly the right key.
+    const key = nameCapture.node.startIndex;
     const existing = callByNode.get(key);
     // First match for this call site, or upgrade a bare match to the qualified one.
     if (!existing || (objectCapture && !existing.calleeObject)) {
@@ -1427,11 +1441,18 @@ async function extractJavaGraph(
     const name = nameCapture.node.text;
     const fnNode = nodeCapture.node;
 
-    // Find enclosing class/interface/enum
+    // Find enclosing class/interface/enum/record. Walk to the NEAREST type so a
+    // method inside `record LineItem { … }` nested in an outer class is attributed
+    // to LineItem, not the outer class.
     let className: string | undefined;
     let cursor = fnNode.parent;
     while (cursor) {
-      if (cursor.type === 'class_declaration' || cursor.type === 'interface_declaration' || cursor.type === 'enum_declaration') {
+      if (
+        cursor.type === 'class_declaration' ||
+        cursor.type === 'interface_declaration' ||
+        cursor.type === 'enum_declaration' ||
+        cursor.type === 'record_declaration'
+      ) {
         const nameNode = cursor.children.find(c => c.type === 'identifier');
         if (nameNode) className = nameNode.text;
         break;
@@ -1441,6 +1462,7 @@ async function extractJavaGraph(
 
     const isAsync = false; // Java uses Future/CompletableFuture, not async keyword
     const id = className ? `${filePath}::${className}.${name}` : `${filePath}::${name}`;
+    if (nodes.some(n => n.id === id)) continue; // collapse overloads (same name) to one node
     nodes.push({
       id, name, filePath, className,
       isAsync,
@@ -2767,11 +2789,17 @@ export class CallGraphBuilder {
         }
       }
 
-      // Strategy 1b — Swift/C++ type-name resolution (capitalized receiver = type/class reference)
-      // In Swift and C++, there are no intra-module imports, so cross-file calls appear as
-      // TypeName.method() or TypeName::method(). A capitalized receiver with no same-file
-      // class of that name is a reliable signal for a cross-file type reference.
-      if (!calleeNode && raw.calleeObject && (callerNode.language === 'Swift' || callerNode.language === 'C++')) {
+      // Strategy 1b — type-name resolution (capitalized receiver = type/class reference).
+      // In Swift and C++ there are no intra-module imports, so cross-file calls appear
+      // as TypeName.method() / TypeName::method(). Java has the same shape for static
+      // calls and same-file nested types (Money.of(), Outer.Inner.make()) that imports
+      // don't cover. A capitalized receiver is a reliable signal for a class reference
+      // in these languages (variables are conventionally lower-case), so resolve it to
+      // the matching internal type member before falling back to import/external.
+      if (
+        !calleeNode && raw.calleeObject &&
+        (callerNode.language === 'Swift' || callerNode.language === 'C++' || callerNode.language === 'Java')
+      ) {
         const ch = raw.calleeObject.charCodeAt(0);
         const isCapitalized = ch >= 65 && ch <= 90; // A-Z
         if (isCapitalized) {
