@@ -1,5 +1,8 @@
 # OpenLore Spec 02 — Canonical Claude Code Skill Bundle
 
+> **Status (verified 2026-06-09): IMPLEMENTED.** The skill bundle ships under `skills/` and is wired
+> into the install flow (`src/cli/install/`). No pending work.
+
 > A Claude Code prompt. Paste into a fresh session opened at the OpenLore repo root.
 
 ---

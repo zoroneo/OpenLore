@@ -1,5 +1,10 @@
 # OpenLore Spec 01 — `openlore install` Auto-Configure Command
 
+> **Status (verified 2026-06-09): IMPLEMENTED.** `openlore install` / `openlore setup` ship
+> (`src/cli/install/`, `src/cli/commands/setup.ts`, registered in `src/cli/index.ts`); see
+> [docs/install.md](../install.md). The `TODO(spec-01-followup)` markers in the body are deferred
+> enhancements, not pending work.
+
 > A Claude Code prompt. Paste this into a fresh Claude Code session opened at the OpenLore repo root. Treat this file as the **complete spec**: nothing else needs to be loaded.
 
 ---

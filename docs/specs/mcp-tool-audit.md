@@ -1,5 +1,9 @@
 # MCP Tool Surface Audit (Spec 11)
 
+> **Status (verified 2026-06-09): COMPLETE (reference).** This is the M1 audit deliverable for
+> [spec-11](openlore-spec-11-mcp-tool-surface-audit.md); its conclusion (surface is coherent, no
+> renames/merges; annotations + descriptions in place) is implemented. Reference doc, not pending work.
+
 > Audit of all 49 MCP tools: purpose, overlap, and a keep / merge / rename recommendation.
 > Conclusion up front: **the surface is coherent — no renames or merges are required.** Names
 > follow a consistent `verb_noun` / `get_<noun>` convention; overlaps are intentional

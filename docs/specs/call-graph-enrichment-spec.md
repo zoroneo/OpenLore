@@ -1,5 +1,9 @@
 # Spec — Enrichissement du call graph (tous langages)
 
+> **Status (verified 2026-06-09): IMPLEMENTED.** The 8-phase call-graph enrichment shipped in commit
+> `9db1d5e` ("feat(call-graph): implement 8-phase call graph enrichment"). The per-language diagnostic
+> table below reflects the pre-enrichment baseline; treat it as historical context, not pending work.
+
 **Date :** 2026-03-15
 **Priorité :** Python > C++ > TypeScript > Go > Rust > Java > Ruby
 **Principe :** 3 composants transversaux (Phases 1–3) bénéficient à tous les langages. Les Phases 4–5 sont par langage.
