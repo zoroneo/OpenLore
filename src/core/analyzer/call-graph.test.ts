@@ -520,7 +520,7 @@ public class Pay {
   it('captures constructor calls, method references, and chained calls', async () => {
     // Java patterns previously missing/dropped: `new Foo()` (object_creation),
     // `this::m` (method_reference), and the outer call of a chain `a.b().c()`
-    // (the dedup keyed by the invocation node, which a/​b share a start with c).
+    // distinct calls keyed by callee-name position so both survive the dedup).
     const builder = new CallGraphBuilder();
     const result = await builder.build([{
       path: 'Svc.java',
