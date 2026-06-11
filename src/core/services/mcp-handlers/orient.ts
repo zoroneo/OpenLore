@@ -31,6 +31,9 @@ import {
   compositeScore,
   buildReason,
 } from './semantic.js';
+import { memoryFreshness, decisionAnchors } from '../../decisions/anchor.js';
+import { makeFreshnessView } from '../../decisions/anchor-adapter.js';
+import type { MemoryFreshness } from '../../../types/index.js';
 
 // ============================================================================
 // MANIFEST CACHE
@@ -393,8 +396,16 @@ export async function handleOrient(
     title: string;
     status: string;
     affectedDomains: string[];
+    /** Deterministic freshness of the decision against the current graph (spec: code-anchored memory). */
+    freshness?: MemoryFreshness;
+    /** Set when freshness is `drifted`: the described code changed since the decision was recorded. */
+    verify?: boolean;
   }
   let pendingDecisions: DecisionSummary[] | undefined;
+  // Decisions whose code anchors are gone — surfaced separately, NEVER as
+  // authoritative context (the bullet-proof guarantee). The agent must re-anchor
+  // or sync them rather than act on them.
+  let staleDecisions: DecisionSummary[] | undefined;
   if (!lean) try {
     const { loadDecisionStore, INACTIVE_STATUSES } = await import('../../decisions/store.js');
     const store = await loadDecisionStore(absDir);
@@ -410,12 +421,30 @@ export async function handleOrient(
       return false;
     });
     if (active.length > 0) {
-      pendingDecisions = active.map((d) => ({
-        id: d.id,
-        title: d.title,
-        status: d.status,
-        affectedDomains: d.affectedDomains,
-      }));
+      // Compute a freshness verdict per decision when the graph is available.
+      // Without an edge store we cannot verify, so we surface decisions unannotated
+      // rather than falsely flagging them stale.
+      const es = llmCtx?.edgeStore;
+      const view = es ? makeFreshnessView(es, absDir) : null;
+      const authoritative: DecisionSummary[] = [];
+      const stale: DecisionSummary[] = [];
+      for (const d of active) {
+        const base: DecisionSummary = {
+          id: d.id,
+          title: d.title,
+          status: d.status,
+          affectedDomains: d.affectedDomains,
+        };
+        if (view) {
+          const f = memoryFreshness(decisionAnchors(d), view);
+          base.freshness = f.freshness;
+          if (f.freshness === 'drifted') base.verify = true;
+          if (f.freshness === 'orphaned') { stale.push(base); continue; }
+        }
+        authoritative.push(base);
+      }
+      if (authoritative.length > 0) pendingDecisions = authoritative;
+      if (stale.length > 0) staleDecisions = stale;
     }
   } catch {
     // non-fatal — decisions feature may not be initialised
@@ -672,6 +701,7 @@ export async function handleOrient(
     insertionPoints,
     ...(matchingSpecs !== undefined ? { matchingSpecs } : {}),
     ...(pendingDecisions !== undefined ? { pendingDecisions } : {}),
+    ...(staleDecisions !== undefined ? { staleDecisions } : {}),
     ...(governingDecisions !== undefined ? { governingDecisions } : {}),
     ...(provenance !== undefined ? { provenance } : {}),
     ...(changeCoupling !== undefined ? { changeCoupling } : {}),

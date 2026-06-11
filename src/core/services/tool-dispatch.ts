@@ -54,6 +54,7 @@ import {
   handleRejectDecision,
   handleSyncDecisions,
 } from './mcp-handlers/decisions.js';
+import { handleRemember, handleRecall, type AnchorHint } from './mcp-handlers/memory.js';
 import {
   handleAnalyzeCodebase,
   handleGetArchitectureOverview,
@@ -293,6 +294,13 @@ export async function dispatchTool(
   } else if (name === 'sync_decisions') {
     const { directory, dryRun = false, id } = args as { directory: string; dryRun?: boolean; id?: string };
     return handleSyncDecisions(directory, dryRun, id);
+  } else if (name === 'remember') {
+    const { directory, content, anchors, tags } =
+      args as { directory: string; content: string; anchors?: AnchorHint[]; tags?: string[] };
+    return handleRemember(directory, content, anchors, tags);
+  } else if (name === 'recall') {
+    const { directory, task, limit = 10 } = args as { directory: string; task?: string; limit?: number };
+    return handleRecall(directory, task, limit);
   }
   throw new UnknownToolError(name);
 }

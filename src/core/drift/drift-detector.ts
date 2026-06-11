@@ -20,6 +20,11 @@ import { matchFileToDomains, getSpecContent, type ADRMap } from './spec-mapper.j
 import { getFileDiff } from './git-diff.js';
 import type { LLMService } from '../services/llm-service.js';
 import logger from '../../utils/logger.js';
+import { loadDecisionStore, INACTIVE_STATUSES } from '../decisions/store.js';
+import { loadMemoryStore } from '../decisions/memory-store.js';
+import { AnchorContext } from '../decisions/anchor-adapter.js';
+import { memoryFreshness, decisionAnchors } from '../decisions/anchor.js';
+import type { StructuralAnchor, AnchorVerdict } from '../../types/index.js';
 
 // ============================================================================
 // TYPES
@@ -610,6 +615,83 @@ function parseLLMClassification(content: string): LLMClassification | null {
 /**
  * Run all drift detection algorithms and produce a combined result
  */
+/**
+ * Detect code-anchored memory that has gone stale against the current call graph
+ * (change: add-code-anchored-memory-staleness). Scans active decisions and
+ * `remember` notes, computing a deterministic freshness verdict per memory:
+ *   - orphaned (anchored code gone)    → `memory-orphaned` (warning)
+ *   - drifted  (anchored code changed) → `memory-drifted`  (info)
+ *   - fresh                            → no issue
+ *
+ * Unlike the diff-based detectors this is a full-store scan of the current state,
+ * not a function of the changeset — a memory is stale because the code moved,
+ * regardless of what this commit touched. Returns [] when no analysis exists
+ * (freshness is unverifiable without the graph) — never a false "stale".
+ */
+export async function detectMemoryStaleness(rootPath: string): Promise<DriftIssue[]> {
+  const ctx = AnchorContext.open(rootPath);
+  if (!ctx) return [];
+  try {
+    const view = ctx.freshnessView();
+    const [decisionStore, memStore] = await Promise.all([
+      loadDecisionStore(rootPath),
+      loadMemoryStore(rootPath),
+    ]);
+    const issues: DriftIssue[] = [];
+
+    for (const d of decisionStore.decisions) {
+      if (INACTIVE_STATUSES.has(d.status)) continue;
+      const anchors = decisionAnchors(d);
+      if (anchors.length === 0) continue;
+      const f = memoryFreshness(anchors, view);
+      if (f.freshness === 'fresh') continue;
+      issues.push(makeMemoryStalenessIssue('decision', d.id, d.title, f.freshness, f.verdicts, d.affectedDomains[0] ?? null));
+    }
+
+    for (const m of memStore.memories) {
+      if (m.anchors.length === 0) continue;
+      const f = memoryFreshness(m.anchors, view);
+      if (f.freshness === 'fresh') continue;
+      issues.push(makeMemoryStalenessIssue('note', m.id, m.content, f.freshness, f.verdicts, null));
+    }
+
+    return issues;
+  } finally {
+    ctx.close();
+  }
+}
+
+/** Build a DriftIssue for a stale (orphaned/drifted) memory. */
+function makeMemoryStalenessIssue(
+  memKind: 'decision' | 'note',
+  id: string,
+  text: string,
+  freshness: 'drifted' | 'orphaned',
+  verdicts: AnchorVerdict[],
+  domain: string | null,
+): DriftIssue {
+  const kind: DriftIssueKind = freshness === 'orphaned' ? 'memory-orphaned' : 'memory-drifted';
+  const offending = verdicts.find((v) => v.freshness === freshness)?.anchor as StructuralAnchor | undefined;
+  const label = text.length > 60 ? `${text.slice(0, 57)}…` : text;
+  const subject = offending?.symbolName ?? offending?.filePath ?? 'its anchored code';
+  return {
+    id: `${kind}:${memKind}:${id}`,
+    kind,
+    severity: freshness === 'orphaned' ? 'warning' : 'info',
+    message:
+      freshness === 'orphaned'
+        ? `${memKind === 'decision' ? 'Decision' : 'Memory'} "${label}" is anchored to ${subject}, which no longer exists.`
+        : `${memKind === 'decision' ? 'Decision' : 'Memory'} "${label}" is anchored to ${subject}, which changed since it was recorded.`,
+    filePath: offending?.filePath ?? '',
+    domain,
+    specPath: null,
+    suggestion:
+      freshness === 'orphaned'
+        ? `Re-record this ${memKind} against current code, or reject it — its subject was renamed, moved, or deleted.`
+        : `Verify this ${memKind} still holds and re-record it; the code it describes was modified.`,
+  };
+}
+
 export async function detectDrift(options: DriftDetectorOptions): Promise<DriftResult> {
   const startTime = Date.now();
   const { specMap, changedFiles, failOn, rootPath, domainFilter, openspecRelPath } = options;
@@ -634,8 +716,11 @@ export async function detectDrift(options: DriftDetectorOptions): Promise<DriftR
     adrOrphanedIssues = detectADROrphaned(options.adrMap, specMap);
   }
 
+  // Code-anchored memory staleness (full-state scan, independent of the diff).
+  const memoryStaleness = await detectMemoryStaleness(rootPath);
+
   // Combine all issues
-  let allIssues = [...gaps, ...stale, ...uncovered, ...orphaned, ...adrGaps, ...adrOrphanedIssues];
+  let allIssues = [...gaps, ...stale, ...uncovered, ...orphaned, ...adrGaps, ...adrOrphanedIssues, ...memoryStaleness];
 
   // Apply domain filter if provided — exclude null-domain issues too,
   // since the user only wants results for the specified domains
@@ -696,6 +781,8 @@ export async function detectDrift(options: DriftDetectorOptions): Promise<DriftR
       orphanedSpecs: dedupedIssues.filter(i => i.kind === 'orphaned-spec').length,
       adrGaps: dedupedIssues.filter(i => i.kind === 'adr-gap').length,
       adrOrphaned: dedupedIssues.filter(i => i.kind === 'adr-orphaned').length,
+      memoryDrifted: dedupedIssues.filter(i => i.kind === 'memory-drifted').length,
+      memoryOrphaned: dedupedIssues.filter(i => i.kind === 'memory-orphaned').length,
       total: dedupedIssues.length,
     },
     hasDrift,

@@ -20,6 +20,7 @@ import {
 } from '../../decisions/store.js';
 import { syncApprovedDecisions } from '../../decisions/syncer.js';
 import { buildSpecMap, matchFileToDomains } from '../../../core/drift/spec-mapper.js';
+import { AnchorContext } from '../../decisions/anchor-adapter.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { join } from 'node:path';
 import { OPENSPEC_DIR } from '../../../constants.js';
@@ -116,6 +117,26 @@ export async function handleRecordDecision(
       }
     }
 
+    // Resolve structural anchors deterministically against the call graph so the
+    // decision can self-invalidate when the code it describes changes/dies. Best
+    // effort: if no analysis exists yet, the decision is recorded unanchored and
+    // falls back to file-level freshness from affectedFiles at recall time.
+    let anchors: PendingDecision['anchors'];
+    if (affectedFiles?.length) {
+      const anchorCtx = AnchorContext.open(rootPath);
+      if (anchorCtx) {
+        try {
+          const resolved = anchorCtx.resolveDecisionAnchors(
+            affectedFiles,
+            `${title} ${rationale} ${consequences ?? ''}`,
+          );
+          if (resolved.length) anchors = resolved;
+        } finally {
+          anchorCtx.close();
+        }
+      }
+    }
+
     const decision: PendingDecision = {
       id,
       status: 'draft',
@@ -126,6 +147,7 @@ export async function handleRecordDecision(
       proposedRequirement: null,
       affectedDomains: inferredDomains,
       affectedFiles: affectedFiles ?? [],
+      anchors,
       supersedes,
       sessionId: store.sessionId,
       recordedAt: new Date().toISOString(),

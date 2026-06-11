@@ -228,7 +228,9 @@ export type DriftIssueKind =
   | 'uncovered' // New file/function with no matching spec at all
   | 'orphaned-spec' // Spec references files that no longer exist
   | 'adr-gap' // Code changed in domain referenced by an ADR
-  | 'adr-orphaned'; // ADR references domains that no longer exist in specs
+  | 'adr-orphaned' // ADR references domains that no longer exist in specs
+  | 'memory-drifted' // Code-anchored memory's subject changed since it was recorded
+  | 'memory-orphaned'; // Code-anchored memory's subject no longer exists
 
 export interface DriftOptions extends GlobalOptions {
   base: string;
@@ -268,6 +270,8 @@ export interface DriftResult {
     orphanedSpecs: number;
     adrGaps: number;
     adrOrphaned: number;
+    memoryDrifted: number;
+    memoryOrphaned: number;
     total: number;
   };
   hasDrift: boolean;
@@ -419,6 +423,14 @@ export interface PendingDecision {
   affectedDomains: string[];
   affectedFiles: string[];
 
+  /**
+   * Structural anchors binding this decision to the code it describes, resolved
+   * deterministically against the call graph at record time. Optional and
+   * additive: legacy decisions recorded before anchoring fall back to file-level
+   * freshness derived from `affectedFiles`. See {@link StructuralAnchor}.
+   */
+  anchors?: StructuralAnchor[];
+
   /** ID of a prior decision this one supersedes (agent signals a reversal) */
   supersedes?: string;
 
@@ -453,4 +465,68 @@ export interface DecisionStore {
   /** Set after consolidation runs — gate uses this to skip no_decisions_recorded warning */
   lastConsolidatedAt?: string;
   decisions: PendingDecision[];
+}
+
+// ============================================================================
+// CODE-ANCHORED MEMORY (change: add-code-anchored-memory-staleness)
+// ============================================================================
+
+/**
+ * A structural anchor binds a persisted memory to the code it describes so that
+ * the memory can self-invalidate deterministically when that code changes or
+ * dies. Resolution and freshness use only static analysis — no LLM.
+ *
+ * - Symbol-level anchor: `nodeId` + `symbolName` set, `contentHash` is the hash
+ *   of the function's source span captured at record time.
+ * - File-level anchor: only `filePath` set (with optional `contentHash` = the
+ *   file's content hash at record time). Used when no symbol resolves, and for
+ *   legacy decisions backfilled from `affectedFiles`.
+ */
+export interface StructuralAnchor {
+  /** Call-graph node id; absent for a file-level anchor. */
+  nodeId?: string;
+  /** Symbol name resolved at record time; absent for a pure file-level anchor. */
+  symbolName?: string;
+  /** Repo-relative path of the anchored file. Always present. */
+  filePath: string;
+  /**
+   * Hash of the anchored span at record time. For a symbol anchor, the function
+   * source span; for a file anchor, the whole-file content. Absent for a truly
+   * legacy file anchor with no captured baseline (only existence can be checked).
+   */
+  contentHash?: string;
+}
+
+/** Deterministic freshness verdict for a single anchor or an aggregated memory. */
+export type MemoryFreshness = 'fresh' | 'drifted' | 'orphaned';
+
+/** The freshness of one anchor, with the new location when a rename was detected. */
+export interface AnchorVerdict {
+  anchor: StructuralAnchor;
+  freshness: MemoryFreshness;
+  /** New location when the anchored symbol was confidently renamed/relocated. */
+  relocatedTo?: string;
+}
+
+/**
+ * A general, code-anchored agent memory (kind `note`) — the substrate behind the
+ * `remember`/`recall` tools. Stored separately from the decision gate in
+ * .openlore/memory/notes.json so it never touches the commit pipeline.
+ */
+export interface AnchoredMemory {
+  /** Stable 8-char content-derived id. */
+  id: string;
+  kind: 'note';
+  content: string;
+  anchors: StructuralAnchor[];
+  recordedAt: string;
+  /** Free-form retrieval tags (optional). */
+  tags?: string[];
+}
+
+/** Persistent store written to .openlore/memory/notes.json */
+export interface MemoryStore {
+  version: '1';
+  updatedAt: string;
+  memories: AnchoredMemory[];
 }

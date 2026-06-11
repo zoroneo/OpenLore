@@ -82,6 +82,8 @@ const TOOL_WEIGHTS: Record<string, number> = {
   list_spec_domains: 1,
   list_decisions: 1,
   record_decision: 1,
+  remember: 1,
+  recall: 2,
   get_env_vars: 1,
   get_external_packages: 1,
 

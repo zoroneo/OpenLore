@@ -1423,6 +1423,50 @@ export const TOOL_DEFINITIONS = [
       required: ['directory'],
     },
   },
+  {
+    name: 'remember',
+    description:
+      'Persist a durable, code-anchored memory for future sessions to recall (an invariant, ' +
+      'gotcha, or rationale). Pass anchors (a symbol and/or file) so the memory self-invalidates ' +
+      'when that code changes or dies. For decisions that sync to specs, use record_decision.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: DIR_DESC },
+        content: { type: 'string', description: 'The memory to persist (one self-contained fact).' },
+        anchors: {
+          type: 'array',
+          description: 'Code this memory is about; each anchor names a symbol and/or file.',
+          items: {
+            type: 'object',
+            properties: {
+              symbol: { type: 'string', description: 'Function/method name (optional)' },
+              file: { type: 'string', description: 'Repo-relative file path (optional)' },
+            },
+          },
+        },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Optional retrieval tags.' },
+      },
+      required: ['directory', 'content'],
+    },
+  },
+  {
+    name: 'recall',
+    description:
+      'Recall code-anchored memories (notes + decisions) for a task, each with a deterministic ' +
+      'freshness verdict vs the current graph: fresh, drifted (code changed — verify), or orphaned ' +
+      '(code gone). Orphaned memories go in needsReanchoring, never authoritative. Omit task to ' +
+      'scan all memory for staleness.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: DIR_DESC },
+        task: { type: 'string', description: 'What you are about to work on (optional).' },
+        limit: { type: 'number', description: 'Max memories to return (default: 10).' },
+      },
+      required: ['directory'],
+    },
+  },
 ];
 
 // ============================================================================
@@ -1451,6 +1495,7 @@ const TOOL_ANNOTATIONS: Record<string, typeof _RO | typeof _RWI | typeof _RW> = 
   get_test_coverage: _RO, get_minimal_context: _RO, get_cluster: _RO,
   detect_changes: _RO, record_decision: _RW, list_decisions: _RO,
   approve_decision: _RWI, reject_decision: _RWI, sync_decisions: _RWI,
+  remember: _RW, recall: _RO,
 };
 
 // Tools that touch external entities (LLM / network) → openWorldHint: true.
@@ -1489,6 +1534,13 @@ export const TOOL_PRESETS: Record<string, Set<string>> = {
     'orient', 'search_code', 'get_subgraph', 'trace_execution_path',
     'analyze_impact', 'suggest_insertion_points', 'get_function_skeleton',
     'get_landmarks', 'get_map', 'find_path',
+  ]),
+  // Code-anchored persistent memory (opt-in): orient to ground, remember to
+  // persist a code-anchored note, recall to retrieve with a freshness verdict.
+  // Deliberately NOT in the default or `minimal` surface (mcp-quality: minimize
+  // the tools an agent must consider).
+  memory: new Set([
+    'orient', 'remember', 'recall',
   ]),
 };
 

@@ -20,8 +20,14 @@
 | Finding spec requirements by meaning | `search_specs` |
 | Checking spec coverage before starting a feature | `audit_spec_coverage` |
 | Recording an architectural decision before writing code | `record_decision` |
+| Persisting a durable, code-anchored fact for later sessions | `remember` (opt-in `memory` preset) — anchors a note to a symbol/file so it self-invalidates |
+| Recalling what's known about code you're touching | `recall` (opt-in `memory` preset) — returns memories with a freshness verdict; never serves orphaned ones as authoritative |
 
 For all other cases (reading a file, grepping, listing files) use native tools directly.
+
+> **Memory tools (`remember`/`recall`) are opt-in:** they ship in the `memory` preset
+> (`openlore mcp --preset memory`), not the default or `minimal` surface, per the
+> `mcp-quality` minimize-tool-surface rule.
 
 > **Authoring a new MCP tool?** Classify it `conclusion` or `explicit-topology` in
 > `src/core/services/mcp-handlers/tool-contract.ts` — `tool-contract.test.ts` fails until you do.

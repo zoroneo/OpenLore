@@ -560,6 +560,12 @@ export const OPENLORE_DECISIONS_SUBDIR = 'decisions';
 /** Filename for the pending decisions store */
 export const DECISIONS_PENDING_FILE = 'pending.json';
 
+/** Sub-directory inside OPENLORE_DIR where code-anchored agent memory (notes) is stored */
+export const OPENLORE_MEMORY_SUBDIR = 'memory';
+
+/** Filename for the anchored-memory (notes) store */
+export const MEMORY_NOTES_FILE = 'notes.json';
+
 /** Maximum number of changed files passed to the consolidation LLM */
 export const DECISIONS_EXTRACTION_MAX_FILES = 50;
 

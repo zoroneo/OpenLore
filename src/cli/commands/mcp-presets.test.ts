@@ -154,8 +154,11 @@ describe('tools/list payload budget (spec-28)', () => {
   // preset — each a conscious budget decision, not silent drift.
   // Full ceiling bumped 48_000 → 50_000 when the navigation primitives get_landmarks,
   // get_map, and find_path were added to the surface — a conscious budget decision.
+  // Bumped 50_000 → 52_000 when the opt-in `memory` preset's remember/recall were added
+  // (code-anchored persistent memory) — again a conscious decision, not silent drift. The
+  // two tools stay out of the default/minimal surface; only the full surface widens.
   it('full surface stays within its prefix budget', () => {
-    expect(payloadBytes({})).toBeLessThan(50_000);
+    expect(payloadBytes({})).toBeLessThan(52_000);
   });
 
   it('navigation preset stays lean (the low-overhead surface that wins the benchmark)', () => {

@@ -167,6 +167,17 @@ export const TOOL_REGISTRY: Record<string, ToolPlan> = {
   },
   sync_decisions: { kind: 'mutating', buildArgs: (f) => ({ directory: f.directory, dryRun: true }) },
 
+  // ── code-anchored memory ───────────────────────────────────────────────────
+  remember: {
+    kind: 'mutating',
+    buildArgs: (f) => ({
+      directory: f.directory,
+      content: 'spec-09 live-data harness probe (behavior-neutral).',
+      anchors: f.filePath ? [{ file: f.filePath }] : undefined,
+    }),
+  },
+  recall: { kind: 'read', buildArgs: (f) => ({ directory: f.directory, limit: 5 }) },
+
   // ── LLM-backed tools (openWorldHint) ─────────────────────────────────────
   // generate_tests has a deterministic no-LLM path (useLlm:false + dryRun:true), so
   // it is genuinely exercised offline — classified 'read', not 'llm'.
