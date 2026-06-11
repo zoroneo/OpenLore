@@ -24,6 +24,7 @@ import { handleFindDeadCode } from './mcp-handlers/reachability.js';
 import { handleStructuralDiff } from './mcp-handlers/structural-diff.js';
 import { handleGetChangeCoupling } from './mcp-handlers/change-coupling.js';
 import { handleGetHealthMap } from './mcp-handlers/health-map.js';
+import { handleGetSurprisingConnections } from './mcp-handlers/surprising-connections.js';
 import { handleGetLandmarks } from './mcp-handlers/landmarks.js';
 import { handleGetMap } from './mcp-handlers/map.js';
 import { handleFindPath } from './mcp-handlers/pathfind.js';
@@ -281,6 +282,9 @@ export async function dispatchTool(
   } else if (name === 'get_health_map') {
     const { directory, limit } = args as { directory: string; limit?: number };
     return handleGetHealthMap({ directory, limit });
+  } else if (name === 'get_surprising_connections') {
+    const { directory, limit } = args as { directory: string; limit?: number };
+    return handleGetSurprisingConnections({ directory, limit });
   } else if (name === 'record_decision') {
     const { directory, title, rationale, consequences, affectedFiles, supersedes, scope } =
       args as { directory: string; title: string; rationale: string; consequences?: string; affectedFiles?: string[]; supersedes?: string; scope?: DecisionScope };

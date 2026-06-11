@@ -1341,6 +1341,25 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'get_surprising_connections',
+    description:
+      'Find unexpected structural coupling via composite scoring: cross-community edges, ' +
+      'peripheral-to-hub calls, and cross-test-boundary dependencies. ' +
+      'Use before a refactor or code review to spot accidental dependencies. ' +
+      'Run analyze_codebase first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: DIR_DESC },
+        limit: {
+          type: 'number',
+          description: 'Max results to return (default: 15, max: 50)',
+        },
+      },
+      required: ['directory'],
+    },
+  },
+  {
     name: 'record_decision',
     description:
       'Record an architectural decision made during the current development session. ' +
@@ -1469,7 +1488,7 @@ const TOOL_ANNOTATIONS: Record<string, typeof _RO | typeof _RWI | typeof _RW> = 
   get_schema_inventory: _RO, get_ui_components: _RO, get_env_vars: _RO,
   get_external_packages: _RO, audit_spec_coverage: _RO, generate_tests: _RW,
   get_test_coverage: _RO, get_minimal_context: _RO, get_cluster: _RO,
-  detect_changes: _RO, get_health_map: _RO, record_decision: _RW, list_decisions: _RO,
+  detect_changes: _RO, get_health_map: _RO, get_surprising_connections: _RO, record_decision: _RW, list_decisions: _RO,
   approve_decision: _RWI, reject_decision: _RWI, sync_decisions: _RWI,
 };
 

@@ -105,7 +105,7 @@ describe('handleGetHealthMap — empty graph', () => {
   it('returns zero-counts on an empty graph', async () => {
     mockCtx.mockResolvedValue({ callGraph: graph([], []) } as never);
     const r = await handleGetHealthMap({ directory: '/p' }) as {
-      summary: { totalFunctions: number; hubCount: number; godFunctionCount: number; layerViolationCount: number; volatileFileCount: number };
+      summary: { totalFunctions: number; hubCount: number; godFunctionCount: number; layerViolationCount: number; volatileFileCount: number; bridgeCount: number; untestedHotspotCount: number };
       topRisks: unknown[];
     };
     expect(r.summary).toEqual({
@@ -114,6 +114,8 @@ describe('handleGetHealthMap — empty graph', () => {
       godFunctionCount: 0,
       layerViolationCount: 0,
       volatileFileCount: 0,
+      bridgeCount: 0,
+      untestedHotspotCount: 0,
     });
     expect(r.topRisks).toEqual([]);
   });

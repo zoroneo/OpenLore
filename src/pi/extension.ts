@@ -464,6 +464,20 @@ const NAV_TOOLS: NavToolSpec[] = [
     guideline: 'Use openlore_get_function_skeleton to read a file cheaply before opening it.',
     parameters: Type.Object({ filePath: Type.String() }),
   },
+  {
+    name: 'get_health_map',
+    label: 'openlore get_health_map',
+    description: 'Structural health dashboard: hubs, god functions, bridge nodes, untested hotspots, layer violations — ranked by severity. Start here before a refactor.',
+    guideline: 'Use openlore_get_health_map before any refactor to identify riskiest areas.',
+    parameters: Type.Object({ limit: Type.Optional(Type.Number()) }),
+  },
+  {
+    name: 'get_surprising_connections',
+    label: 'openlore get_surprising_connections',
+    description: 'Find unexpected coupling: cross-community edges, peripheral-to-hub calls, cross-test-boundary dependencies — scored by surprise.',
+    guideline: 'Use openlore_get_surprising_connections to spot accidental dependencies before a PR.',
+    parameters: Type.Object({ limit: Type.Optional(Type.Number()) }),
+  },
 ];
 
 function toolResult(text: string, details: unknown = null): AgentToolResult<unknown> {
