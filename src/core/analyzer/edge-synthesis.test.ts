@@ -661,6 +661,50 @@ describe('event-channel synthesis — Swift (NotificationCenter)', () => {
   });
 });
 
+describe('callback-registration synthesis', () => {
+  it('Go: http.HandleFunc / mux.HandleFunc / router.GET wire named handlers', async () => {
+    const b = await new CallGraphBuilder().build([{ path: 'main.go', language: 'Go', content: [
+      'package main',
+      'func handleX(w http.ResponseWriter, r *http.Request) {}',
+      'func handleZ(w http.ResponseWriter, r *http.Request) {}',
+      'func setup(mux *http.ServeMux, r *gin.Engine) {',
+      '  mux.HandleFunc("/x", handleX)',
+      '  r.GET("/z", handleZ)',
+      '}',
+    ].join('\n') }]);
+    expect(edgeBetween(b, 'setup', 'handleX')?.synthesizedBy).toBe('callback-registration');
+    expect(edgeBetween(b, 'setup', 'handleZ')?.synthesizedBy).toBe('callback-registration');
+  });
+
+  it('Go: a function passed to a non-registrar is not a callback', async () => {
+    const b = await new CallGraphBuilder().build([{ path: 'main.go', language: 'Go', content: [
+      'package main',
+      'func helper() {}',
+      'func setup() { register(helper) }', // `register` is not a curated registrar
+    ].join('\n') }]);
+    expect(synthEdges(b)).toHaveLength(0);
+  });
+
+  it('JS/TS: setTimeout/setInterval with a named function wire the callback', async () => {
+    const b = await new CallGraphBuilder().build([{ path: 'app.ts', language: 'TypeScript', content: [
+      'function tick() { return 1; }',
+      'function poll() { return 2; }',
+      'function start() { setTimeout(tick, 1000); setInterval(poll, 500); }',
+    ].join('\n') }]);
+    expect(edgeBetween(b, 'start', 'tick')?.synthesizedBy).toBe('callback-registration');
+    expect(edgeBetween(b, 'start', 'poll')?.synthesizedBy).toBe('callback-registration');
+  });
+
+  it('JS/TS: an inline arrow to setTimeout is NOT a callback-registration edge (direct resolution covers it)', async () => {
+    const b = await new CallGraphBuilder().build([{ path: 'app.ts', language: 'TypeScript', content: [
+      'function realTick() { return 1; }',
+      'function start() { setTimeout(() => realTick(), 1000); }',
+    ].join('\n') }]);
+    // No callback-registration edge from the inline arrow (the arrow body call is a direct edge).
+    expect(synthEdges(b).filter(e => e.synthesizedBy === 'callback-registration')).toHaveLength(0);
+  });
+});
+
 describe('event-channel synthesis — per-language isolation', () => {
   it('does not pair a Python registration with a JS/TS dispatch on the same key', async () => {
     const b = await new CallGraphBuilder().build([

@@ -125,6 +125,41 @@ edge rather than guess.
 - **WHEN** the call graph is built
 - **THEN** no synthesized edge is created between them
 
+### Requirement: CallbackRegistrationSynthesis
+
+The system SHALL recover edges for handlers that are **registered as callbacks** with a framework or
+runtime that later invokes them, where there is no in-code dispatch site to pair against. When a
+**named internal function** is passed as an argument to a **curated registrar** (an API known to
+invoke its callback), the system SHALL add an edge from the registration site's enclosing function to
+that handler, labeled `synthesizedBy: 'callback-registration'`. Only curated registrars SHALL match,
+so a function passed to an unrelated call is never treated as a callback; and inline function/closure
+arguments SHALL NOT be matched here (their bodies are already attributed to the enclosing function by
+direct resolution, so an edge would be redundant). Recovery is per-language; in effect it covers
+**Go** (`net/http` `HandleFunc`/`Handle` and router verbs `GET`/`POST`/… of gin/echo/chi) and
+**JavaScript/TypeScript** (scheduler registrars `setTimeout`/`setInterval`/`setImmediate`/
+`queueMicrotask`/`requestAnimationFrame`/`requestIdleCallback`/`nextTick`).
+
+#### Scenario: Go HTTP handler registered by name is reachable
+
+- **GIVEN** a function `handleX` passed to `mux.HandleFunc("/x", handleX)` (or `http.HandleFunc`, or a
+  router `GET("/x", handleX)`), with no direct call to `handleX`
+- **WHEN** the call graph is built
+- **THEN** a synthesized `callback-registration` edge exists from the registration's enclosing
+  function to `handleX`
+
+#### Scenario: JS/TS scheduler callback registered by name is reachable
+
+- **GIVEN** a named function `tick` passed to `setTimeout(tick, 1000)` (or `setInterval`), with no
+  direct call to `tick`
+- **WHEN** the call graph is built
+- **THEN** a synthesized `callback-registration` edge exists from the enclosing function to `tick`
+
+#### Scenario: A function passed to a non-registrar is not treated as a callback
+
+- **GIVEN** a named function passed as an argument to a call whose method is not a curated registrar
+- **WHEN** the call graph is built
+- **THEN** no `callback-registration` edge is synthesized for it
+
 ### Requirement: EdgeProvenanceLabeling
 
 The system SHALL label every synthesized edge with a provenance distinct from directly-resolved

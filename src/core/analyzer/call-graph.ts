@@ -3608,6 +3608,98 @@ async function synthesizeRouteHandlerEdges(
  * edges. Rules are independent and order-insensitive; failures are isolated so one
  * rule cannot abort the others (or the build).
  */
+// ── Callback-registration rule ────────────────────────────────────────────────
+// A NAMED internal function passed to a curated registrar that the framework/runtime
+// will later invoke (Go HTTP handlers, JS/TS schedulers). The edge runs from the
+// registration's enclosing function to the handler — the same shape as route-handler,
+// generalized. Inline closures are deliberately NOT matched here: direct resolution
+// already attributes a closure body's calls to its enclosing function, so a synthesized
+// edge would be redundant. Only well-known registrars are matched, so a function passed
+// to an unrelated call is never mistaken for a callback (false-negatives over false-positives).
+
+/** Go registrars whose function argument is an invoked handler (net/http + gin/echo/chi). */
+const GO_CALLBACK_REGISTRARS = new Set(['HandleFunc', 'Handle', 'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'Any', 'Use']);
+/** JS/TS scheduler/deferred registrars that reliably invoke their callback argument. */
+const TS_CALLBACK_REGISTRARS = new Set(['setTimeout', 'setInterval', 'setImmediate', 'queueMicrotask', 'requestAnimationFrame', 'requestIdleCallback', 'nextTick']);
+const GO_CALLBACK_PREFILTER = /\b(?:HandleFunc|Handle|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Any|Use)\s*\(/;
+const TS_CALLBACK_PREFILTER = /\b(?:setTimeout|setInterval|setImmediate|queueMicrotask|requestAnimationFrame|requestIdleCallback|nextTick)\s*\(/;
+
+/** Append a callback-registration edge (deduped on caller→callee). */
+function pushCallbackEdge(out: CallEdge[], seen: Set<string>, callerId: string, handler: FunctionNode, line: number): void {
+  if (callerId === handler.id) return;
+  const pair = `${callerId}\0${handler.id}`;
+  if (seen.has(pair)) return;
+  seen.add(pair);
+  out.push({ callerId, calleeId: handler.id, calleeName: handler.name, line, confidence: 'synthesized', kind: 'calls', callType: 'direct', synthesizedBy: 'callback-registration' });
+}
+
+/** Collect Go HTTP-handler callback registrations. */
+function collectGoCallbackEdges(tree: Parser.Tree, fileNodes: FunctionNode[], file: string, resolveHandler: HandlerResolver, out: CallEdge[], seen: Set<string>): void {
+  for (const call of tree.rootNode.descendantsOfType('call_expression')) {
+    const fn = call.childForFieldName('function');
+    const name = fn?.type === 'selector_expression' ? fn.childForFieldName('field')?.text : (fn?.type === 'identifier' ? fn.text : undefined);
+    if (!name || !GO_CALLBACK_REGISTRARS.has(name)) continue;
+    const caller = findEnclosingFunction(fileNodes, call.startIndex);
+    if (!caller) continue;
+    for (const arg of call.childForFieldName('arguments')?.namedChildren ?? []) {
+      const hname = arg.type === 'identifier' ? arg.text : (arg.type === 'selector_expression' ? arg.childForFieldName('field')?.text : undefined);
+      if (!hname) continue;
+      const h = resolveHandler(hname, file);
+      if (h) pushCallbackEdge(out, seen, caller.id, h, call.startPosition.row + 1);
+    }
+  }
+}
+
+/** Collect JS/TS scheduler callback registrations (named-function arguments only). */
+function collectTsCallbackEdges(tree: Parser.Tree, fileNodes: FunctionNode[], file: string, resolveHandler: HandlerResolver, out: CallEdge[], seen: Set<string>): void {
+  for (const call of tree.rootNode.descendantsOfType('call_expression')) {
+    const name = calleeMethodName(call.childForFieldName('function'));
+    if (!name || !TS_CALLBACK_REGISTRARS.has(name)) continue;
+    const caller = findEnclosingFunction(fileNodes, call.startIndex);
+    if (!caller) continue;
+    for (const arg of call.childForFieldName('arguments')?.namedChildren ?? []) {
+      const hname = arg.type === 'identifier' ? arg.text : (arg.type === 'member_expression' ? arg.childForFieldName('property')?.text : undefined);
+      if (!hname) continue; // skip inline arrow/function args — covered by direct resolution
+      const h = resolveHandler(hname, file);
+      if (h) pushCallbackEdge(out, seen, caller.id, h, call.startPosition.row + 1);
+    }
+  }
+}
+
+/** Callback-registration rule across languages (Go HTTP handlers, JS/TS schedulers). */
+async function synthesizeCallbackRegistrationEdges(
+  files: Array<{ path: string; content: string; language: string }>,
+  allNodes: Map<string, FunctionNode>,
+  resolveHandler: HandlerResolver,
+): Promise<CallEdge[]> {
+  const nodesByFile = new Map<string, FunctionNode[]>();
+  for (const n of allNodes.values()) {
+    if (n.isExternal) continue;
+    (nodesByFile.get(n.filePath) ?? nodesByFile.set(n.filePath, []).get(n.filePath)!).push(n);
+  }
+  const out: CallEdge[] = [];
+  const seen = new Set<string>();
+
+  const tsFiles = files.filter(f => (f.language === 'TypeScript' || f.language === 'JavaScript') && TS_CALLBACK_PREFILTER.test(f.content));
+  if (tsFiles.length > 0) {
+    const { parser } = await getTSParser();
+    for (const file of tsFiles) {
+      try { collectTsCallbackEdges((parser as Parser).parse(file.content), nodesByFile.get(file.path) ?? [], file.path, resolveHandler, out, seen); }
+      catch { /* skip */ }
+    }
+  }
+
+  const goFiles = files.filter(f => f.language === 'Go' && GO_CALLBACK_PREFILTER.test(f.content));
+  if (goFiles.length > 0) {
+    const { parser } = await getGoParser();
+    for (const file of goFiles) {
+      try { collectGoCallbackEdges((parser as Parser).parse(file.content), nodesByFile.get(file.path) ?? [], file.path, resolveHandler, out, seen); }
+      catch { /* skip */ }
+    }
+  }
+  return out;
+}
+
 export async function synthesizeDynamicDispatchEdges(
   files: Array<{ path: string; content: string; language: string }>,
   allNodes: Map<string, FunctionNode>,
@@ -3616,6 +3708,7 @@ export async function synthesizeDynamicDispatchEdges(
   const rules: Array<Promise<CallEdge[]>> = [
     synthesizeEventChannelEdges(files, allNodes, resolveHandler).catch(() => []),
     synthesizeRouteHandlerEdges(files, allNodes, resolveHandler).catch(() => []),
+    synthesizeCallbackRegistrationEdges(files, allNodes, resolveHandler).catch(() => []),
   ];
   const results = await Promise.all(rules);
   return results.flat();

@@ -86,6 +86,16 @@ step 1 (it extends a core data structure — `EdgeConfidence` / `CallEdge`).
 > is now recognized as a dead-code liveness root (was only `main`/`default`). Remaining OpenLore
 > languages (Go, Rust, C/C++, Scala, Elixir, Lua, Bash, Dart) have no statically-pairable key+handler
 > or type+handler event idiom, so by design they get no collector.
+>
+> **Callback-registration rule (spec: `CallbackRegistrationSynthesis`; `synthesizedBy:
+> 'callback-registration'`).** A NAMED internal function passed to a curated registrar that the
+> framework/runtime later invokes → edge from the registration's enclosing function to the handler
+> (route-handler generalized; no in-code dispatch to pair). **Go** (`net/http` `HandleFunc`/`Handle`
+> + gin/echo/chi router verbs) and **JS/TS** (schedulers `setTimeout`/`setInterval`/`setImmediate`/
+> `queueMicrotask`/`requestAnimationFrame`/`requestIdleCallback`/`nextTick`). Only curated registrars
+> match (a function passed to an unrelated call is never a callback); inline closures are skipped
+> (direct resolution already attributes their bodies). This is what makes Go HTTP handlers — which
+> route detection does not cover for Go — reachable instead of false-dead.
 
 ## 1. Provenance on the edge model
 - [ ] Add `'synthesized'` to `EdgeConfidence` (`call-graph.ts:30`) and `synthesizedBy?: string` to
