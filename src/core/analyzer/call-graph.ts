@@ -429,6 +429,7 @@ let _rubyParser: Parser | undefined;
 let _javaParser: Parser | undefined;
 let _cppParser: Parser | undefined;
 let _swiftParser: Parser | undefined;
+let _phpParser: Parser | undefined;
 let _TsLanguage: object | undefined;
 let _PyLanguage: object | undefined;
 let _GoLanguage: object | undefined;
@@ -437,6 +438,7 @@ let _RubyLanguage: object | undefined;
 let _JavaLanguage: object | undefined;
 let _CppLanguage: object | undefined;
 let _SwiftLanguage: object | undefined;
+let _PhpLanguage: object | undefined;
 
 async function getTSParser(): Promise<{ parser: Parser; lang: object }> {
   if (!_tsParser) {
@@ -496,6 +498,16 @@ async function getJavaParser(): Promise<{ parser: Parser; lang: object }> {
     (_javaParser as Parser).setLanguage(_JavaLanguage as unknown as Parser.Language);
   }
   return { parser: _javaParser!, lang: _JavaLanguage! };
+}
+
+async function getPhpParser(): Promise<{ parser: Parser; lang: object }> {
+  if (!_phpParser) {
+    const phpModule = await import('tree-sitter-php');
+    _PhpLanguage = (phpModule.default as { php: object }).php;
+    _phpParser = new Parser();
+    (_phpParser as Parser).setLanguage(_PhpLanguage as unknown as Parser.Language);
+  }
+  return { parser: _phpParser!, lang: _PhpLanguage! };
 }
 
 async function getCppParser(): Promise<{ parser: Parser; lang: object }> {
@@ -2726,8 +2738,12 @@ const EVENT_DISPATCH_METHODS = new Set(['emit', 'dispatch', 'publish', 'dispatch
 /** Ruby adds instrumentation/broadcast dispatch verbs (ActiveSupport::Notifications, pub/sub). */
 const RUBY_DISPATCH_METHODS = new Set([...EVENT_DISPATCH_METHODS, 'instrument', 'broadcast']);
 
+/** PHP register/dispatch verbs (Laravel `Event::listen`/`event()`, Symfony `addListener`/`dispatch`). */
+const PHP_REGISTER_METHODS = new Set(['listen', 'addListener', 'subscribe', 'on']);
+const PHP_DISPATCH_METHODS = new Set(['dispatch', 'emit', 'fire', 'publish', 'broadcast', 'event']);
+
 /** Single regex pre-filter so we only parse files that could contain a pattern. */
-const EVENT_PREFILTER = /\b(on|once|addListener|prependListener|prependOnceListener|addEventListener|subscribe|emit|dispatch|publish|dispatchEvent|instrument|broadcast)\s*\(/;
+const EVENT_PREFILTER = /\b(on|once|addListener|prependListener|prependOnceListener|addEventListener|subscribe|emit|dispatch|publish|dispatchEvent|instrument|broadcast|listen|fire|event)\s*\(/;
 
 /** Resolve a referenced simple name to a single internal function node, or undefined
  *  when unknown or ambiguous (never guesses). Prefers a match in `preferFile`. */
@@ -3063,6 +3079,79 @@ function collectRubyEventSites(
   }
 }
 
+/** Method name of a PHP call (`Cls::m()`, `$o->m()`, or `m()`). */
+function phpMethodName(call: Parser.SyntaxNode): string | undefined {
+  if (call.type === 'function_call_expression') return call.childForFieldName('function')?.text;
+  return call.childForFieldName('name')?.text; // scoped_/member_call_expression
+}
+
+/** Unwrap a PHP `arguments` node to its ordered argument VALUE nodes. */
+function phpArgValues(call: Parser.SyntaxNode): Parser.SyntaxNode[] {
+  const argsNode = call.childForFieldName('arguments');
+  return (argsNode?.namedChildren ?? []).map(a => (a.type === 'argument' ? a.namedChildren[0] ?? a : a));
+}
+
+/** Static string-literal channel key for a PHP value, or undefined. */
+function phpChannelKey(node: Parser.SyntaxNode | undefined): string | undefined {
+  if (!node || node.type !== 'string') return undefined; // encapsed_string (interpolated) excluded
+  const m = node.text.match(/^('|")([\s\S]*)\1$/);
+  return m ? `str:${m[2]}` : undefined;
+}
+
+/** Resolve a PHP handler value to node-ids: a `'fn'` string, `[Cls, 'method']`, or a closure. */
+function phpHandlerTargets(node: Parser.SyntaxNode | undefined, file: string, resolveHandler: HandlerResolver): string[] {
+  if (!node) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (raw: string | undefined): void => {
+    if (!raw) return;
+    const m = raw.match(/^('|")([\s\S]*)\1$/);
+    const name = (m ? m[2] : raw).split('\\').pop()?.split('::').pop();
+    if (!name) return;
+    const n = resolveHandler(name, file);
+    if (n && !seen.has(n.id)) { seen.add(n.id); out.push(n.id); }
+  };
+  if (node.type === 'string') { add(node.text); return out; }
+  if (node.type === 'array_creation_expression') {
+    // [$this, 'method'] / [Cls::class, 'method'] — the method name is a string element.
+    for (const el of node.descendantsOfType('string')) add(el.text);
+    return out;
+  }
+  if (node.type === 'anonymous_function' || node.type === 'anonymous_function_creation_expression' || node.type === 'arrow_function') {
+    for (const inner of node.descendantsOfType(['function_call_expression', 'scoped_call_expression', 'member_call_expression'])) {
+      add(phpMethodName(inner));
+    }
+    return out;
+  }
+  return [];
+}
+
+/** Collect PHP event-channel sites (Laravel `Event::listen`/`event()`, Symfony dispatcher). */
+function collectPhpEventSites(
+  tree: Parser.Tree, fileNodes: FunctionNode[], filePath: string,
+  resolveHandler: HandlerResolver, sites: EventSites,
+): void {
+  const calls = tree.rootNode.descendantsOfType(['scoped_call_expression', 'member_call_expression', 'function_call_expression']);
+  for (const call of calls) {
+    const method = phpMethodName(call);
+    if (!method) continue;
+    const args = phpArgValues(call);
+    if (PHP_REGISTER_METHODS.has(method)) {
+      const key = phpChannelKey(args[0]);
+      if (key !== undefined) {
+        const handlerIds = phpHandlerTargets(args[1], filePath, resolveHandler);
+        if (handlerIds.length) sites.registrations.push({ key, handlerIds });
+      }
+    } else if (PHP_DISPATCH_METHODS.has(method)) {
+      const key = phpChannelKey(args[0]);
+      if (key !== undefined) {
+        const caller = findEnclosingFunction(fileNodes, call.startIndex);
+        if (caller) sites.dispatches.push({ key, callerId: caller.id, line: call.startPosition.row + 1 });
+      }
+    }
+  }
+}
+
 /**
  * Event-channel rule: pair handler registrations (`on`/`once`/`addEventListener`/
  * `subscribe`/… with a static key) against dispatch sites (`emit`/`dispatch`/
@@ -3075,8 +3164,8 @@ function collectRubyEventSites(
  * Recovery is PER-LANGUAGE and added one language at a time: each language has its
  * own collector (its AST node types), but pairing/fan-out/provenance are shared, and
  * sites are paired only within their own language (no cross-language pairing). In
- * effect: JavaScript/TypeScript, Python, and Ruby. Languages whose event systems are
- * type-/annotation-/channel-based (Go, Java, C#, Rust, …) have no collector — the
+ * effect: JavaScript/TypeScript, Python, Ruby, and PHP. Languages whose event systems
+ * are type-/annotation-/channel-based (Go, Java, C#, Rust, …) have no collector — the
  * pass emits nothing for them rather than guess.
  */
 async function synthesizeEventChannelEdges(
@@ -3121,6 +3210,17 @@ async function synthesizeEventChannelEdges(
     const sites: EventSites = { registrations: [], dispatches: [] };
     for (const file of rubyFiles) {
       try { collectRubyEventSites((parser as Parser).parse(file.content), nodesByFile.get(file.path) ?? [], file.path, resolveHandler, sites); }
+      catch { /* skip unparseable file */ }
+    }
+    edges.push(...pairAndEmitEventEdges(sites, allNodes));
+  }
+
+  const phpFiles = files.filter(f => f.language === 'PHP' && EVENT_PREFILTER.test(f.content));
+  if (phpFiles.length > 0) {
+    const { parser } = await getPhpParser();
+    const sites: EventSites = { registrations: [], dispatches: [] };
+    for (const file of phpFiles) {
+      try { collectPhpEventSites((parser as Parser).parse(file.content), nodesByFile.get(file.path) ?? [], file.path, resolveHandler, sites); }
       catch { /* skip unparseable file */ }
     }
     edges.push(...pairAndEmitEventEdges(sites, allNodes));

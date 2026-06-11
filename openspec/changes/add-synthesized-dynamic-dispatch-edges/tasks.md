@@ -65,9 +65,11 @@ step 1 (it extends a core data structure — `EdgeConfidence` / `CallEdge`).
 >
 > Languages with a collector: **JS/TS**, **Python**, **Ruby** (symbol `:evt` + string keys; block,
 > `&proc`, and bareword-call handlers; pyee-style `on`/`emit` and ActiveSupport::Notifications
-> `subscribe`/`instrument`). Symbol keys and string keys are namespaced so `:mount` never pairs with
-> `'mount'`. Languages whose event systems are type-/annotation-/channel-based (Go, Java, C#, Rust,
-> Kotlin, …) intentionally have NO collector — the pass emits nothing for them rather than guess.
+> `subscribe`/`instrument`), **PHP** (Laravel `Event::listen`/`event()`, Symfony `addListener`/
+> `dispatch`; handler = `'fn'` string callable, `[$this, 'method']` array callable, or a closure).
+> Symbol keys and string keys are namespaced so `:mount` never pairs with `'mount'`. Languages whose
+> event systems are type-/annotation-/channel-based (Go, Java, C#, Rust, Kotlin, Elixir process-based
+> PubSub, …) intentionally have NO collector — the pass emits nothing for them rather than guess.
 
 ## 1. Provenance on the edge model
 - [ ] Add `'synthesized'` to `EdgeConfidence` (`call-graph.ts:30`) and `synthesizedBy?: string` to

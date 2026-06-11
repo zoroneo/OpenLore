@@ -410,6 +410,72 @@ describe('event-channel synthesis — Ruby', () => {
   });
 });
 
+describe('event-channel synthesis — PHP', () => {
+  const buildPhp = (content: string): Promise<Built> =>
+    new CallGraphBuilder().build([{ path: 'app.php', content, language: 'PHP' }]);
+
+  it('Laravel Event::listen with a string callable is reachable', async () => {
+    const b = await buildPhp([
+      '<?php',
+      'function on_created() { do_work(); }',
+      'function register() {',
+      "  Event::listen('user.created', 'on_created');",
+      '}',
+      'function trigger() {',
+      "  Event::dispatch('user.created');",
+      '}',
+    ].join('\n'));
+    const edge = edgeBetween(b, 'trigger', 'on_created');
+    expect(edge?.confidence).toBe('synthesized');
+    expect(edge?.synthesizedBy).toBe('event-channel');
+  });
+
+  it('Laravel closure handler + event() helper dispatch', async () => {
+    const b = await buildPhp([
+      '<?php',
+      'function on_updated() { do_work(); }',
+      'function register() {',
+      "  Event::listen('user.updated', function() { on_updated(); });",
+      '}',
+      'function trigger() {',
+      "  event('user.updated');",
+      '}',
+    ].join('\n'));
+    expect(edgeBetween(b, 'trigger', 'on_updated')?.synthesizedBy).toBe('event-channel');
+  });
+
+  it('Symfony addListener with a [$this, method] array callable', async () => {
+    const b = await buildPhp([
+      '<?php',
+      'class C {',
+      '  function on_x() { do_work(); }',
+      '  function register($d) {',
+      "    $d->addListener('x', [$this, 'on_x']);",
+      '  }',
+      '  function trigger($d) {',
+      "    $d->dispatch('x');",
+      '  }',
+      '}',
+    ].join('\n'));
+    expect(edgeBetween(b, 'trigger', 'on_x')?.synthesizedBy).toBe('event-channel');
+  });
+
+  it('PHP mismatched keys produce no edge', async () => {
+    const b = await buildPhp([
+      '<?php',
+      'function handler() { do_work(); }',
+      'function register() {',
+      "  Event::listen('open', 'handler');",
+      '}',
+      'function trigger() {',
+      "  Event::dispatch('close');",
+      '}',
+    ].join('\n'));
+    expect(edgeBetween(b, 'trigger', 'handler')).toBeUndefined();
+    expect(synthEdges(b)).toHaveLength(0);
+  });
+});
+
 describe('event-channel synthesis — per-language isolation', () => {
   it('does not pair a Python registration with a JS/TS dispatch on the same key', async () => {
     const b = await new CallGraphBuilder().build([
