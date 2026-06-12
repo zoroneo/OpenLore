@@ -756,7 +756,11 @@ describe('handleAnalyzeImpact — value-level opt-in', () => {
     const downstream = result.downstreamCriticalPath as Array<{ name: string }>;
     expect(blast.downstream).toBe(1);
     expect(downstream.map(d => d.name)).toEqual(['used']);
-    expect((result.valueLevel as { applied: boolean }).applied).toBe(true);
+    const vl = result.valueLevel as { applied: boolean; precision?: string };
+    expect(vl.applied).toBe(true);
+    // Cross-call dependence is labeled `may` (spec: DataFlowProvenanceLabeling) —
+    // the value-level hop crosses the call boundary, which is conservative.
+    expect(vl.precision).toContain('may');
   });
 
   it('falls back to function granularity when the function has no overlay', async () => {
