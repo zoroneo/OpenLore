@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { startServe, type ServeHandle } from './serve.js';
+import { startServe, readDescriptor, type ServeHandle } from './serve.js';
 import { EdgeStore } from '../../core/services/edge-store.js';
 import { openloreAnalyze } from '../../api/analyze.js';
 import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR } from '../../constants.js';
@@ -177,6 +177,38 @@ describe('openlore serve', () => {
     const h = await startServe({ directory: root, stop: true });
     expect(h).toBeUndefined();
     expect(await fileExists(descPath)).toBe(false); // stale descriptor cleaned up
+  });
+
+  it('rejects a poisoned serve.json (untrusted artifact) — fails closed', async () => {
+    root = await mkdtemp(join(tmpdir(), 'openlore-serve-'));
+    const descPath = join(root, '.openlore', 'serve.json');
+    await mkdir(join(root, '.openlore'), { recursive: true });
+    const write = (o: unknown) => writeFile(descPath, JSON.stringify(o), 'utf-8');
+
+    // A non-loopback host must be rejected — otherwise daemonAlive would fetch it
+    // (arbitrary-host egress) and stopDaemon could SIGTERM its pid.
+    await write({ port: 8080, pid: 99999, host: 'evil.example.com', version: 'x', startedAt: '' });
+    expect(await readDescriptor(root)).toBeNull();
+
+    // Shape violations fail closed too.
+    for (const bad of [
+      null, 42, '[]', [],
+      { port: 'not-a-number', pid: 1, host: '127.0.0.1' },
+      { port: 70000, pid: 1, host: '127.0.0.1' },        // out-of-range port
+      { port: 8080, pid: -1, host: '127.0.0.1' },         // bad pid
+      { port: 8080, pid: 1 },                              // missing host
+      { port: 8080, pid: 1, host: '127.0.0.1', token: 5 },// non-string token
+    ]) {
+      await write(bad);
+      expect(await readDescriptor(root), `should reject ${JSON.stringify(bad)}`).toBeNull();
+    }
+
+    // A well-formed loopback descriptor is accepted.
+    await write({ port: 8080, pid: 1, host: '127.0.0.1', version: 'x', startedAt: '', token: 't' });
+    const ok = await readDescriptor(root);
+    expect(ok).not.toBeNull();
+    expect(ok!.host).toBe('127.0.0.1');
+    expect(ok!.token).toBe('t');
   });
 
   it('reuses a live daemon instead of starting a second one for the same root', async () => {

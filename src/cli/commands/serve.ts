@@ -198,13 +198,39 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(text);
 }
 
-/** Read <root>/.openlore/serve.json if present. */
-async function readDescriptor(root: string): Promise<ServeDescriptor | null> {
+/**
+ * Read + validate <root>/.openlore/serve.json. The discovery file is an untrusted
+ * on-disk artifact (mcp-security: Untrusted Artifact Deserialization): a hostile repo
+ * could ship a poisoned serve.json. We fail closed unless every field has the expected
+ * type AND the host is a loopback name — otherwise `daemonAlive` would fetch an
+ * arbitrary host (egress / SSRF) and `stopDaemon` could SIGTERM an arbitrary pid.
+ *
+ * Exported for the serve.json validation tests.
+ */
+export async function readDescriptor(root: string): Promise<ServeDescriptor | null> {
+  let parsed: unknown;
   try {
-    return JSON.parse(await readFile(serveFilePath(root), 'utf-8')) as ServeDescriptor;
+    parsed = JSON.parse(await readFile(serveFilePath(root), 'utf-8'));
   } catch {
     return null;
   }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const d = parsed as Record<string, unknown>;
+  const portOk = typeof d.port === 'number' && Number.isInteger(d.port) && d.port >= 1 && d.port <= 65535;
+  const pidOk = typeof d.pid === 'number' && Number.isInteger(d.pid) && d.pid > 0;
+  // Confine host to loopback: a recorded non-loopback host must never become an
+  // outbound fetch target during liveness probing.
+  const hostOk = typeof d.host === 'string' && isLoopbackHost(d.host);
+  const tokenOk = d.token === undefined || typeof d.token === 'string';
+  if (!portOk || !pidOk || !hostOk || !tokenOk) return null;
+  return {
+    port: d.port as number,
+    pid: d.pid as number,
+    host: d.host as string,
+    token: d.token as string | undefined,
+    startedAt: typeof d.startedAt === 'string' ? d.startedAt : '',
+    version: typeof d.version === 'string' ? d.version : '',
+  };
 }
 
 /**
