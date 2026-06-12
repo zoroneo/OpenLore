@@ -444,7 +444,7 @@ const PHP_SPEC: CfgLangSpec = {
   loopTypes: new Set(['while_statement', 'for_statement', 'foreach_statement', 'do_statement']),
   tryTypes: new Set(['try_statement']),
   switchTypes: new Set(['switch_statement']),
-  nestedFnTypes: new Set(['anonymous_function_creation_expression', 'arrow_function', 'function_definition', 'method_declaration']),
+  nestedFnTypes: new Set(['anonymous_function', 'arrow_function', 'function_definition', 'method_declaration']),
   switchFallsThrough: true,
   blockScoped: false,
   comprehensionTypes: new Set([]),
@@ -1354,6 +1354,17 @@ function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
     if (n.type === 'init_declarator' && n.childForFieldName('declarator')?.type === 'reference_declarator') {
       const ref = n.childForFieldName('value');
       if (ref && spec.identTypes.has(ref.type)) escaped.add(ref.text);
+    }
+    // PHP reference assignment `$r = &$x` aliases $x (second operand) the same way.
+    if (n.type === 'reference_assignment_expression') {
+      const referent = n.namedChildren[n.namedChildren.length - 1];
+      if (referent && spec.identTypes.has(referent.type)) escaped.add(referent.text);
+    }
+    // C# `ref`/`out` argument: the callee can (ref) or must (out) reassign the
+    // variable, so its prior/declaration def can change out of band → `may`.
+    if (n.type === 'argument' && (n.text.startsWith('ref ') || n.text.startsWith('out '))) {
+      const id = n.namedChildren.find(c => spec.identTypes.has(c.type));
+      if (id) escaped.add(id.text);
     }
     // Python `global x` / `nonlocal x`: the name binds a module-global or an
     // enclosing local, so an intervening call (or another thread/callback) can

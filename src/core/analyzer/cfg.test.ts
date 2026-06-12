@@ -663,3 +663,29 @@ describe('PHP overlay', () => {
     expect(defLinesTo(cfg, '$x', 9)).toEqual([6, 7]);
   });
 });
+
+// ─── escape detection for PHP/C# indirection (real-repo agent findings) ───────
+
+describe('PHP/C# indirection escapes (no unsound exact)', () => {
+  it('PHP anonymous closure does not leak its body into the enclosing scope', async () => {
+    const lang = await phpLang();
+    const cfg = cfgFor('<?php function f(){\n  $x = 1;\n  $c = function(){ $x = 99; };\n  return $x;\n}', lang, 'PHP', ['function_definition']);
+    expect(defLinesTo(cfg, '$x', 4)).toEqual([2]); // closure's $x=99 must not reach the return
+  });
+
+  it('PHP by-ref capture and reference assignment downgrade to may', async () => {
+    const lang = await phpLang();
+    const cap = cfgFor('<?php function f(){\n  $x = 1;\n  $c = function() use (&$x){ $x = 99; };\n  $c();\n  return $x;\n}', lang, 'PHP', ['function_definition']);
+    expect(cap.defUse.find(e => e.variable === '$x' && e.useLine === 5)?.precision).toBe('may');
+    const ref = cfgFor('<?php function f(){\n  $x = 1;\n  $r = &$x;\n  $r = 5;\n  return $x;\n}', lang, 'PHP', ['function_definition']);
+    expect(ref.defUse.find(e => e.variable === '$x' && e.useLine === 5)?.precision).toBe('may');
+  });
+
+  it('C# ref/out arguments downgrade the variable to may', async () => {
+    const lang = await csharpLang();
+    const r = cfgFor('class C{ int f(){\n  int x = 1;\n  Mutate(ref x);\n  return x;\n} }', lang, 'C#', ['method_declaration']);
+    expect(r.defUse.find(e => e.variable === 'x' && e.useLine === 4)?.precision).toBe('may');
+    const o = cfgFor('class C{ int f(){\n  int x;\n  TryGet(out x);\n  return x;\n} }', lang, 'C#', ['method_declaration']);
+    expect(o.defUse.find(e => e.variable === 'x' && e.useLine === 4)?.precision).toBe('may');
+  });
+});
