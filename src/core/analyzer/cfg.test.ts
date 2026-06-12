@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Parser from 'tree-sitter';
-import { buildFunctionCfg, cfgSupportsLanguage, type CfgNode, type FunctionCfg } from './cfg.js';
+import { buildFunctionCfg, cfgSupportsLanguage, isStructurallyValid, type CfgNode, type FunctionCfg } from './cfg.js';
 
 // ─── parsing helpers ─────────────────────────────────────────────────────────
 
@@ -238,6 +238,44 @@ describe('elif chains and destructuring', () => {
     const cfg = cfgFor(`function f(arr:number[]){\n  const [x, y] = arr;\n  return x + y;\n}`, lang, 'TypeScript', TS_FN);
     expect(hasDefUse(cfg, 'x')).toBe(true);
     expect(hasDefUse(cfg, 'y')).toBe(true);
+  });
+});
+
+// ─── structural-validity safety net ───────────────────────────────────────────
+
+describe('structural validity guard', () => {
+  it('rejects a malformed overlay (dangling edge / missing entry)', () => {
+    expect(isStructurallyValid({
+      blocks: [{ id: 0, kind: 'entry' }, { id: 1, kind: 'exit' }],
+      edges: [{ from: 0, to: 99, kind: 'normal' }], // dangling endpoint
+      defUse: [], params: [], paramLine: 1,
+    })).toBe(false);
+    expect(isStructurallyValid({
+      blocks: [{ id: 0, kind: 'normal' }, { id: 1, kind: 'exit' }], // no entry
+      edges: [], defUse: [], params: [], paramLine: 1,
+    })).toBe(false);
+    expect(isStructurallyValid({
+      blocks: [{ id: 0, kind: 'entry' }, { id: 1, kind: 'exit' }],
+      edges: [], defUse: [{ variable: 'x', defLine: 0, useLine: 2, precision: 'exact' }], // bad line
+      params: [], paramLine: 1,
+    })).toBe(false);
+  });
+
+  it('every overlay built from a real parse satisfies the invariants', async () => {
+    const samples: Array<[object, string, string[]]> = [
+      [await tsLang(), 'TypeScript', TS_FN],
+      [await pyLang(), 'Python', PY_FN],
+      [await goLang(), 'Go', GO_FN],
+    ];
+    const srcs: Record<string, string> = {
+      TypeScript: `function f(a:number){ let x=0; try{ x=g(a); }catch(e){ x=-1; } switch(x){case 1: return 1; default: return x;} }`,
+      Python: `def f(a):\n    x = 0\n    if a == 1:\n        x = 10\n    elif a == 2:\n        x = 20\n    for i in range(a):\n        x += i\n    return x`,
+      Go: `func f(a int) int {\n\tx := 0\n\tfor i := 0; i < a; i++ { x = x + i }\n\tswitch a { case 1: return 1; default: return x }\n}`,
+    };
+    for (const [lang, name, fnTypes] of samples) {
+      const cfg = cfgFor(srcs[name], lang, name, fnTypes);
+      expect(isStructurallyValid(cfg), `${name} overlay invariants`).toBe(true);
+    }
   });
 });
 

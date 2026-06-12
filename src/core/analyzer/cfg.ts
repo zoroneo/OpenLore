@@ -1036,16 +1036,40 @@ export function buildFunctionCfg(fnNode: CfgNode, language: string): FunctionCfg
     const escaped = collectEscapedVars(body, spec);
     const defUse = computeReachingDefs(builder, params, paramLine, escaped);
 
-    return {
+    const cfg: FunctionCfg = {
       blocks: builder.blocks.map(b => ({ id: b.id, kind: b.kind })),
       edges: builder.edges,
       defUse,
       params,
       paramLine,
     };
+    // Safety net: a structurally-invalid overlay is WORSE than none (an agent
+    // would trust corrupt context). If any invariant fails, emit no overlay.
+    return isStructurallyValid(cfg) ? cfg : undefined;
   } catch {
     return undefined; // fail-soft: any visitor/grammar surprise yields no overlay
   }
+}
+
+/**
+ * Structural invariants every emitted overlay must satisfy. A violation means a
+ * builder bug or grammar drift produced a malformed CFG; returning false makes
+ * {@link buildFunctionCfg} emit no overlay rather than wrong context. Cheap,
+ * linear, and run on every function. Exported for the invariant test.
+ */
+export function isStructurallyValid(cfg: FunctionCfg): boolean {
+  if (!Array.isArray(cfg.blocks) || cfg.blocks.length < 2) return false;
+  const ids = new Set(cfg.blocks.map(b => b.id));
+  if (cfg.blocks.filter(b => b.kind === 'entry').length !== 1) return false;
+  if (cfg.blocks.filter(b => b.kind === 'exit').length !== 1) return false;
+  for (const e of cfg.edges) if (!ids.has(e.from) || !ids.has(e.to)) return false;
+  if (!Array.isArray(cfg.params) || !Number.isInteger(cfg.paramLine) || cfg.paramLine < 1) return false;
+  for (const d of cfg.defUse) {
+    if (d.defLine < 1 || d.useLine < 1) return false;
+    if (d.precision !== 'exact' && d.precision !== 'may') return false;
+    if (typeof d.variable !== 'string' || d.variable.length === 0) return false;
+  }
+  return true;
 }
 
 /**
