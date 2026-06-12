@@ -54,6 +54,13 @@ export interface DefUseEdge {
   defLine: number;
   useLine: number;
   precision: DataFlowPrecision;
+  /**
+   * When this use is the RHS of an assignment/declaration, the start line of the
+   * variable it helps define. Lets a forward value slice chain through multi-line
+   * initializers (e.g. `const ctx = {\n  x: p,\n}`) where the feeding use and the
+   * resulting def sit on different physical lines. Absent for non-feeding uses.
+   */
+  useInDefLine?: number;
 }
 
 /** Compact per-function overlay record. Pure data — no AST nodes retained. */
@@ -81,10 +88,21 @@ export interface CfgNode {
   type: string;
   text: string;
   startIndex: number;
+  endIndex: number;
   startPosition: { row: number };
   namedChildren: CfgNode[];
   children: CfgNode[];
   childForFieldName(field: string): CfgNode | null;
+}
+
+/**
+ * Compare two AST nodes by source position. Native tree-sitter returns FRESH
+ * wrapper objects for the same node depending on access path (`childForFieldName`
+ * vs `namedChildren`), so `a === b` is unreliable and yields non-deterministic
+ * results. A node is uniquely identified by its (startIndex, endIndex) span.
+ */
+function sameNode(a: CfgNode | null | undefined, b: CfgNode | null | undefined): boolean {
+  return !!a && !!b && a.startIndex === b.startIndex && a.endIndex === b.endIndex;
 }
 
 // ============================================================================
@@ -276,7 +294,10 @@ type Op =
   // conditionally) do NOT kill prior defs — the old value can survive, so both
   // reach a later use.
   | { op: 'def'; variable: string; key: string; line: number; precision: DataFlowPrecision; seq?: number; weak?: boolean }
-  | { op: 'use'; variable: string; key: string; line: number; precision: DataFlowPrecision };
+  // `inDefLine` is the start line of the assignment/declaration this use feeds
+  // (its RHS), if any — so a forward value slice can chain through a multi-line
+  // initializer whose feeding use sits on a different physical line than the def.
+  | { op: 'use'; variable: string; key: string; line: number; precision: DataFlowPrecision; inDefLine?: number };
 
 interface LoopCtx {
   continueTarget: number;
@@ -362,6 +383,7 @@ class CfgBuilder {
     if (spec.loopTypes.has(t)) return this.processLoop(stmt, current, loop);
     if (spec.tryTypes.has(t)) return this.processTry(stmt, current, loop);
     if (spec.switchTypes.has(t)) return this.processSwitch(stmt, current, loop);
+    if (t === 'with_statement') return this.processWith(stmt, current, loop);
 
     // A nested function/closure declared as a statement: its body is a separate
     // scope, not part of this CFG. Record only its free-variable (closure) reads
@@ -456,6 +478,30 @@ class CfgBuilder {
       this.addEdge(current, merge, 'false');
     }
     return merge;
+  }
+
+  /**
+   * Python `with ctx as v:` (and `with a() as x, b() as y:`). Linear flow: the
+   * context expression is a use, the `as` target is a definition, then the body
+   * runs as a normal statement sequence (it may itself branch/return).
+   */
+  private processWith(stmt: CfgNode, current: number, loop: LoopCtx | null): number | null {
+    const { spec } = this;
+    const clause = stmt.namedChildren.find(c => c.type === 'with_clause') ?? stmt;
+    for (const item of clause.namedChildren) {
+      if (item.type !== 'with_item') continue;
+      const inner = item.childForFieldName('value') ?? item.namedChildren[0];
+      if (inner && inner.type === 'as_pattern') {
+        const value = inner.namedChildren[0];
+        if (value) this.recordUses(value, current);
+        const tgt = inner.childForFieldName('alias') ?? inner.namedChildren.find(c => c.type === 'as_pattern_target');
+        if (tgt) this.recordTarget(tgt, current, tgt.startPosition.row + 1);
+      } else if (inner) {
+        this.recordUses(inner, current); // bare `with cm:` (no binding)
+      }
+    }
+    const body = stmt.childForFieldName(spec.bodyField);
+    return body ? this.processSeq(this.stmtChildren(body), current, loop) : current;
   }
 
   private processLoop(stmt: CfgNode, current: number, _loop: LoopCtx | null): number | null {
@@ -581,7 +627,7 @@ class CfgBuilder {
       const caseValue = cs.childForFieldName('value');
       if (caseValue) this.recordUses(caseValue, current);
       // Statements = the clause's children minus its label value.
-      const stmts = cs.namedChildren.filter(c => c !== caseValue);
+      const stmts = cs.namedChildren.filter(c => !sameNode(c, caseValue));
       const caseExit = this.processSeq(stmts, caseBlock, caseCtx);
       if (spec.switchFallsThrough) {
         prevFallthrough = caseExit;
@@ -614,7 +660,7 @@ class CfgBuilder {
       if (n !== fnNode && spec.nestedFnTypes.has(n.type)) { this.recordClosureCaptures(n, block); return; }
       if (spec.callTypes.has(n.type)) {
         const fn = n.childForFieldName('function') ?? n.namedChildren[0];
-        for (const c of n.namedChildren) { if (c === fn && fn && spec.identTypes.has(fn.type)) continue; visit(c); }
+        for (const c of n.namedChildren) { if (sameNode(c, fn) && fn && spec.identTypes.has(fn.type)) continue; visit(c); }
         return;
       }
       if (spec.identTypes.has(n.type)) {
@@ -680,7 +726,9 @@ class CfgBuilder {
     const right = node.childForFieldName(spec.rightField) ?? node.namedChildren[node.namedChildren.length - 1];
     const line = node.startPosition.row + 1;
 
-    if (right) this.recordUses(right, block);
+    // Tag RHS uses with the line of the variable they feed (`left`), so a forward
+    // value slice chains through a multi-line initializer.
+    if (right) this.recordUses(right, block, line);
     // Augmented assignment (x += 1) reads the target before writing it.
     if (augmented && left) this.recordUses(left, block);
 
@@ -698,7 +746,7 @@ class CfgBuilder {
     // Go short_var_declaration / var_spec: left & right are expression_lists.
     const left = node.childForFieldName(spec.leftField) ?? node.childForFieldName('name');
     const right = node.childForFieldName(spec.rightField) ?? node.childForFieldName('value');
-    if (right) this.recordUses(right, block);
+    if (right) this.recordUses(right, block, line);
     if (left) {
       this.recordTarget(left, block, line);
     } else {
@@ -731,7 +779,7 @@ class CfgBuilder {
     if (target.type === 'object_assignment_pattern' || target.type === 'assignment_pattern') {
       const def = target.childForFieldName('right') ?? target.namedChildren[target.namedChildren.length - 1];
       const bind = target.childForFieldName('left') ?? target.namedChildren[0];
-      if (def && def !== bind) this.recordUses(def, block);
+      if (def && !sameNode(def, bind)) this.recordUses(def, block);
       if (bind) this.recordTarget(bind, block, line);
       return;
     }
@@ -791,7 +839,7 @@ class CfgBuilder {
    * position. A member/subscript read of a variable contributes a `may` use of
    * the l-value plus an `exact` use of the base object.
    */
-  private recordUses(node: CfgNode, block: number): void {
+  private recordUses(node: CfgNode, block: number, enclosingDefLine?: number): void {
     const { spec } = this;
     const visit = (n: CfgNode): void => {
       const t = n.type;
@@ -825,25 +873,25 @@ class CfgBuilder {
         // obj.field read: base obj is an exact use, the field path is a may use.
         const base = n.namedChildren[0];
         if (base) visit(base);
-        this.block(block).ops.push({ op: 'use', variable: normalizeLValue(n.text), key: normalizeLValue(n.text), line: n.startPosition.row + 1, precision: 'may' });
+        this.block(block).ops.push({ op: 'use', variable: normalizeLValue(n.text), key: normalizeLValue(n.text), line: n.startPosition.row + 1, precision: 'may', inDefLine: enclosingDefLine });
         return;
       }
       if (spec.subscriptTypes.has(t)) {
         for (const c of n.namedChildren) visit(c);
-        this.block(block).ops.push({ op: 'use', variable: normalizeLValue(n.text), key: normalizeLValue(n.text), line: n.startPosition.row + 1, precision: 'may' });
+        this.block(block).ops.push({ op: 'use', variable: normalizeLValue(n.text), key: normalizeLValue(n.text), line: n.startPosition.row + 1, precision: 'may', inDefLine: enclosingDefLine });
         return;
       }
       if (spec.callTypes.has(t)) {
         // Skip the callee identifier; collect uses from arguments and receiver.
         const fn = n.childForFieldName('function') ?? n.namedChildren[0];
         for (const c of n.namedChildren) {
-          if (c === fn && fn && spec.identTypes.has(fn.type)) continue;
+          if (sameNode(c, fn) && fn && spec.identTypes.has(fn.type)) continue;
           visit(c);
         }
         return;
       }
       if (spec.identTypes.has(t)) {
-        this.block(block).ops.push({ op: 'use', variable: n.text, key: this.keyFor(n, n.text), line: n.startPosition.row + 1, precision: 'exact' });
+        this.block(block).ops.push({ op: 'use', variable: n.text, key: this.keyFor(n, n.text), line: n.startPosition.row + 1, precision: 'exact', inDefLine: enclosingDefLine });
         return;
       }
       for (const c of n.namedChildren) visit(c);
@@ -962,6 +1010,12 @@ function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
       const operand = n.childForFieldName('operand');
       if (op?.text === '&' && operand && spec.identTypes.has(operand.type)) escaped.add(operand.text);
     }
+    // Python `global x` / `nonlocal x`: the name binds a module-global or an
+    // enclosing local, so an intervening call (or another thread/callback) can
+    // rebind it — its def-use can never be a sound `exact`.
+    if (n.type === 'global_statement' || n.type === 'nonlocal_statement') {
+      for (const c of n.namedChildren) if (spec.identTypes.has(c.type)) escaped.add(c.text);
+    }
     for (const c of n.namedChildren) walk(c);
   };
   walk(body);
@@ -993,7 +1047,21 @@ interface DefSite {
  * Then, walking each block's ops in order, every use is wired to the defs of the
  * same variable that reach it.
  */
-function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: number, escaped: Set<string>): DefUseEdge[] {
+/**
+ * Reaching-definitions fixpoint sweep budget. Real code converges in O(loop-nesting
+ * depth) sweeps (a handful); a function needing more than this is pathologically
+ * nested (e.g. machine-generated) and is failed soft to no overlay rather than
+ * spending quadratic time. 128 sweeps bounds the build to well under a second even
+ * on adversarial input while never firing on real code.
+ */
+const REACHING_MAX_SWEEPS = 128;
+
+/** Upper bound on CFG blocks per function; above this the overlay is skipped
+ *  (fail soft) so an adversarial / machine-generated function can't blow up the
+ *  build. Real functions are far below this. */
+const MAX_CFG_BLOCKS = 4000;
+
+function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: number, escaped: Set<string>): DefUseEdge[] | null {
   const blocks = builder.blocks;
   const n = blocks.length;
 
@@ -1059,9 +1127,9 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
   const outSet: Set<number>[] = Array.from({ length: n }, (_, b) => new Set(gen[b]));
 
   let changed = true;
-  let guard = 0;
-  const maxIters = n * n + 16; // generous bound; structured CFGs converge fast
-  while (changed && guard++ < maxIters) {
+  let sweeps = 0;
+  const maxSweeps = Math.min(n * n + 16, REACHING_MAX_SWEEPS);
+  while (changed && sweeps++ < maxSweeps) {
     changed = false;
     for (let b = 0; b < n; b++) {
       const nin = new Set<number>();
@@ -1073,6 +1141,9 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
       if (!setEq(nout, outSet[b])) { outSet[b] = nout; changed = true; }
     }
   }
+  // Did not converge within the budget → a pathologically deep CFG. Fail soft
+  // (no overlay) rather than emit incomplete data or spend quadratic time.
+  if (changed) return null;
 
   // Wire uses to reaching defs. Walk each block's ops in order, threading a
   // "currently reaching" map (variable → def seqs) seeded from IN[b].
@@ -1098,10 +1169,10 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
             // changed outside the visible control flow, so its dependence is `may`.
             const precision: DataFlowPrecision =
               (d.precision === 'may' || op.precision === 'may' || escaped.has(op.variable)) ? 'may' : 'exact';
-            const ekey = `${op.variable}|${d.line}|${op.line}|${precision}`;
+            const ekey = `${op.variable}|${d.line}|${op.line}|${precision}|${op.inDefLine ?? ''}`;
             if (!emitted.has(ekey)) {
               emitted.add(ekey);
-              edges.push({ variable: op.variable, defLine: d.line, useLine: op.line, precision });
+              edges.push({ variable: op.variable, defLine: d.line, useLine: op.line, precision, ...(op.inDefLine !== undefined ? { useInDefLine: op.inDefLine } : {}) });
             }
           }
         }
@@ -1248,10 +1319,15 @@ export function buildFunctionCfg(fnNode: CfgNode, language: string): FunctionCfg
     const builder = new CfgBuilder(spec, scopeKeys);
     builder.build(body);
 
+    // A function whose CFG is implausibly large is machine-generated or
+    // adversarial — skip the overlay (fail soft) to bound time and memory.
+    if (builder.blocks.length > MAX_CFG_BLOCKS) return undefined;
+
     // Names that escape visible control flow (closure-mutated or address-taken)
     // cannot carry a sound `exact` dependence — their edges are downgraded to `may`.
     const escaped = collectEscapedVars(body, spec);
     const defUse = computeReachingDefs(builder, params, paramLine, escaped);
+    if (defUse === null) return undefined; // fixpoint did not converge — fail soft
 
     const cfg: FunctionCfg = {
       blocks: builder.blocks.map(b => ({ id: b.id, kind: b.kind })),
@@ -1310,9 +1386,13 @@ export function valueReachableLines(cfg: FunctionCfg, target?: string): Set<numb
     for (const e of cfg.defUse) if (e.variable === target) tainted.add(`${e.variable}|${e.defLine}`);
   }
 
-  const defsAtLine = new Map<number, Set<string>>();
+  // Index the variables defined at each line, so when a tainted value FEEDS a
+  // definition (an assignment RHS) we can taint that new def — even when the
+  // feeding use and the def sit on different physical lines (a multi-line
+  // initializer). `useInDefLine` carries the fed def's start line.
+  const defVarsAtLine = new Map<number, Set<string>>();
   for (const e of cfg.defUse) {
-    (defsAtLine.get(e.defLine) ?? defsAtLine.set(e.defLine, new Set()).get(e.defLine)!).add(e.variable);
+    (defVarsAtLine.get(e.defLine) ?? defVarsAtLine.set(e.defLine, new Set()).get(e.defLine)!).add(e.variable);
   }
 
   const reached = new Set<number>();
@@ -1322,9 +1402,13 @@ export function valueReachableLines(cfg: FunctionCfg, target?: string): Set<numb
     for (const e of cfg.defUse) {
       if (!tainted.has(`${e.variable}|${e.defLine}`)) continue;
       if (!reached.has(e.useLine)) { reached.add(e.useLine); changed = true; }
-      for (const w of defsAtLine.get(e.useLine) ?? []) {
-        const key = `${w}|${e.useLine}`;
-        if (!tainted.has(key)) { tainted.add(key); changed = true; }
+      // Chain forward: this tainted use feeds the def(s) at `useInDefLine`.
+      const fedLine = e.useInDefLine;
+      if (fedLine !== undefined) {
+        for (const w of defVarsAtLine.get(fedLine) ?? []) {
+          const key = `${w}|${fedLine}`;
+          if (!tainted.has(key)) { tainted.add(key); changed = true; }
+        }
       }
     }
   }

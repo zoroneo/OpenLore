@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Parser from 'tree-sitter';
-import { buildFunctionCfg, cfgSupportsLanguage, isStructurallyValid, type CfgNode, type FunctionCfg } from './cfg.js';
+import { buildFunctionCfg, cfgSupportsLanguage, isStructurallyValid, valueReachableLines, type CfgNode, type FunctionCfg } from './cfg.js';
 
 // ─── parsing helpers ─────────────────────────────────────────────────────────
 
@@ -106,6 +106,21 @@ describe('CFG control flow', () => {
     const a = cfgFor(src, lang, 'TypeScript', TS_FN);
     const b = cfgFor(src, lang, 'TypeScript', TS_FN);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it('is deterministic for call-heavy code across many builds (no node-identity flakiness)', async () => {
+    // A self-referential/recursive call exercises the callee-skip path, which must
+    // compare AST nodes by POSITION, not object identity — tree-sitter returns
+    // fresh wrappers per access, so identity comparison is non-deterministic.
+    const lang = await tsLang();
+    const src = `function walk(node: any): void {\n  const visit = (n: any) => { for (const c of n.children) visit(c); use(n); };\n  visit(node);\n  walk(node);\n}`;
+    const sigs = new Set<string>();
+    for (let i = 0; i < 25; i++) {
+      const tree = parse(src, lang); // fresh parse each time
+      const fn = firstOfType(tree.rootNode, ['function_declaration'])!;
+      sigs.add(JSON.stringify(buildFunctionCfg(fn as unknown as CfgNode, 'TypeScript')));
+    }
+    expect(sigs.size).toBe(1);
   });
 
   it('Unsupported language fails soft', async () => {
@@ -350,6 +365,59 @@ describe('idioms & escape-detection gaps', () => {
     const cfg = cfgFor(`function f(){\n  let r = 0;\n  outer: for (let i=0;i<3;i++) {\n    r = r + 1;\n  }\n  return r;\n}`, lang, 'TypeScript', TS_FN);
     expect(cfg.edges.some(e => e.kind === 'back')).toBe(true);
     expect(defLinesTo(cfg, 'r', 4)).toEqual([2, 4]); // pre-loop and loop-carried
+  });
+});
+
+// ─── wider-audit findings: global/with, multi-line value flow, perf fail-soft ──
+
+describe('global/nonlocal and with-statement (wider audit)', () => {
+  it('Python global is downgraded to may (mutable through hidden calls)', async () => {
+    const lang = await pyLang();
+    const cfg = cfgFor(`def f():\n    global cache\n    cache = {}\n    populate()\n    return cache`, lang, 'Python', PY_FN);
+    const e = cfg.defUse.find(d => d.variable === 'cache' && d.useLine === 5);
+    expect(e?.precision).toBe('may');
+  });
+
+  it('Python with ... as binds the context variable as a definition', async () => {
+    const lang = await pyLang();
+    const cfg = cfgFor(`def f(p):\n    with open(p) as fh:\n        data = fh.read()\n    return data`, lang, 'Python', PY_FN);
+    expect(cfg.defUse.some(e => e.variable === 'fh' && e.defLine === 2)).toBe(true);
+    expect(defLinesTo(cfg, 'data', 4)).toEqual([3]);
+  });
+});
+
+describe('value-level forward slice chains through multi-line definitions', () => {
+  it('a parameter feeding a multi-line object literal reaches the call it is passed to', async () => {
+    const lang = await tsLang();
+    // p flows into ctx via a multi-line object literal (b: p on line 4); ctx is
+    // passed to sink() on line 7. The forward slice must reach line 7.
+    const cfg = cfgFor(`function f(p: number): number {\n  const ctx = {\n    a: 1,\n    b: p,\n    c: 3,\n  };\n  return sink(ctx);\n}`, lang, 'TypeScript', TS_FN);
+    const reached = valueReachableLines(cfg, 'p');
+    expect(reached.has(7)).toBe(true); // sink(ctx) — the data-dependent call
+  });
+
+  it('a parameter that reaches nothing yields an empty slice (no false inclusion)', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(a: number, b: number): number {\n  return a + 1;\n}`, lang, 'TypeScript', TS_FN);
+    const reachedB = valueReachableLines(cfg, 'b');
+    expect(reachedB.size).toBe(0); // b is unused
+  });
+});
+
+describe('pathological input fails soft (no hang, no partial overlay)', () => {
+  it('a deeply nested loop nest exceeding the fixpoint budget yields no overlay', async () => {
+    const lang = await tsLang();
+    let src = 'function f(){\n  let x = 0;\n';
+    for (let i = 0; i < 400; i++) src += `  while (x < ${i}) {\n`;
+    src += '  x = x + 1;\n';
+    for (let i = 0; i < 400; i++) src += '  }\n';
+    src += '  return x;\n}';
+    const tree = parse(src, lang);
+    const fn = firstOfType(tree.rootNode, TS_FN)!;
+    const t0 = Date.now();
+    const cfg = buildFunctionCfg(fn as unknown as CfgNode, 'TypeScript');
+    expect(Date.now() - t0).toBeLessThan(2000); // must not hang
+    expect(cfg).toBeUndefined();                // fail soft
   });
 });
 
