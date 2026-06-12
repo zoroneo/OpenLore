@@ -25,7 +25,15 @@ export async function loadDecisionStore(rootPath: string): Promise<DecisionStore
   }
   try {
     const raw = await readFile(path, 'utf-8');
-    return JSON.parse(raw) as DecisionStore;
+    const parsed: unknown = JSON.parse(raw);
+    // Untrusted artifact: validate top-level shape before use. A malformed store
+    // (non-object, or no `decisions` array) starts fresh rather than letting a
+    // poisoned shape reach `store.decisions.*` downstream (mcp-security).
+    if (parsed === null || typeof parsed !== 'object' || !Array.isArray((parsed as { decisions?: unknown }).decisions)) {
+      logger.warning(`decisions store: ${path} has an invalid shape — starting fresh`);
+      return emptyStore();
+    }
+    return parsed as DecisionStore;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== 'ENOENT') {

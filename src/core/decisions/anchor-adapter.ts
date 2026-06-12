@@ -14,7 +14,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import {
   OPENLORE_DIR,
   OPENLORE_ANALYSIS_SUBDIR,
@@ -39,8 +39,16 @@ function readFileCached(rootPath: string, filePath: string, cache: Map<string, s
   const hit = cache.get(filePath);
   if (hit !== undefined) return hit;
   let content: string | null;
+  // filePath originates from decision anchors / affectedFiles (tool-arg or
+  // stored-artifact controlled). Confine the read to the project root so a "../"
+  // path can't read out-of-root content for freshness verdicts (mcp-security).
+  const abs = resolve(rootPath, filePath);
+  if (abs !== rootPath && !abs.startsWith(rootPath + sep)) {
+    cache.set(filePath, null);
+    return null;
+  }
   try {
-    content = readFileSync(join(rootPath, filePath), 'utf-8');
+    content = readFileSync(abs, 'utf-8');
   } catch {
     content = null;
   }
