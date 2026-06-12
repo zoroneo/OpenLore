@@ -29,6 +29,7 @@ import {
   ARTIFACT_ENV_INVENTORY,
   ARTIFACT_EXTERNAL_PACKAGES,
   TRANSITIVE_SCORE_MAX,
+  REPO_CONTENT_PROVENANCE,
 } from '../../../constants.js';
 import { runAnalysis } from '../../../cli/commands/analyze.js';
 import { analyzeForRefactoring } from '../../analyzer/refactor-analyzer.js';
@@ -391,6 +392,7 @@ export async function handleGetFunctionSkeleton(
     reductionPct: Math.round((1 - skeleton.length / source.length) * 100),
     worthIncluding,
     skeleton,
+    provenance: REPO_CONTENT_PROVENANCE,
   };
 }
 
@@ -438,6 +440,7 @@ export async function handleGetFunctionBody(
           endIndex: node.endIndex,
           body,
           lineCount: body.split('\n').length,
+          provenance: REPO_CONTENT_PROVENANCE,
         };
       }
     }
@@ -475,6 +478,7 @@ export async function handleGetFunctionBody(
     body,
     lineCount: endLine - startLine + 1,
     note: 'Extracted via line scan (no call graph available). Run analyze_codebase for exact extraction.',
+    provenance: REPO_CONTENT_PROVENANCE,
   };
 }
 
