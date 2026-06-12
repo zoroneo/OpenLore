@@ -404,6 +404,28 @@ describe('value-level forward slice chains through multi-line definitions', () =
   });
 });
 
+describe('do/while is a post-test loop (no leaked pre-loop def)', () => {
+  it('a pre-loop def does not reach past a do/while whose body always overwrites it', async () => {
+    const lang = await tsLang();
+    // line 2: let x (undefined); line 4: x = compute() in the body; line 6: return x.
+    const cfg = cfgFor(`function f(){\n  let x;\n  do {\n    x = compute();\n  } while (retry());\n  return x;\n}`, lang, 'TypeScript', TS_FN);
+    expect(defLinesTo(cfg, 'x', 6)).toEqual([4]);                 // only the body def, not line 2
+    expect(cfg.edges.some(e => e.kind === 'back')).toBe(true);    // it is still a loop
+  });
+
+  it('the do/while condition sees the body def, not the pre-loop def', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(){\n  let x = 1;\n  do { x = 2; }\n  while (g(x));\n  return x;\n}`, lang, 'TypeScript', TS_FN);
+    expect(defLinesTo(cfg, 'x', 4)).toEqual([3]); // g(x) on line 4 sees x=2 (line 3), not x=1
+  });
+
+  it('a normal while still keeps the pre-loop def reaching (body may run zero times)', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(){\n  let x = 1;\n  while (c()) { x = 2; }\n  return x;\n}`, lang, 'TypeScript', TS_FN);
+    expect(defLinesTo(cfg, 'x', 4)).toEqual([2, 3]); // both: skipped (x=1) or ran (x=2)
+  });
+});
+
 describe('pathological input fails soft (no hang, no partial overlay)', () => {
   it('a deeply nested loop nest exceeding the fixpoint budget yields no overlay', async () => {
     const lang = await tsLang();

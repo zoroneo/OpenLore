@@ -506,6 +506,12 @@ class CfgBuilder {
 
   private processLoop(stmt: CfgNode, current: number, _loop: LoopCtx | null): number | null {
     const { spec } = this;
+    // `do { body } while (cond)` is a POST-test loop: the body always runs once
+    // BEFORE the condition, so a pre-loop def is killed by the body before the
+    // condition or post-loop code sees it. Wiring it as a pre-test loop would
+    // leak that pre-loop def through as an unsound `exact`.
+    if (stmt.type === 'do_statement') return this.processDoWhile(stmt, current);
+
     // Loop init / range target: a `for (let i = 0; ...)` or `for x := range ...`
     // introduces a definition; record it into the pre-loop block.
     this.recordLoopHeader(stmt, current);
@@ -527,6 +533,28 @@ class CfgBuilder {
       : bodyBlock;
     if (bodyExit !== null) this.addEdge(bodyExit, condBlock, 'back');
 
+    return afterBlock;
+  }
+
+  /** `do { body } while (cond)` — post-test: body runs first, then the condition
+   *  decides whether to loop. The body's defs therefore reach the condition and
+   *  the exit, killing any pre-loop def. */
+  private processDoWhile(stmt: CfgNode, current: number): number | null {
+    const { spec } = this;
+    const bodyBlock = this.newBlock('normal');
+    this.addEdge(current, bodyBlock, 'normal');
+    const condBlock = this.newBlock('loop');
+    const afterBlock = this.newBlock('merge');
+
+    const body = stmt.childForFieldName(spec.bodyField);
+    const innerLoop: LoopCtx = { continueTarget: condBlock, breakTarget: afterBlock };
+    const bodyExit = body ? this.processSeq(this.stmtChildren(body), bodyBlock, innerLoop) : bodyBlock;
+    if (bodyExit !== null) this.addEdge(bodyExit, condBlock, 'normal');
+
+    const cond = stmt.childForFieldName(spec.conditionField);
+    if (cond) this.recordUses(cond, condBlock);
+    this.addEdge(condBlock, bodyBlock, 'back');   // true → run the body again
+    this.addEdge(condBlock, afterBlock, 'false'); // false → exit
     return afterBlock;
   }
 
@@ -1444,6 +1472,11 @@ function extractParamNames(fnNode: CfgNode, spec: CfgLangSpec): string[] {
     }
   };
   for (const c of params.namedChildren) visit(c);
+  // Go named return values (`func f() (x int) { x = 5; return }`) live in a
+  // second `parameter_list` under the `result` field — they are real in-scope
+  // locals (zero-initialized), so treat them as parameters.
+  const result = fnNode.childForFieldName('result');
+  if (result && result.type === 'parameter_list') for (const c of result.namedChildren) visit(c);
   // Dedup, preserve order.
   return [...new Set(names)];
 }
