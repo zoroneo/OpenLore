@@ -374,6 +374,37 @@ class CfgBuilder {
     const merge = this.newBlock('merge');
     if (thenExit !== null) this.addEdge(thenExit, merge, 'normal');
 
+    // Python `if/elif*/else?` exposes each alternative as a separate child
+    // (elif_clause / else_clause); a single childForFieldName('alternative')
+    // would drop all but the first, silently losing branches. Collect them all.
+    const elifs = stmt.namedChildren.filter(c => c.type === 'elif_clause');
+    if (elifs.length > 0) {
+      const pyElse = stmt.namedChildren.find(c => c.type === 'else_clause');
+      let falseSrc = current;
+      for (const elif of elifs) {
+        const elifBlock = this.newBlock('branch');
+        this.addEdge(falseSrc, elifBlock, 'false');
+        const ec = elif.childForFieldName(spec.conditionField);
+        if (ec) this.recordUses(ec, elifBlock);
+        const eb = elif.childForFieldName(spec.consequenceField) ?? elif.childForFieldName(spec.bodyField);
+        const thenB = this.newBlock('normal');
+        this.addEdge(elifBlock, thenB, 'true');
+        const ex = eb ? this.processSeq(this.stmtChildren(eb), thenB, loop) : thenB;
+        if (ex !== null) this.addEdge(ex, merge, 'normal');
+        falseSrc = elifBlock;
+      }
+      if (pyElse) {
+        const elseBlock = this.newBlock('normal');
+        this.addEdge(falseSrc, elseBlock, 'false');
+        const eb = pyElse.childForFieldName(spec.bodyField) ?? pyElse.namedChildren.find(c => spec.blockTypes.has(c.type));
+        const ex = eb ? this.processSeq(this.stmtChildren(eb), elseBlock, loop) : elseBlock;
+        if (ex !== null) this.addEdge(ex, merge, 'normal');
+      } else {
+        this.addEdge(falseSrc, merge, 'false');
+      }
+      return merge;
+    }
+
     const alternative = stmt.childForFieldName(spec.alternativeField);
     if (alternative) {
       const elseBlock = this.newBlock('normal');
@@ -615,6 +646,27 @@ class CfgBuilder {
   /** Record an assignment/declaration target as a definition (exact for scalars, may for member/subscript). */
   private recordTarget(target: CfgNode, block: number, line: number): void {
     const { spec } = this;
+    // A destructuring binding leaf: `{ a, b }` exposes each name as a
+    // `shorthand_property_identifier_pattern` (no children), which the generic
+    // container recurse below would silently drop.
+    if (target.type === 'shorthand_property_identifier_pattern' || target.type === 'shorthand_property_identifier') {
+      this.block(block).ops.push({ op: 'def', variable: target.text, line, precision: 'exact' });
+      return;
+    }
+    // `{ key: binding }` — the value is the binding; the key is a property name.
+    if (target.type === 'pair_pattern') {
+      const val = target.childForFieldName('value') ?? target.namedChildren[target.namedChildren.length - 1];
+      if (val) this.recordTarget(val, block, line);
+      return;
+    }
+    // `{ a = default }` / `[a = default]` — left is the binding, right is a use.
+    if (target.type === 'object_assignment_pattern' || target.type === 'assignment_pattern') {
+      const def = target.childForFieldName('right') ?? target.namedChildren[target.namedChildren.length - 1];
+      const bind = target.childForFieldName('left') ?? target.namedChildren[0];
+      if (def && def !== bind) this.recordUses(def, block);
+      if (bind) this.recordTarget(bind, block, line);
+      return;
+    }
     // Destructuring / multiple targets: expression_list, array/object patterns.
     if (
       target.type === 'expression_list' ||

@@ -213,6 +213,34 @@ describe('closure captures are conservative (may)', () => {
   });
 });
 
+// ─── elif chains and destructuring (no dropped branches / defs) ───────────────
+
+describe('elif chains and destructuring', () => {
+  it('Python if/elif/else: all three branch defs reach a later use', async () => {
+    const lang = await pyLang();
+    const src = `def f(a):\n    x = 0\n    if a == 1:\n        x = 10\n    elif a == 2:\n        x = 20\n    else:\n        x = 30\n    return x`;
+    const cfg = cfgFor(src, lang, 'Python', PY_FN);
+    const defLines = new Set(cfg.defUse.filter(e => e.variable === 'x' && e.useLine === 9).map(e => e.defLine));
+    expect(defLines.has(4)).toBe(true); // if
+    expect(defLines.has(6)).toBe(true); // elif
+    expect(defLines.has(8)).toBe(true); // else
+  });
+
+  it('object destructuring binds each name as a definition', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(obj:any){\n  const { a, b } = obj;\n  return a + b;\n}`, lang, 'TypeScript', TS_FN);
+    expect(hasDefUse(cfg, 'a')).toBe(true);
+    expect(hasDefUse(cfg, 'b')).toBe(true);
+  });
+
+  it('array destructuring binds each element as a definition', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(arr:number[]){\n  const [x, y] = arr;\n  return x + y;\n}`, lang, 'TypeScript', TS_FN);
+    expect(hasDefUse(cfg, 'x')).toBe(true);
+    expect(hasDefUse(cfg, 'y')).toBe(true);
+  });
+});
+
 // ─── per-language coverage ───────────────────────────────────────────────────
 
 describe('multi-language CFG', () => {
