@@ -150,4 +150,20 @@ describe('CFG overlay storage', () => {
       store.close();
     }
   });
+
+  it('getCfg returns null (never throws) on a corrupt overlay blob', async () => {
+    const { dbPath } = await buildAndStore(dir, [
+      { path: 'a.ts', content: TS_SRC, language: 'TypeScript' },
+    ]);
+    // Corrupt the stored JSON directly, then confirm the reader fails soft.
+    const raw = new DatabaseSync(dbPath);
+    raw.prepare("UPDATE cfg_overlay SET cfg = '{not valid json' WHERE function_id = 'a.ts::classify'").run();
+    raw.close();
+    const store = EdgeStore.open(dbPath);
+    try {
+      expect(store.getCfg('a.ts::classify')).toBeNull(); // corrupt → null, no throw
+    } finally {
+      store.close();
+    }
+  });
 });

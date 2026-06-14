@@ -796,6 +796,76 @@ describe('handleAnalyzeImpact — value-level opt-in', () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// trace_execution_path value-level: first-hop narrowing to the data-dependent
+// callee, and fail-soft fallback when the entry has no overlay. `entry(a,b)`
+// calls used(a) on a's data-dependence line (3) and unused(b) on b's (4).
+// ──────────────────────────────────────────────────────────────────────────────
+describe('handleTraceExecutionPath — value-level opt-in', () => {
+  let dir: string;
+  let store: EdgeStore;
+  let cg: SerializedCallGraph;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'graph-trace-vl-'));
+    store = EdgeStore.open(join(dir, 'call-graph.db'));
+    const nodes = [
+      makeNode({ id: 'a.ts::entry',  fanOut: 2 }),
+      makeNode({ id: 'u.ts::used',   fanIn: 1 }),
+      makeNode({ id: 'n.ts::unused', fanIn: 1 }),
+    ];
+    const edges: CallEdge[] = [
+      { callerId: 'a.ts::entry', calleeId: 'u.ts::used',   calleeName: 'used',   confidence: 'import' as EdgeConfidence, line: 3 },
+      { callerId: 'a.ts::entry', calleeId: 'n.ts::unused', calleeName: 'unused', confidence: 'import' as EdgeConfidence, line: 4 },
+    ];
+    store.insertNodes(nodes);
+    store.insertEdges(edges);
+    store.insertCfgs([{
+      functionId: 'a.ts::entry', filePath: 'a.ts',
+      cfg: {
+        blocks: [{ id: 0, kind: 'entry' }, { id: 1, kind: 'exit' }, { id: 2, kind: 'normal' }],
+        edges: [{ from: 0, to: 2, kind: 'normal' }, { from: 2, to: 1, kind: 'normal' }],
+        params: ['a', 'b'], paramLine: 1,
+        defUse: [
+          { variable: 'a', defLine: 1, useLine: 3, precision: 'exact' },
+          { variable: 'b', defLine: 1, useLine: 4, precision: 'exact' },
+        ],
+      },
+    }]);
+    cg = makeGraph(nodes, edges);
+  });
+
+  afterEach(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('default trace (no flag) carries no valueLevel block', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ callGraph: cg, edgeStore: store } as never);
+    const r = await handleTraceExecutionPath(dir, 'entry', 'used', 5, 10) as Record<string, unknown>;
+    expect((r as { pathsFound: number }).pathsFound).toBeGreaterThanOrEqual(1);
+    expect(r.valueLevel).toBeUndefined();
+  });
+
+  it('value-level narrows the first hop to the data-dependent callee', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ callGraph: cg, edgeStore: store } as never);
+    // entry→used (call line 3) IS data-dependent on param `a` → reachable.
+    const r1 = await handleTraceExecutionPath(dir, 'entry', 'used', 5, 10, false, true, 'a') as { pathsFound: number; valueLevel: { applied: boolean } };
+    expect(r1.valueLevel.applied).toBe(true);
+    expect(r1.pathsFound).toBeGreaterThanOrEqual(1);
+    // entry→unused (call line 4) is NOT data-dependent on `a` → first hop excluded.
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ callGraph: cg, edgeStore: store } as never);
+    const r2 = await handleTraceExecutionPath(dir, 'entry', 'unused', 5, 10, false, true, 'a') as { pathsFound: number; valueLevel: { applied: boolean } };
+    expect(r2.valueLevel.applied).toBe(true);
+    expect(r2.pathsFound).toBe(0);
+  });
+
+  it('falls back (applied:false) when the entry function has no overlay', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ callGraph: cg, edgeStore: store } as never);
+    // `unused` has no overlay row → value-level cannot narrow → unrestricted DFS,
+    // reported with applied:false (never a silent empty narrowing).
+    const r = await handleTraceExecutionPath(dir, 'unused', 'used', 5, 10, false, true, 'x') as { valueLevel: { applied: boolean } };
+    expect(r.valueLevel.applied).toBe(false);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Symbol resolution — exact-name match is preferred over fuzzy FTS hits.
 // searchNodes uses an fts5 trigram index, so a query like "auth" substring-matches
 // "authenticate"/"authorize" too. A request for a symbol that DOES exist exactly

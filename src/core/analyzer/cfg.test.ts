@@ -293,6 +293,48 @@ function defLinesTo(cfg: FunctionCfg, variable: string, useLine: number): number
   return [...new Set(cfg.defUse.filter(e => e.variable === variable && e.useLine === useLine).map(e => e.defLine))].sort((a, b) => a - b);
 }
 
+// ─── infinite loops: body always runs (no phantom skip-body edge) ─────────────
+// An infinite loop (Rust `loop {}`, Go `for {}`, C-family `for(;;)`) always
+// executes its body, so a pre-loop def is killed by the body and must NOT reach a
+// post-loop use. A foreach/range or conditional loop CAN skip its body, so the
+// pre-loop def MUST still reach.
+describe('infinite loops do not leak a pre-loop def (no unsound exact)', () => {
+  it('Rust loop {} kills the pre-loop def', async () => {
+    const cfg = cfgFor('fn f() -> i32 {\n  let mut x = init();\n  loop {\n    x = next();\n    if done() { break; }\n  }\n  return x;\n}', await rustLang(), 'Rust', ['function_item']);
+    expect(defLinesTo(cfg, 'x', 7)).toEqual([4]); // only the body def; line 2 must not leak
+  });
+  it('Go for {} kills the pre-loop def', async () => {
+    const cfg = cfgFor('func f() int {\n\tx := init()\n\tfor {\n\t\tx = next()\n\t\tif done() { break }\n\t}\n\treturn x\n}', await goLang(), 'Go', ['function_declaration']);
+    expect(defLinesTo(cfg, 'x', 7)).toEqual([4]);
+  });
+  it('C++ for(;;) kills the pre-loop def', async () => {
+    const cfg = cfgFor('int f(){\n  int x = init();\n  for(;;){\n    x = next();\n    if(done()) break;\n  }\n  return x;\n}', await cppLang(), 'C++', ['function_definition']);
+    expect(defLinesTo(cfg, 'x', 7)).toEqual([4]);
+  });
+  it('Java for(;;) kills the pre-loop def', async () => {
+    const cfg = cfgFor('class C{ int f(){\n  int x = init();\n  for(;;){\n    x = next();\n    if(done()) break;\n  }\n  return x;\n} }', await javaLang(), 'Java', ['method_declaration']);
+    expect(defLinesTo(cfg, 'x', 7)).toEqual([4]);
+  });
+  it('C# for(;;) kills the pre-loop def', async () => {
+    const cfg = cfgFor('class C{ int f(){\n  int x = init();\n  for(;;){\n    x = next();\n    if(done()) break;\n  }\n  return x;\n} }', await csharpLang(), 'C#', ['method_declaration']);
+    expect(defLinesTo(cfg, 'x', 7)).toEqual([4]);
+  });
+  it('foreach/range and conditional loops STILL let the pre-loop def reach (zero-iteration path)', async () => {
+    // Rust for-in, Go range, Go for-cond, C++ for(i<n), Python for — all can skip
+    // the body, so both the pre-loop (2) and body (4) defs reach the use.
+    const rustForIn = cfgFor('fn f() -> i32 {\n  let mut s = 0;\n  for v in xs {\n    s = s + v;\n  }\n  return s;\n}', await rustLang(), 'Rust', ['function_item']);
+    expect(defLinesTo(rustForIn, 's', 6)).toEqual([2, 4]);
+    const goRange = cfgFor('func f() int {\n\ts := 0\n\tfor _, v := range xs {\n\t\ts = s + v\n\t}\n\treturn s\n}', await goLang(), 'Go', ['function_declaration']);
+    expect(defLinesTo(goRange, 's', 6)).toEqual([2, 4]);
+    const goForCond = cfgFor('func f() int {\n\ts := 0\n\tfor s < 10 {\n\t\ts = s + 1\n\t}\n\treturn s\n}', await goLang(), 'Go', ['function_declaration']);
+    expect(defLinesTo(goForCond, 's', 6)).toEqual([2, 4]); // Go bare-condition for must keep its skip edge
+    const cppFor = cfgFor('int f(){\n  int s = 0;\n  for(int i=0;i<n;i++){\n    s = s + i;\n  }\n  return s;\n}', await cppLang(), 'C++', ['function_definition']);
+    expect(defLinesTo(cppFor, 's', 6)).toEqual([2, 4]);
+    const pyFor = cfgFor('def f():\n    s = 0\n    for v in xs:\n        s = s + v\n    return s', await pyLang(), 'Python', ['function_definition']);
+    expect(defLinesTo(pyFor, 's', 5)).toEqual([2, 4]);
+  });
+});
+
 describe('lexical block scope (shadowing must not conflate variables)', () => {
   it('TS: an inner block let shadow does not reach the outer use, nor drop it', async () => {
     const lang = await tsLang();

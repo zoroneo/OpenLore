@@ -531,7 +531,7 @@ class CfgBuilder {
   readonly EXIT: number;
 
   /** identifier startIndex → scope-resolved key (`name#scopeId`). */
-  constructor(private readonly spec: CfgLangSpec, private readonly scopeKeys: Map<number, string> = new Map()) {
+  constructor(private readonly spec: CfgLangSpec, private readonly scopeKeys: Map<number, string> = new Map(), private readonly language: string = '') {
     this.ENTRY = this.newBlock('entry');
     this.EXIT = this.newBlock('exit');
   }
@@ -774,13 +774,28 @@ class CfgBuilder {
 
     const condBlock = this.newBlock('loop');
     this.addEdge(current, condBlock, 'normal');
-    const cond = stmt.childForFieldName(spec.conditionField) ?? loopHeaderField(stmt, spec.conditionField);
+    let cond = stmt.childForFieldName(spec.conditionField) ?? loopHeaderField(stmt, spec.conditionField);
+    // Go exposes `for cond {}` as a bare expression child with no condition field —
+    // recover it (the named child that is neither the body nor a for/range clause)
+    // so its loop-variable reads are recorded and it is not mistaken for `for {}`.
+    if (!cond && this.language === 'Go' && stmt.type === 'for_statement') {
+      const bodyNode = stmt.childForFieldName(spec.bodyField);
+      cond = stmt.namedChildren.find(c =>
+        !spec.blockTypes.has(c.type) && c.type !== 'for_clause' && c.type !== 'range_clause' && !sameNode(c, bodyNode)
+      ) ?? null;
+    }
     if (cond) this.recordUses(cond, condBlock);
 
     const bodyBlock = this.newBlock('normal');
     this.addEdge(condBlock, bodyBlock, 'true');
     const afterBlock = this.newBlock('merge');
-    this.addEdge(condBlock, afterBlock, 'false');
+    // A pre-test or foreach/range loop can skip its body (condition false on
+    // entry, or an empty iterable), so the condition gets a false edge straight
+    // to the merge. An INFINITE loop (Rust `loop {}`, Go `for {}`, C-family
+    // `for(;;)`) always executes its body — its only exits are `break`s (already
+    // wired to afterBlock). A false edge there would let a pre-loop def bypass
+    // the body and reach post-loop code as an unsound `exact`.
+    if (!this.isInfiniteLoop(stmt, cond)) this.addEdge(condBlock, afterBlock, 'false');
 
     const body = stmt.childForFieldName(spec.bodyField);
     const innerLoop: LoopCtx = { continueTarget: condBlock, breakTarget: afterBlock };
@@ -790,6 +805,28 @@ class CfgBuilder {
     if (bodyExit !== null) this.addEdge(bodyExit, condBlock, 'back');
 
     return afterBlock;
+  }
+
+  /**
+   * An infinite loop always executes its body (only `break` exits it), so it has
+   * no "skip the body" path. A loop WITH a condition, or a foreach/range loop
+   * (which skips its body on an empty iterable), is NOT infinite and keeps its
+   * false→merge edge. Detected forms: Rust `loop {}`, Go bare `for {}`, and
+   * C-family `for(;;)` (a `for_statement` with no condition that is neither
+   * Python's foreach `for` nor a Go `range` loop). Unknown forms default to
+   * not-infinite (keep the edge) — the safe direction for precision.
+   */
+  private isInfiniteLoop(stmt: CfgNode, cond: CfgNode | null): boolean {
+    if (cond) return false;                            // a test can be false on entry
+    if (stmt.type === 'loop_expression') return true;  // Rust `loop {}`
+    if (stmt.type === 'for_statement') {
+      if (this.language === 'Python') return false;                              // Python `for x in xs` = foreach
+      if (stmt.namedChildren.some(c => c.type === 'range_clause')) return false;  // Go `for range`
+      // A conditionless c-style `for` (`for(;;)`, `for(init;;update)`) and Go's
+      // bare `for {}` always run their body — only `break` exits.
+      return true;
+    }
+    return false;
   }
 
   /** `do { body } while (cond)` — post-test: body runs first, then the condition
@@ -1633,7 +1670,10 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
   edges.sort((a, b) =>
     a.defLine - b.defLine || a.useLine - b.useLine ||
     (a.variable < b.variable ? -1 : a.variable > b.variable ? 1 : 0) ||
-    (a.precision < b.precision ? -1 : a.precision > b.precision ? 1 : 0)
+    (a.precision < b.precision ? -1 : a.precision > b.precision ? 1 : 0) ||
+    // Total ordering: two edges can otherwise differ only in useInDefLine. Make
+    // the comparator total so output never relies on sort stability.
+    ((a.useInDefLine ?? -1) - (b.useInDefLine ?? -1))
   );
   return edges;
 }
@@ -1757,7 +1797,7 @@ export function buildFunctionCfg(fnNode: CfgNode, language: string): FunctionCfg
     // Resolve every identifier occurrence to a scope-qualified key so a shadowed
     // inner declaration never conflates with the outer same-named variable.
     const scopeKeys = resolveScopes(body, spec, params);
-    const builder = new CfgBuilder(spec, scopeKeys);
+    const builder = new CfgBuilder(spec, scopeKeys, language);
     builder.build(body);
 
     // A function whose CFG is implausibly large is machine-generated or
