@@ -770,6 +770,18 @@ describe('handleAnalyzeImpact — value-level opt-in', () => {
     expect((result.valueLevel as { applied: boolean }).applied).toBe(false);
     expect(result.symbol).toBe('used');
   });
+
+  it('falls back (not zero blast radius) when valueParam is not a real parameter', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    // `entry` has an overlay, but `zzz` is not one of its params/locals. The
+    // narrowing must NOT silently report 0 callees — it must fall back to the
+    // full function-granularity blast radius so a typo can't read as "safe".
+    const result = await handleAnalyzeImpact(dir, 'entry', 2, false, true, 'zzz') as Record<string, unknown>;
+    const vl = result.valueLevel as { applied: boolean; reason?: string };
+    expect(vl.applied).toBe(false);
+    expect(vl.reason).toContain('zzz');
+    expect((result.blastRadius as { downstream: number }).downstream).toBe(2);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────

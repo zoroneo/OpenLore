@@ -590,8 +590,21 @@ export async function handleAnalyzeImpact(
   let downstreamMap: Map<string, number>;
   if (valueLevel && seeds.length === 1) {
     const cfg = ctx.edgeStore.getCfg(seeds[0].id);
-    if (!cfg) {
-      valueLevelInfo = { applied: false, reason: 'no CFG/def-use overlay for this function (unsupported language or no usable body); returning function-granularity result' };
+    // The value-level query is well-posed only when its target resolves in the
+    // overlay: a named valueParam must be a parameter or a tracked local; an
+    // "all parameters" request needs at least one parameter. Otherwise narrowing
+    // would silently report zero blast radius (e.g. a mistyped param) — telling
+    // an agent a change is safe when we simply couldn't resolve the value. Fall
+    // back to function granularity instead.
+    const targetExists = !!cfg && (valueParam === undefined
+      ? cfg.params.length > 0
+      : cfg.params.includes(valueParam) || cfg.defUse.some(e => e.variable === valueParam));
+    if (!cfg || !targetExists) {
+      valueLevelInfo = { applied: false, reason: !cfg
+        ? 'no CFG/def-use overlay for this function (unsupported language or no usable body); returning function-granularity result'
+        : valueParam
+          ? `value "${valueParam}" is not a parameter or tracked local in this function's overlay; returning function-granularity result`
+          : 'function exposes no parameters in the overlay; returning function-granularity result' };
       downstreamMap = bfsFromDB(seedIds, 'forward', depth, ctx.edgeStore, bfsOpts);
     } else {
       const { valueReachableLines } = await import('../../analyzer/cfg.js');
@@ -1025,6 +1038,13 @@ export async function handleTraceExecutionPath(
     for (const entry of entryNodes) {
       const fnCfg = ctx.edgeStore.getCfg(entry.id);
       if (!fnCfg) continue;
+      // Skip an ill-posed query (mistyped valueParam, or no params for an "all
+      // params" request) so this entry's first hop stays unrestricted rather than
+      // silently filtering every path away.
+      const targetExists = valueParam === undefined
+        ? fnCfg.params.length > 0
+        : fnCfg.params.includes(valueParam) || fnCfg.defUse.some(e => e.variable === valueParam);
+      if (!targetExists) continue;
       anyOverlay = true;
       const reached = valueReachableLines(fnCfg, valueParam);
       const allowed = new Set<string>();
@@ -1035,7 +1055,7 @@ export async function handleTraceExecutionPath(
     }
     valueLevelInfo = anyOverlay
       ? { applied: true, parameter: valueParam ?? '(all parameters)' }
-      : { applied: false, reason: 'no CFG/def-use overlay for the entry function(s); returning function-granularity paths' };
+      : { applied: false, reason: 'no resolvable value-level overlay for the entry function(s) (no overlay, or the value is not a parameter/local); returning function-granularity paths' };
     if (!anyOverlay) allowedFirstHop = undefined;
   }
 
