@@ -753,6 +753,27 @@ describe('PHP/C# indirection escapes (no unsound exact)', () => {
     const o = cfgFor('class C{ int f(){\n  int x;\n  TryGet(out x);\n  return x;\n} }', lang, 'C#', ['method_declaration']);
     expect(o.defUse.find(e => e.variable === 'x' && e.useLine === 4)?.precision).toBe('may');
   });
+
+  it('PHP by-ref closure with a SUBSCRIPT write (use (&$x){ $x[]=… }) is may', async () => {
+    const lang = await phpLang();
+    // Real-world Guzzle pattern: $called[]=… inside a by-ref closure mutates the
+    // outer $called out of band. addLeftIdents skips subscript writes, so only the
+    // by-ref capture itself can mark $called as escaped.
+    const cfg = cfgFor('<?php function f(){\n  $called = [];\n  $c = function() use (&$called){ $called[] = 1; };\n  $c();\n  return $called;\n}', lang, 'PHP', ['function_definition']);
+    expect(cfg.defUse.find(e => e.variable === '$called' && e.useLine === 5)?.precision).toBe('may');
+  });
+
+  it('PHP foreach by-ref loop variable (as &$v) is may', async () => {
+    const lang = await phpLang();
+    const cfg = cfgFor('<?php function f($a){\n  $v = 0;\n  foreach($a as &$v){ $v = $v * 2; }\n  return $v;\n}', lang, 'PHP', ['function_definition']);
+    expect(cfg.defUse.find(e => e.variable === '$v' && e.useLine === 4)?.precision).toBe('may');
+  });
+
+  it('C# ref local (ref int r = ref e) downgrades the referent to may', async () => {
+    const lang = await csharpLang();
+    const cfg = cfgFor('class C{ int f(){\n  int e = 0;\n  ref int r = ref e;\n  r = 9;\n  return e;\n} }', lang, 'C#', ['method_declaration']);
+    expect(cfg.defUse.find(e => e.variable === 'e' && e.useLine === 5)?.precision).toBe('may');
+  });
 });
 
 // ─── language contract guard (CI-protected: lock the supported/fail-soft set) ──

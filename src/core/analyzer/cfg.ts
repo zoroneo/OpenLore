@@ -1317,6 +1317,18 @@ function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
     const bound = new Set<string>(extractParamNames(fnNode, spec));
     const fbody = findBody(fnNode, spec);
     if (!fbody) return;
+    // PHP `use (&$x)` captures $x by reference: the closure can mutate the outer
+    // $x out of band (even via a subscript/member write that addLeftIdents skips),
+    // so a by-ref capture escapes unconditionally.
+    const useClause = fnNode.namedChildren.find(c => c.type === 'anonymous_function_use_clause');
+    if (useClause) {
+      for (const cap of useClause.namedChildren) {
+        if (cap.type === 'by_ref') {
+          const v = cap.namedChildren.find(x => spec.identTypes.has(x.type));
+          if (v) escaped.add(v.text);
+        }
+      }
+    }
     // Names declared inside this closure are local to it (not outer mutations).
     const collectBound = (n: CfgNode): void => {
       if (n !== fnNode && spec.nestedFnTypes.has(n.type)) return; // a deeper closure has its own scope
@@ -1414,6 +1426,24 @@ function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
     if (n.type === 'reference_assignment_expression') {
       const referent = n.namedChildren[n.namedChildren.length - 1];
       if (referent && spec.identTypes.has(referent.type)) escaped.add(referent.text);
+    }
+    // PHP `foreach ($a as &$v)`: $v is a by-ref alias to each element and stays
+    // aliased to the last element after the loop, so it changes out of band.
+    if (n.type === 'foreach_statement') {
+      for (const c of n.namedChildren) {
+        if (c.type === 'by_ref') {
+          const v = c.namedChildren.find(x => spec.identTypes.has(x.type));
+          if (v) escaped.add(v.text);
+        }
+      }
+    }
+    // C# `ref` local (`ref int r = ref e;`): r aliases e — writes through r mutate
+    // e out of band, so e can never carry a sound `exact`. ref_expression is
+    // C#-specific, so this matches no other language's variable_declarator.
+    if (n.type === 'variable_declarator') {
+      const refExpr = n.namedChildren.find(c => c.type === 'ref_expression');
+      const ref = refExpr?.namedChildren.find(c => spec.identTypes.has(c.type));
+      if (ref) escaped.add(ref.text);
     }
     // C# `ref`/`out` argument: the callee can (ref) or must (out) reassign the
     // variable, so its prior/declaration def can change out of band → `may`.

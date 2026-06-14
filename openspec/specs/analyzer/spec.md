@@ -5144,3 +5144,13 @@ Adversarial real-repo dogfooding (serde, clap, ky/zod/got) found unsound `exact`
 Dogfooding showed the value-level opt-in could silently report zero blast radius when valueReachableLines() returned an empty set — e.g. a mistyped valueParam that matches no parameter/local, or an "all parameters" request on a function the overlay extracted no params for. Zero downstream reads to an agent as "this change is safe," the exact failure value-level must avoid. The handlers now treat a query as well-posed only when its target resolves in the overlay (a named valueParam is a parameter or a tracked def-use variable; an unnamed request needs at least one parameter) and otherwise fall back to the full function-granularity result with an explicit reason, instead of an empty narrowed slice.
 
 **Consequences:** analyze_impact and trace_execution_path return applied:false with a clear reason (and the full blast radius / unrestricted first hop) when the value-level target can't be resolved, rather than a misleading zero. A genuine zero — a real parameter that flows to no callee — is still reported as a sound applied:true narrowing. Regression-tested in graph.test.ts.
+
+### Downgrade PHP by-ref captures/foreach and C# ref locals in CFG escape analysis
+
+**Status:** Approved
+**Date:** 2026-06-14
+**ID:** 3ffcd5e5
+
+Adversarial dogfooding of the less-validated languages (Java/C#/PHP/C/Ruby on gson, AutoMapper, MediatR, FastRoute, Guzzle, sds, sinatra) found three unsound `exact` def-use classes — Java, C, and Ruby were sound. (1) PHP `use (&$x)` by-reference closure capture: a subscript/member write inside the closure (`$called[] = …`, a real Guzzle test pattern) mutates the outer var out of band, but addLeftIdents deliberately skips subscript writes and the analyzer never inspected the anonymous_function_use_clause/by_ref node, so it could not tell by-ref from by-value capture. (2) PHP `foreach ($a as &$v)`: the by-ref loop var aliases each element and stays aliased to the last after the loop. (3) C# ref local `ref T r = ref e`: r aliases e, so writes through r change e — the variable_declarator/ref_expression form had no case (ref/out arguments were already handled).
+
+**Consequences:** A PHP by-ref capture escapes unconditionally; PHP foreach by-ref loop vars and C# ref-local referents are downgraded to `may`. Verified on real Guzzle: the previously-unsound `$called` def-use edges are now `may`; 0 structural violations, determinism bit-identical. Noted v1 limitations (not fixed, require non-syntactic analysis): PHP variable-variables (`$$name`) and by-ref builtins (`sort($arr)`). Regression-tested per case in cfg.test.ts.
