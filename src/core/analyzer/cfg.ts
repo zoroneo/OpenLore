@@ -1334,7 +1334,12 @@ function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
     const addLeftIdents = (left: CfgNode | null): void => {
       if (!left) return;
       if (spec.memberTypes.has(left.type) || spec.subscriptTypes.has(left.type)) return;
-      if (spec.identTypes.has(left.type)) { if (!bound.has(left.text)) escaped.add(left.text); return; }
+      // A shorthand-destructuring binding (`({a, b} = …)`) reassigns the bare
+      // name; its leaves are shorthand_property_identifier_pattern, not plain
+      // identifiers, so descend them explicitly (mirrors collectIdentLeaves).
+      if (spec.identTypes.has(left.type) || left.type === 'shorthand_property_identifier_pattern' || left.type === 'shorthand_property_identifier') {
+        if (!bound.has(left.text)) escaped.add(left.text); return;
+      }
       for (const c of left.namedChildren) addLeftIdents(c);
     };
     // A mutation (assignment / `x++` / `&x`) of an outer name inside the closure.
@@ -1351,6 +1356,20 @@ function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
         const op = n.childForFieldName('operator'), operand = n.childForFieldName('operand');
         if (op?.text === '&' && operand && spec.identTypes.has(operand.type) && !bound.has(operand.text)) escaped.add(operand.text);
       }
+      // Rust mutable borrow `&mut x` of an outer local inside the closure.
+      if (n.type === 'reference_expression' && n.namedChildren.some(c => c.type === 'mutable_specifier')) {
+        const operand = n.childForFieldName('value') ?? n.namedChildren[n.namedChildren.length - 1];
+        if (operand && spec.identTypes.has(operand.type) && !bound.has(operand.text)) escaped.add(operand.text);
+      }
+      // `&mut x` inside a macro token_tree (`write!(&mut x, …)`) within the closure.
+      if (n.type === 'token_tree') {
+        const ch = n.children ?? [];
+        for (let i = 1; i + 1 < ch.length; i++) {
+          if (ch[i].type === 'mutable_specifier' && ch[i - 1].text === '&' && spec.identTypes.has(ch[i + 1].type) && !bound.has(ch[i + 1].text)) {
+            escaped.add(ch[i + 1].text);
+          }
+        }
+      }
       for (const c of n.namedChildren) collectMut(c);
     };
     collectMut(fbody);
@@ -1364,6 +1383,26 @@ function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
       const op = n.childForFieldName('operator') ?? n.children?.find(c => c.text === '&' || c.text === '*');
       const operand = n.childForFieldName('operand') ?? n.childForFieldName('argument') ?? n.namedChildren[0];
       if (op?.text === '&' && operand && spec.identTypes.has(operand.type)) escaped.add(operand.text);
+    }
+    // Rust mutable borrow `&mut x`: the callee can mutate the local out of band,
+    // so its def can change before a later use — it can never carry a sound
+    // `exact`. A shared borrow `&x` (no `mutable_specifier`) cannot mutate x, so
+    // it is intentionally left alone and stays exact.
+    if (n.type === 'reference_expression' && n.namedChildren.some(c => c.type === 'mutable_specifier')) {
+      const operand = n.childForFieldName('value') ?? n.namedChildren[n.namedChildren.length - 1];
+      if (operand && spec.identTypes.has(operand.type)) escaped.add(operand.text);
+    }
+    // Rust macro bodies (`write!(&mut buf, …)`, ubiquitous) keep their args as a
+    // raw token_tree, so `&mut x` is a flat token sequence (`&`, mutable_specifier,
+    // identifier) rather than a reference_expression. Scan for it so a macro-borrowed
+    // local is not mislabeled exact.
+    if (n.type === 'token_tree') {
+      const ch = n.children ?? [];
+      for (let i = 1; i + 1 < ch.length; i++) {
+        if (ch[i].type === 'mutable_specifier' && ch[i - 1].text === '&' && spec.identTypes.has(ch[i + 1].type)) {
+          escaped.add(ch[i + 1].text);
+        }
+      }
     }
     // C/C++ reference binding `T& r = x;` aliases x — writes through r mutate x,
     // so x can change out of band: it can never carry a sound `exact`.
@@ -1823,10 +1862,10 @@ function extractParamNames(fnNode: CfgNode, spec: CfgLangSpec): string[] {
     for (const c of n.namedChildren) {
       // Only descend into parameter wrappers, not default-value expressions.
       if (isBinder(c.type)) { names.push(c.text); return; }
-      if (
-        c.type.includes('parameter') || c.type === 'pattern' ||
-        c.type === 'tuple_pattern' || c.type === 'object_pattern' || c.type === 'array_pattern'
-      ) {
+      // Descend parameter wrappers and any binding pattern — tuple/object/array
+      // plus variadics (TS `...rest` → rest_pattern, Python `*args`/`**kwargs` →
+      // list_splat_pattern/dictionary_splat_pattern) — but not default-value exprs.
+      if (c.type.includes('parameter') || c.type === 'pattern' || c.type.endsWith('_pattern')) {
         visit(c);
       }
     }

@@ -508,6 +508,59 @@ describe('escaped variables are downgraded to may (sound exact)', () => {
     const e = cfg.defUse.find(d => d.variable === 'z' && d.useLine === 4);
     expect(e?.precision).toBe('exact'); // g only reads z; z is not mutated
   });
+
+  it('a Rust local mutably borrowed (&mut x) is may, not exact', async () => {
+    const lang = await rustLang();
+    // `let mut x = 0; g(&mut x); return x;` — g can mutate x out of band.
+    const cfg = cfgFor('fn f() -> i32 {\n  let mut x = 0;\n  g(&mut x);\n  return x;\n}', lang, 'Rust', ['function_item']);
+    expect(cfg.defUse.find(d => d.variable === 'x' && d.useLine === 4)?.precision).toBe('may');
+  });
+
+  it('a Rust shared borrow (&x) does not over-downgrade — stays exact', async () => {
+    const lang = await rustLang();
+    // `let _y = &x;` is an immutable borrow; x cannot change through it.
+    const cfg = cfgFor('fn f() -> i32 {\n  let x = 0;\n  let _y = &x;\n  return x;\n}', lang, 'Rust', ['function_item']);
+    expect(cfg.defUse.find(d => d.variable === 'x' && d.useLine === 4)?.precision).toBe('exact');
+  });
+
+  it('a Rust local mutably borrowed inside a macro (write!(&mut x, …)) is may', async () => {
+    const lang = await rustLang();
+    // `write!(&mut buf, …)` keeps `&mut buf` in a raw macro token_tree.
+    const cfg = cfgFor('fn f() -> String {\n  let mut buf = String::new();\n  let _ = write!(&mut buf, "x");\n  return buf;\n}', lang, 'Rust', ['function_item']);
+    expect(cfg.defUse.find(d => d.variable === 'buf' && d.useLine === 4)?.precision).toBe('may');
+  });
+
+  it('a Rust local mutably borrowed inside a closure is may, not exact', async () => {
+    const lang = await rustLang();
+    const cfg = cfgFor('fn f() -> i32 {\n  let mut x = 0;\n  let g = || { h(&mut x); };\n  g();\n  return x;\n}', lang, 'Rust', ['function_item']);
+    expect(cfg.defUse.find(d => d.variable === 'x' && d.useLine === 5)?.precision).toBe('may');
+  });
+
+  it('JS object-shorthand destructuring reassign inside a closure is may', async () => {
+    const lang = await tsLang();
+    // `({a, b} = src.next())` inside a stored callback reassigns a,b out of band.
+    const cfg = cfgFor('function f(src){\n  let a = 1, b = 2;\n  src.on("x", () => { ({a, b} = src.next()); });\n  return a + b;\n}', lang, 'TypeScript', TS_FN);
+    expect(cfg.defUse.find(d => d.variable === 'a' && d.useLine === 4)?.precision).toBe('may');
+    expect(cfg.defUse.find(d => d.variable === 'b' && d.useLine === 4)?.precision).toBe('may');
+  });
+});
+
+// ─── variadic parameter extraction (value-level blast-radius regression) ──────
+
+describe('variadic parameters are extracted', () => {
+  it('TS rest parameter (...sources) is a parameter', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor('const deepMerge = (...sources) => { return sources; };', lang, 'TypeScript', ['arrow_function']);
+    expect(cfg.params).toContain('sources');
+    expect(cfg.defUse.some(e => e.variable === 'sources')).toBe(true);
+  });
+
+  it('Python *args / **kwargs are parameters', async () => {
+    const lang = await pyLang();
+    const cfg = cfgFor('def f(a, *args, **kwargs):\n    return args', lang, 'Python', PY_FN);
+    expect(cfg.params).toEqual(expect.arrayContaining(['a', 'args', 'kwargs']));
+    expect(cfg.defUse.some(e => e.variable === 'args')).toBe(true);
+  });
 });
 
 // ─── per-language coverage ───────────────────────────────────────────────────
