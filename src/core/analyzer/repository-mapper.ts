@@ -21,6 +21,7 @@ import {
 import type { ProjectType, ScoredFile, FileMetadata } from '../../types/index.js';
 import { FileWalker, type FileWalkerOptions } from './file-walker.js';
 import { SignificanceScorer, type ScoringConfig } from './significance-scorer.js';
+import { deriveDomainFromPath, DOMAIN_NOISE_DIRS } from './domain-naming.js';
 
 // ============================================================================
 // TYPES
@@ -469,31 +470,19 @@ function inferDomains(files: ScoredFile[]): Record<string, ScoredFile[]> {
     // Skip test and config files for domain inference
     if (file.isTest || file.isConfig) continue;
 
-    // Extract potential domain from path
-    const pathParts = file.path.split('/');
-
-    // Check for domain-like directory names (skip common non-domain dirs).
-    // Includes language build-layout and reverse-DNS package noise so Java
-    // (src/main/java/com/...), Kotlin, and Go (pkg/internal) projects don't
-    // surface "main", "java", or "com" as domains.
-    const skipDirs = new Set([
-      'src', 'lib', 'app', 'core', 'common', 'shared', 'utils', 'helpers', 'config',
-      'main', 'java', 'kotlin', 'scala', 'groovy', 'resources',
-      'test', 'tests', 'target', 'build', 'out', 'dist', 'bin', 'obj', 'gen',
-      'pkg', 'internal', 'cmd', 'vendor',
-      'com', 'org', 'io', 'net', 'gov', 'edu',
-    ]);
-
-    for (const part of pathParts) {
-      if (part && !skipDirs.has(part.toLowerCase()) && !part.startsWith('.')) {
-        // This could be a domain
-        const domain = part.toLowerCase();
-        if (!domains[domain]) {
-          domains[domain] = [];
-        }
-        domains[domain].push(file);
-        break; // Only use first domain-like directory
+    // Derive a domain from the file's directory by walking leaf-first and
+    // skipping build-layout / reverse-DNS package noise (shared with the
+    // dependency-graph cluster naming). Walking leaf-first is what keeps Java
+    // (src/main/java/com/example/inventory/Foo.java) at the business package
+    // ("inventory") instead of collapsing every source file into the org root
+    // ("com"/"springframework"). See issue #138.
+    const dirParts = file.path.split('/').slice(0, -1);
+    const domain = deriveDomainFromPath(dirParts);
+    if (domain) {
+      if (!domains[domain]) {
+        domains[domain] = [];
       }
+      domains[domain].push(file);
     }
 
     // Also check file name prefixes (e.g., user-service.ts -> user)
@@ -502,7 +491,7 @@ function inferDomains(files: ScoredFile[]): Record<string, ScoredFile[]> {
 
     if (nameParts.length > 1) {
       const prefix = nameParts[0].toLowerCase();
-      if (prefix.length > 2 && !skipDirs.has(prefix)) {
+      if (prefix.length > 2 && !DOMAIN_NOISE_DIRS.has(prefix)) {
         if (!domainPrefixes.has(prefix)) {
           domainPrefixes.set(prefix, []);
         }

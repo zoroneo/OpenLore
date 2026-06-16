@@ -297,6 +297,26 @@ describe('RepositoryMapper', () => {
       expect(map.clusters.byDomain['users']).toBeDefined();
       expect(map.clusters.byDomain['orders']).toBeDefined();
     });
+
+    it('infers leaf Java packages as domains, not the reverse-DNS org root (#138)', async () => {
+      const pkg = join(testDir, 'src', 'main', 'java', 'com', 'example');
+      await mkdir(join(pkg, 'inventory'), { recursive: true });
+      await mkdir(join(pkg, 'billing'), { recursive: true });
+
+      await writeFile(join(pkg, 'inventory', 'Item.java'), 'class Item {}');
+      await writeFile(join(pkg, 'inventory', 'Warehouse.java'), 'class Warehouse {}');
+      await writeFile(join(pkg, 'billing', 'Invoice.java'), 'class Invoice {}');
+      await writeFile(join(pkg, 'billing', 'Ledger.java'), 'class Ledger {}');
+
+      const mapper = new RepositoryMapper(testDir);
+      const map = await mapper.map();
+
+      expect(map.clusters.byDomain['inventory']).toBeDefined();
+      expect(map.clusters.byDomain['billing']).toBeDefined();
+      // The bug: every file collapsed into the org root instead of leaf packages.
+      expect(map.clusters.byDomain['example']).toBeUndefined();
+      expect(map.clusters.byDomain['com']).toBeUndefined();
+    });
   });
 
   describe('output generation', () => {

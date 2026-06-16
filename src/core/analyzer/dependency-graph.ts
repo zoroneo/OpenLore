@@ -8,6 +8,7 @@
 
 import { ImportExportParser, resolveImport, type ExportInfo, type FileAnalysis } from './import-parser.js';
 import { extractAllHttpEdges, type HttpEdge } from './http-route-parser.js';
+import { deriveDomainFromPath } from './domain-naming.js';
 import type { ScoredFile } from '../../types/index.js';
 import {
   PAGERANK_DAMPING_FACTOR,
@@ -34,22 +35,6 @@ const CLUSTER_PALETTE = [
   '#00d4aa',
   '#ffb347',
 ];
-
-/**
- * Directory segments that carry no business meaning and should be skipped when
- * deriving a domain name from a path. Covers generic source roots plus
- * language build layouts (Maven/Gradle `src/main/java`, Go `pkg`/`internal`)
- * and reverse-DNS package roots (`com`, `org`, `io`, …) so that Java/Kotlin/Go
- * projects don't get nonsense domains like "main", "java", or "com".
- */
-const DOMAIN_NOISE_DIRS = new Set([
-  'src', 'lib', 'app', 'apps', 'source', 'sources',
-  'main', 'java', 'kotlin', 'scala', 'groovy', 'resources',
-  'test', 'tests', 'spec', 'specs', '__tests__',
-  'target', 'build', 'out', 'dist', 'bin', 'obj', 'gen', 'generated',
-  'pkg', 'internal', 'cmd', 'node_modules', 'vendor',
-  'com', 'org', 'io', 'net', 'gov', 'edu', 'co',
-]);
 
 // ============================================================================
 // INTERFACES
@@ -601,48 +586,13 @@ export class DependencyGraphBuilder {
    * Suggest a domain name based on directory and file contents
    */
   private suggestDomainName(dir: string, files: string[]): string {
-    // Extract meaningful name from directory
+    // Walk the directory path leaf-first, skipping build-layout / reverse-DNS
+    // package noise, via the shared helper so cluster domains stay in lockstep
+    // with repository-mapper's inferred domains (issue #138).
     const parts = dir.split('/').filter(p => p && p !== '(root)');
-
-    // Common patterns to convert
-    const patterns: [RegExp, string][] = [
-      [/^src$/i, ''],
-      [/^lib$/i, ''],
-      [/^app$/i, ''],
-      [/^(api|routes|endpoints?)$/i, 'api'],
-      [/^(models?|entities|entity|schemas?|domain)$/i, 'domain'],
-      [/^(services?)$/i, 'services'],
-      [/^(controllers?|resources?)$/i, 'controllers'],
-      [/^(repositor(y|ies)|repos?|dao|daos)$/i, 'repositories'],
-      [/^(handlers?)$/i, 'handlers'],
-      [/^(middlewares?)$/i, 'middleware'],
-      [/^(utils?|helpers?|common)$/i, 'utilities'],
-      [/^(components?)$/i, 'components'],
-      [/^(hooks?)$/i, 'hooks'],
-      [/^(config|configuration|settings)$/i, 'config'],
-      [/^(dto|dtos)$/i, 'dto'],
-      [/^(auth|authentication)$/i, 'authentication'],
-      [/^(users?)$/i, 'users'],
-      [/^(products?)$/i, 'products'],
-      [/^(orders?)$/i, 'orders'],
-      [/^(payments?)$/i, 'payments'],
-      [/^(core)$/i, 'core'],
-    ];
-
-    // Try to find a meaningful name, walking from the most specific
-    // (deepest) directory segment outward. Skip build-layout and language
-    // package noise (Maven/Gradle's main/java/kotlin/test, Go's pkg/internal,
-    // reverse-DNS package roots like com/org/io) so Java/Kotlin/Go projects
-    // get business-domain names instead of "main", "java", or "com".
-    for (const part of parts.reverse()) {
-      if (DOMAIN_NOISE_DIRS.has(part.toLowerCase())) continue;
-      for (const [pattern, replacement] of patterns) {
-        if (pattern.test(part)) {
-          return replacement || part.toLowerCase();
-        }
-      }
-      // First meaningful, non-noise segment — use it as the domain name
-      return part.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const derived = deriveDomainFromPath(parts);
+    if (derived) {
+      return derived;
     }
 
     // Fallback: derive from the first file's name (any language extension)
