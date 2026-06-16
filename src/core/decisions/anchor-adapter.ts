@@ -83,6 +83,12 @@ export function makeFreshnessView(
       const node = store.getNode(nodeId);
       return node ? hashNodeSpan(rootPath, node, cache) : undefined;
     },
+    resolveStableId: (stableId: string): { nodeId: string; contentHash: string } | undefined => {
+      const node = store.getNodeByStableId(stableId);
+      if (!node) return undefined;
+      const contentHash = hashNodeSpan(rootPath, node, cache);
+      return contentHash === undefined ? undefined : { nodeId: node.id, contentHash };
+    },
     fileExists: (filePath: string): boolean => existsSync(join(rootPath, filePath)),
     fileHash: (filePath: string): string | undefined => {
       const content = readFileCached(rootPath, filePath, cache);
@@ -127,7 +133,7 @@ export class AnchorContext {
         if (node.isExternal) continue;
         const contentHash = this.spanHash(node);
         if (contentHash === undefined) continue;
-        out.push({ id: node.id, name: node.name, filePath: node.filePath, contentHash });
+        out.push({ id: node.id, name: node.name, filePath: node.filePath, contentHash, ...(node.stableId ? { stableId: node.stableId } : {}) });
       }
     }
     return out;
@@ -172,7 +178,7 @@ export class AnchorContext {
       : this.store.getAllInternalNodes().reduce<AnchorNode[]>((acc, node) => {
           const contentHash = this.spanHash(node);
           if (contentHash !== undefined) {
-            acc.push({ id: node.id, name: node.name, filePath: node.filePath, contentHash });
+            acc.push({ id: node.id, name: node.name, filePath: node.filePath, contentHash, ...(node.stableId ? { stableId: node.stableId } : {}) });
           }
           return acc;
         }, []);

@@ -52,7 +52,7 @@ function runTransaction(db: DatabaseSync, fn: () => void): void {
 }
 
 /** Bump when schema changes. Old DBs are dropped and rebuilt on next analyze --force. */
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export class EdgeStore {
   /**
@@ -135,10 +135,14 @@ export class EdgeStore {
         is_external   INTEGER NOT NULL DEFAULT 0,
         external_kind TEXT,
         is_hub        INTEGER NOT NULL DEFAULT 0,
-        is_entry_point INTEGER NOT NULL DEFAULT 0
+        is_entry_point INTEGER NOT NULL DEFAULT 0,
+        -- Content-addressed location-independent identity (add-content-addressed-stable-symbol-ids).
+        -- Nullable: anonymous/synthetic symbols and pre-bump stores carry none. Additive: id stays PK.
+        stable_id     TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_node_file ON nodes(file_path);
       CREATE INDEX IF NOT EXISTS idx_node_name ON nodes(name);
+      CREATE INDEX IF NOT EXISTS idx_node_stable ON nodes(stable_id);
 
       CREATE TABLE IF NOT EXISTS classes (
         id             TEXT PRIMARY KEY,
@@ -150,7 +154,8 @@ export class EdgeStore {
         method_ids     TEXT NOT NULL DEFAULT '[]',
         fan_in         INTEGER NOT NULL DEFAULT 0,
         fan_out        INTEGER NOT NULL DEFAULT 0,
-        is_module      INTEGER NOT NULL DEFAULT 0
+        is_module      INTEGER NOT NULL DEFAULT 0,
+        stable_id      TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_class_file ON classes(file_path);
       CREATE INDEX IF NOT EXISTS idx_class_name ON classes(name);
@@ -341,6 +346,20 @@ export class EdgeStore {
   }
 
   /**
+   * Resolve a node by its content-addressed `stableId`
+   * (add-content-addressed-stable-symbol-ids). Returns the match only when it is
+   * unambiguous — a single internal node. Ambiguous (a collision the ordinal pass
+   * still left, or two files momentarily sharing one) or absent → null, so a
+   * rename-resolution caller never guesses between candidates.
+   */
+  getNodeByStableId(stableId: string): FunctionNode | null {
+    const rows = this.db
+      .prepare('SELECT * FROM nodes WHERE stable_id = ? AND is_external = 0')
+      .all(stableId) as unknown as RawNode[];
+    return rows.length === 1 ? rawToFunctionNode(rows[0]) : null;
+  }
+
+  /**
    * All internal (non-external) nodes. Used to seed cross-file call resolution
    * during an incremental subset rebuild, so calls into files outside the
    * re-parsed subset still resolve to their real node instead of `external::`.
@@ -418,10 +437,10 @@ export class EdgeStore {
     const stmt: StatementSync = this.db.prepare(`
       INSERT OR REPLACE INTO nodes
         (id, name, file_path, class_name, is_async, language, start_index, end_index,
-         fan_in, fan_out, docstring, signature, is_external, external_kind, is_hub, is_entry_point)
+         fan_in, fan_out, docstring, signature, is_external, external_kind, is_hub, is_entry_point, stable_id)
       VALUES
         (@id, @name, @filePath, @className, @isAsync, @language, @startIndex, @endIndex,
-         @fanIn, @fanOut, @docstring, @signature, @isExternal, @externalKind, @isHub, @isEntryPoint)
+         @fanIn, @fanOut, @docstring, @signature, @isExternal, @externalKind, @isHub, @isEntryPoint, @stableId)
     `);
     const ftsStmt: StatementSync = this.db.prepare('INSERT OR REPLACE INTO nodes_fts (node_id, name) VALUES (?, ?)');
     runTransaction(this.db, () => {
@@ -443,6 +462,7 @@ export class EdgeStore {
           '@externalKind': n.externalKind ?? null,
           '@isHub':        hubIds ? (hubIds.has(n.id) ? 1 : 0) : 0,
           '@isEntryPoint': entryIds ? (entryIds.has(n.id) ? 1 : 0) : 0,
+          '@stableId':     n.stableId ?? null,
         });
         if (!n.isExternal) ftsStmt.run(n.id, n.name);
       }
@@ -508,9 +528,9 @@ export class EdgeStore {
   insertClasses(classes: ClassNode[]): void {
     const stmt: StatementSync = this.db.prepare(`
       INSERT OR REPLACE INTO classes
-        (id, name, file_path, language, parent_classes, interfaces, method_ids, fan_in, fan_out, is_module)
+        (id, name, file_path, language, parent_classes, interfaces, method_ids, fan_in, fan_out, is_module, stable_id)
       VALUES
-        (@id, @name, @filePath, @language, @parentClasses, @interfaces, @methodIds, @fanIn, @fanOut, @isModule)
+        (@id, @name, @filePath, @language, @parentClasses, @interfaces, @methodIds, @fanIn, @fanOut, @isModule, @stableId)
     `);
     runTransaction(this.db, () => {
       for (const c of classes) {
@@ -525,6 +545,7 @@ export class EdgeStore {
           '@fanIn':         c.fanIn,
           '@fanOut':        c.fanOut,
           '@isModule':      c.isModule ? 1 : 0,
+          '@stableId':      c.stableId ?? null,
         });
       }
     });
@@ -766,6 +787,7 @@ interface RawNode {
   external_kind:  string | null;
   is_hub:         number;
   is_entry_point: number;
+  stable_id:      string | null;
 }
 
 interface RawClass {
@@ -779,6 +801,7 @@ interface RawClass {
   fan_in:         number;
   fan_out:        number;
   is_module:      number;
+  stable_id:      string | null;
 }
 
 interface RawDecision {
@@ -884,6 +907,7 @@ function rawToFunctionNode(r: RawNode): FunctionNode {
     ...(r.signature    && { signature:    r.signature }),
     ...(r.is_external  && { isExternal:   true }),
     ...(r.external_kind && { externalKind: r.external_kind as FunctionNode['externalKind'] }),
+    ...(r.stable_id    && { stableId:     r.stable_id }),
   };
 }
 
@@ -899,5 +923,6 @@ function rawToClassNode(r: RawClass): ClassNode {
     fanIn:         r.fan_in,
     fanOut:        r.fan_out,
     ...(r.is_module && { isModule: true }),
+    ...(r.stable_id && { stableId: r.stable_id }),
   };
 }

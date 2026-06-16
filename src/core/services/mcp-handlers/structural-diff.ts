@@ -15,8 +15,10 @@
  * via the working tree / ref), so two in-memory snapshots are cheap. The canonical
  * graph is never mutated. Stale callers come from the cached graph (all callers).
  *
- * Honest limits: rename/move detection is heuristic — a renamed function looks like
- * delete + add — so both interpretations are reported, never silently guessed.
+ * Honest limits: a moved/renamed-file symbol is matched exactly by its
+ * content-addressed stable id (the same symbol, not delete+add). Identifier
+ * renames and symbols with no stable id stay heuristic — both interpretations are
+ * reported, never silently guessed.
  */
 
 import { execFile } from 'node:child_process';
@@ -26,6 +28,7 @@ import { validateDirectory, readCachedContext, safeJoin } from './utils.js';
 import { isGitRepository, resolveBaseRef, validateGitRef, getChangedFiles } from '../../drift/git-diff.js';
 import { CallGraphBuilder, serializeCallGraph } from '../../analyzer/call-graph.js';
 import { detectLanguage } from '../../analyzer/signature-extractor.js';
+import { signatureShape } from '../../scip/moniker.js';
 import type { SerializedCallGraph, FunctionNode } from '../../analyzer/call-graph.js';
 
 const execFileAsync = promisify(execFile);
@@ -52,13 +55,6 @@ async function fileAtRef(rootPath: string, ref: string, path: string): Promise<s
   } catch {
     return '';
   }
-}
-
-/** Signature shape with the identifier removed — for rename matching. */
-function signatureShape(signature: string | undefined): string {
-  if (!signature) return '';
-  const paren = signature.indexOf('(');
-  return (paren >= 0 ? signature.slice(paren) : signature).replace(/\s+/g, ' ').trim();
 }
 
 function nodeRef(n: FunctionNode) {
@@ -154,27 +150,82 @@ export async function handleStructuralDiff(input: StructuralDiffInput): Promise<
   const oldGraph = await safeBuild(oldFiles);
   const newGraph = await safeBuild(newFiles);
 
-  const oldNodes = new Map(oldGraph.nodes.filter(isCode).map(n => [n.id, n]));
-  const newNodes = new Map(newGraph.nodes.filter(isCode).map(n => [n.id, n]));
+  const oldList = oldGraph.nodes.filter(isCode);
+  const newList = newGraph.nodes.filter(isCode);
 
-  // ── Node-level delta ────────────────────────────────────────────────────────
-  const added: FunctionNode[] = [];
-  const removed: FunctionNode[] = [];
-  const signatureChanged: Array<{ node: FunctionNode; before: string; after: string }> = [];
-  for (const [id, n] of newNodes) if (!oldNodes.has(id)) added.push(n);
-  for (const [id, n] of oldNodes) {
-    const nu = newNodes.get(id);
-    if (!nu) { removed.push(n); continue; }
-    if ((n.signature ?? '') !== (nu.signature ?? '')) {
-      signatureChanged.push({ node: nu, before: n.signature ?? n.name, after: nu.signature ?? n.name });
+  // ── Node matching: stable id first, path-based id as fallback ────────────────
+  // (change: add-content-addressed-stable-symbol-ids). A symbol that only moved
+  // or whose modifiers shifted keeps its stableId, so it pairs across versions
+  // instead of looking like remove+add. Nodes without a stableId (anonymous /
+  // synthetic) fall back to the path-based id — today's exact behavior.
+  const oldById = new Map<string, FunctionNode>();
+  // Group by stableId on BOTH sides: because stableId is non-unique (homonyms
+  // share one), a stableId is a trustworthy cross-version match ONLY when it maps
+  // to exactly one node on each side. Otherwise we must NOT guess which homonym
+  // moved — we fall back to the path id and the signature-shape heuristic, exactly
+  // the "resolve only when unique" contract the rest of the change follows.
+  const oldByStable = new Map<string, FunctionNode[]>();
+  const newByStable = new Map<string, FunctionNode[]>();
+  for (const n of oldList) {
+    oldById.set(n.id, n);
+    if (n.stableId) (oldByStable.get(n.stableId) ?? oldByStable.set(n.stableId, []).get(n.stableId)!).push(n);
+  }
+  for (const n of newList) {
+    if (n.stableId) (newByStable.get(n.stableId) ?? newByStable.set(n.stableId, []).get(n.stableId)!).push(n);
+  }
+  const matchedOld = new Set<string>();
+  const matchedNew = new Set<string>();
+  const pairs: Array<{ old: FunctionNode; cur: FunctionNode; via: 'stableId' | 'id' }> = [];
+  // Pass A — stable id, unambiguous 1:1 only (takes precedence over the path id).
+  for (const n of newList) {
+    if (!n.stableId || newByStable.get(n.stableId)!.length !== 1) continue;
+    const olds = oldByStable.get(n.stableId);
+    if (olds && olds.length === 1 && !matchedOld.has(olds[0].id)) {
+      pairs.push({ old: olds[0], cur: n, via: 'stableId' });
+      matchedOld.add(olds[0].id); matchedNew.add(n.id);
+    }
+  }
+  // Pass B — remaining nodes by path-based id.
+  for (const n of newList) {
+    if (matchedNew.has(n.id)) continue;
+    const o = oldById.get(n.id);
+    if (o && !matchedOld.has(o.id)) {
+      pairs.push({ old: o, cur: n, via: 'id' });
+      matchedOld.add(o.id); matchedNew.add(n.id);
     }
   }
 
-  // ── Rename/move candidates — removed↔added with matching signature shape ─────
+  // ── Node-level delta ────────────────────────────────────────────────────────
+  const added = newList.filter(n => !matchedNew.has(n.id));
+  const removed = oldList.filter(n => !matchedOld.has(n.id));
+  const signatureChanged: Array<{ node: FunctionNode; before: string; after: string }> = [];
+  for (const p of pairs) {
+    if ((p.old.signature ?? '') !== (p.cur.signature ?? '')) {
+      signatureChanged.push({ node: p.cur, before: p.old.signature ?? p.old.name, after: p.cur.signature ?? p.cur.name });
+    }
+  }
+
+  // ── Rename/move candidates ───────────────────────────────────────────────────
+  // stable-id: a cross-file pair with the same content-addressed id (name +
+  // parameter shape). Strong signal that the symbol MOVED — but a symbol that was
+  // deleted and independently replaced by a same-name/same-shape homonym is
+  // indistinguishable here, so this is labeled `stable-id` (not `exact`) and the
+  // note tells the agent to verify rather than asserting "the same symbol". The id
+  // is unique within the CHANGED-FILE set; a same-shape symbol in an unchanged file
+  // is not considered. Heuristic: leftover removed↔added paired by signature shape
+  // (identifier renames, anonymous/synthetic nodes). Both interpretations surface.
   const renameCandidates: Array<{ from: ReturnType<typeof nodeRef>; to: ReturnType<typeof nodeRef>; confidence: string; note: string }> = [];
+  for (const p of pairs) {
+    if (p.via === 'stableId' && p.old.filePath !== p.cur.filePath) {
+      renameCandidates.push({
+        from: nodeRef(p.old), to: nodeRef(p.cur), confidence: 'stable-id',
+        note: `"${p.old.name}" in "${p.old.filePath}" and "${p.cur.filePath}" share a content-addressed id (name + parameter shape) — most likely the same symbol moved (not remove+add), but a delete-and-replace by a same-shape homonym is indistinguishable here. Verify.`,
+      });
+    }
+  }
   for (const r of removed) {
     for (const a of added) {
-      const sameShape = signatureShape(r.signature) && signatureShape(r.signature) === signatureShape(a.signature);
+      const sameShape = signatureShape(r.signature, r.language, r.name) && signatureShape(r.signature, r.language, r.name) === signatureShape(a.signature, a.language, a.name);
       const sameFile = r.filePath === a.filePath;
       if (!sameShape) continue;
       const confidence = sameFile ? 'high' : 'medium';
@@ -276,7 +327,7 @@ function emptySummary() {
 }
 function diffSoundness(empty: boolean): { posture: string; caveats: string[] } {
   const caveats = [
-    'Rename/move detection is heuristic — a renamed function appears as remove+add. Candidates are reported separately; never assume a rename without verifying.',
+'A cross-file pair sharing a content-addressed stable id (name + parameter shape) is reported as a move with confidence "stable-id" — a strong signal, but NOT proof: a symbol that was deleted and independently replaced by a same-name/same-shape homonym is indistinguishable, so verify rather than assume "same symbol". The stable id is matched only when unique within the changed-file set (a same-shape symbol in an unchanged file is not considered). Identifier renames and symbols without a stable id (anonymous/synthetic) stay heuristic — paired by signature shape and reported separately.',
     'Signature-change detection is limited to what the analyzer extracts per language; cross-language signature notions differ.',
     'Edge deltas cover calls among/out of the changed files; calls into unchanged files resolve against the canonical graph for stale callers only.',
   ];

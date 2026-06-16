@@ -67,6 +67,38 @@ describe('EdgeStore', () => {
         await rm(d, { recursive: true, force: true });
       }
     });
+
+    it('a pre-stableId store (nodes without stable_id) rebuilds and repopulates with stableIds — no migration', async () => {
+      // change: add-content-addressed-stable-symbol-ids — AdditiveStableIdentity
+      // "Older store loads without migration": the nodes table predating stable_id
+      // is dropped on the version bump and repopulated, with stableId persisted.
+      const d = await makeTmpDir();
+      const p = join(d, 'cg.db');
+      const old = new DatabaseSync(p);
+      old.exec('CREATE TABLE schema_version (version INTEGER NOT NULL)');
+      old.prepare('INSERT INTO schema_version (version) VALUES (7)').run(); // immediately-prior version
+      // v7 nodes table: no stable_id column at all.
+      old.exec('CREATE TABLE nodes (id TEXT PRIMARY KEY, name TEXT NOT NULL, file_path TEXT NOT NULL, is_external INTEGER NOT NULL DEFAULT 0)');
+      old.prepare("INSERT INTO nodes (id, name, file_path) VALUES ('src/a.ts::legacy','legacy','src/a.ts')").run();
+      old.close();
+
+      const es = EdgeStore.open(p);
+      try {
+        expect(es.wasReset).toBe(true);
+        expect(es.countNodes()).toBe(0); // legacy row gone, no migration attempted
+        // The rebuilt schema accepts and round-trips stable_id.
+        const node: FunctionNode = {
+          id: 'src/a.ts::foo', name: 'foo', filePath: 'src/a.ts', stableId: 'sid:foo(x: number)',
+          isAsync: false, language: 'TypeScript', startIndex: 0, endIndex: 10, fanIn: 0, fanOut: 0,
+        };
+        es.insertNodes([node]);
+        expect(es.getNode('src/a.ts::foo')?.stableId).toBe('sid:foo(x: number)');
+        expect(es.getNodeByStableId('sid:foo(x: number)')?.id).toBe('src/a.ts::foo');
+      } finally {
+        es.close();
+        await rm(d, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('exists / dbPath helpers', () => {

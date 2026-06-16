@@ -28,6 +28,7 @@ import { buildProjectedIac } from './iac/index.js';
 import { isIacLanguage } from './iac/types.js';
 import { isTestFile } from './test-file.js';
 import { buildFunctionCfg, type FunctionCfg, type CfgNode } from './cfg.js';
+import { stableSymbolId, stableClassId } from '../scip/moniker.js';
 import { logger } from '../../utils/logger.js';
 
 // ============================================================================
@@ -106,6 +107,14 @@ export interface FunctionNode {
   communityLabel?: string;
   /** McCabe cyclomatic complexity computed from AST body slice (1 = linear, ≥10 = complex) */
   cyclomaticComplexity?: number;
+  /**
+   * Content-addressed, location-independent stable identity (change:
+   * add-content-addressed-stable-symbol-ids). Derived from the qualified name +
+   * signature shape, excluding the file path — so it survives a rename/move.
+   * Additive: the path-based `id` remains the canonical key. Absent for
+   * anonymous/synthetic symbols with no derivable descriptor.
+   */
+  stableId?: string;
 }
 
 /** Broad category of an external (unresolved) call */
@@ -262,6 +271,13 @@ export interface ClassNode {
   fanOut: number;
   /** True for synthetic file-level module nodes (free functions grouped by file) */
   isModule?: boolean;
+  /**
+   * Content-addressed, location-independent stable identity (change:
+   * add-content-addressed-stable-symbol-ids); the escaped class name, excluding
+   * the file path. Absent for synthetic module groupings. Additive — `id`
+   * remains canonical.
+   */
+  stableId?: string;
 }
 
 /**
@@ -1383,13 +1399,18 @@ async function extractRustGraph(
     const name = nameCapture.node.text;
     const fnNode = nodeCapture.node;
 
-    // Find enclosing impl block → use as className
+    // Find enclosing impl block → use the IMPLEMENTING TYPE as className.
+    // Use the `type` field, not the first `type_identifier`: for
+    // `impl Trait for Struct` the first type_identifier is the TRAIT, which would
+    // wrongly attribute the method to the trait (and collide across all impls of
+    // that trait). `impl<T> Box<T>` exposes a `generic_type` node, so strip the
+    // generic args to key methods on `Box`, not the whole generic application.
     let className: string | undefined;
     let cursor = fnNode.parent;
     while (cursor) {
       if (cursor.type === 'impl_item') {
-        const typeNode = cursor.children.find(c => c.type === 'type_identifier');
-        if (typeNode) className = typeNode.text;
+        const typeNode = cursor.childForFieldName('type');
+        if (typeNode) className = typeNode.text.replace(/<[\s\S]*>$/, '').trim();
         break;
       }
       cursor = cursor.parent;
@@ -4542,6 +4563,12 @@ export class CallGraphBuilder {
     const classIds = new Set(classes.map(c => c.id));
     for (const c of iacClasses) if (!classIds.has(c.id)) classes.push(c);
 
+    // Pass 8: Content-addressed stable ids (change: add-content-addressed-stable-symbol-ids).
+    // Pure post-pass over the fully-built node set — keeps the per-language
+    // extractors untouched and the derivation in one place.
+    assignStableIds(allNodes.values());
+    assignClassStableIds(classes);
+
     return {
       nodes: allNodes,
       edges,
@@ -4590,6 +4617,35 @@ export class CallGraphBuilder {
 // ============================================================================
 // SERIALIZATION HELPER
 // ============================================================================
+
+/**
+ * Assign a content-addressed `stableId` to every internal function node that has
+ * a derivable descriptor (change: add-content-addressed-stable-symbol-ids).
+ *
+ * The id is a pure function of each node's own name + parameter shape — no file
+ * path, no body, and crucially no position-dependent discriminator. Homonyms
+ * (distinct symbols sharing a qualified name + parameter shape) therefore receive
+ * the SAME `stableId`; consumers resolve only when an id is unique and otherwise
+ * fall back (see `EdgeStore.getNodeByStableId`). Because nothing here depends on
+ * the OTHER nodes in the build, a symbol's id is identical whether computed in a
+ * full build or an incremental single-file rebuild. External and
+ * anonymous/synthetic symbols receive none (they keep only the path-based `id`).
+ */
+function assignStableIds(nodes: Iterable<FunctionNode>): void {
+  for (const n of nodes) {
+    if (n.isExternal) continue;
+    const sid = stableSymbolId(n);
+    if (sid) n.stableId = sid;
+  }
+}
+
+/** Stable ids for class nodes — same content-only, position-free scheme. */
+function assignClassStableIds(classes: ClassNode[]): void {
+  for (const c of classes) {
+    const sid = stableClassId(c.name, c.isModule);
+    if (sid) c.stableId = sid;
+  }
+}
 
 export function serializeCallGraph(result: CallGraphResult): SerializedCallGraph {
   return {

@@ -194,3 +194,57 @@ describe('decisionAnchors', () => {
     expect(decisionAnchors({ affectedFiles: [] })).toEqual([]);
   });
 });
+
+// ── Rename-stable anchoring via content-addressed stable id ────────────────────
+// (change: add-content-addressed-stable-symbol-ids) — guards analyzer-spec
+// requirement RenameStableMemoryAnchoring.
+describe('RenameStableMemoryAnchoring', () => {
+  // A view where the original nodeId is gone, but the symbol survives under a new
+  // id resolvable by its stable id.
+  const movedView = (relocatedHash: string): GraphFreshnessView => ({
+    nodeHash: () => undefined, // original nodeId no longer resolves
+    resolveStableId: (sid) => sid === 'sid:foo(a)' ? { nodeId: 'b.ts::foo', contentHash: relocatedHash } : undefined,
+    fileExists: () => true,
+    fileHash: () => undefined,
+  });
+  const movedAnchor: StructuralAnchor = { nodeId: 'a.ts::foo', stableId: 'sid:foo(a)', filePath: 'a.ts', contentHash: 'h1' };
+
+  it('Renamed-but-unchanged anchor is fresh, not orphaned', () => {
+    const v = anchorFreshness(movedAnchor, movedView('h1'));
+    expect(v.freshness).toBe('fresh');
+    expect(v.relocatedTo).toBe('b.ts::foo');
+  });
+
+  it('Renamed-and-changed anchor is drifted', () => {
+    const v = anchorFreshness(movedAnchor, movedView('h2'));
+    expect(v.freshness).toBe('drifted');
+    expect(v.relocatedTo).toBe('b.ts::foo');
+  });
+
+  it('Legacy anchor without a stable id is unaffected (still orphaned)', () => {
+    const legacy: StructuralAnchor = { nodeId: 'a.ts::foo', filePath: 'a.ts', contentHash: 'h1' };
+    // resolveStableId present, but the anchor has no stableId to consult.
+    expect(anchorFreshness(legacy, movedView('h1')).freshness).toBe('orphaned');
+  });
+
+  it('nodeId resolution still takes precedence over stableId', () => {
+    // nodeId resolves; resolveStableId would point elsewhere but must NOT be used.
+    const view: GraphFreshnessView = {
+      nodeHash: (id) => id === 'a.ts::foo' ? 'h1' : undefined,
+      resolveStableId: () => { throw new Error('stableId must not be consulted when nodeId resolves'); },
+      fileExists: () => true,
+      fileHash: () => undefined,
+    };
+    expect(anchorFreshness(movedAnchor, view).freshness).toBe('fresh');
+  });
+
+  it('falls through to orphaned when neither nodeId nor stableId resolves', () => {
+    const view: GraphFreshnessView = {
+      nodeHash: () => undefined,
+      resolveStableId: () => undefined,
+      fileExists: () => true,
+      fileHash: () => undefined,
+    };
+    expect(anchorFreshness(movedAnchor, view).freshness).toBe('orphaned');
+  });
+});

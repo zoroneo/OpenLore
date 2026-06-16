@@ -98,6 +98,48 @@ The system SHALL compute intraprocedural control-flow graphs and reaching-defini
 
 > Decision recorded: c8f2b9bf
 > Date: 2026-06-12
+### Requirement: AnchorPersistedMemoryToCallgraphSymbolsWithDeterministicFreshness
+
+The system SHALL anchor persisted memories to call-graph symbols and compute deterministic fresh/drifted/orphaned verdicts on recall without LLM inference.
+
+> Decision recorded: 34b178df
+> Date: 2026-06-16
+### Requirement: CodeanchoredMemoryStoreIsSeparateFromTheDecisionStore
+
+The system SHALL persist agent memories in a dedicated store (.openlore/memory/notes.json) separate from the decision store, and SHALL surface both memory kinds through the recall tool with per-anchor freshness verdicts.
+
+> Decision recorded: 517ab4c6
+> Date: 2026-06-16
+### Requirement: OrphanedMemoriesAreNeverServedAsAuthoritativeContext
+
+The system SHALL The recall tool SHALL partition returned memories into authoritative and needsReanchoring sets, and SHALL never include orphaned memories in the authoritative set.
+
+> Decision recorded: dbe6a95e
+> Date: 2026-06-16
+### Requirement: DecisionsCarryStructuralAnchorsForSelfinvalidation
+
+The system SHALL resolve structural anchors against the call graph when recording a decision, falling back to file-level anchors when no analysis is available.
+
+> Decision recorded: 10e6a55e
+> Date: 2026-06-16
+### Requirement: ValuelevelImpacttraceFallsBackToFunctionGranularityOnIllposedQueriesInsteadOfReportingZero
+
+The system SHALL fall back to function-granularity impact when a value-level query target cannot be resolved in the overlay, reporting applied:false with a reason rather than an empty narrowed result.
+
+> Decision recorded: a37d851f
+> Date: 2026-06-16
+### Requirement: DowngradeStableidMoveConfidenceFromExactToStableidWithVerifySemantics
+
+The system SHALL report cross-file stable-id matches with confidence 'stable-id' and instruct the consumer to verify, rather than asserting the match is exact.
+
+> Decision recorded: a3ede102
+> Date: 2026-06-16
+### Requirement: AnchorStableidParametergroupDetectionToTheSymbolsOwnNameNotTheFirstParenthesis
+
+The system SHALL anchor stableId parameter-group detection to the symbol's own name so that body edits never alter the identifier.
+
+> Decision recorded: 52b10e56
+> Date: 2026-06-16
 
 ## Decisions
 
@@ -130,3 +172,93 @@ Parse trees are freed per-extractor before later passes (WASM path calls tree.de
 Dogfooding showed the value-level opt-in could silently report zero blast radius when valueReachableLines() returned an empty set — e.g. a mistyped valueParam that matches no parameter/local, or an "all parameters" request on a function the overlay extracted no params for. Zero downstream reads to an agent as "this change is safe," the exact failure value-level must avoid. The handlers now treat a query as well-posed only when its target resolves in the overlay (a named valueParam is a parameter or a tracked def-use variable; an unnamed request needs at least one parameter) and otherwise fall back to the full function-granularity result with an explicit reason, instead of an empty narrowed slice.
 
 **Consequences:** analyze_impact and trace_execution_path return applied:false with a clear reason (and the full blast radius / unrestricted first hop) when the value-level target can't be resolved, rather than a misleading zero. A genuine zero — a real parameter that flows to no callee — is still reported as a sound applied:true narrowing. Regression-tested in graph.test.ts.
+
+### Anchor persisted memory to call-graph symbols with deterministic freshness
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** 34b178df
+
+Every persisted memory (architectural decisions and remember-notes) carries StructuralAnchors resolved against the call graph, and recall computes a fresh/drifted/orphaned verdict from booleans only (symbol existence + content-hash equality) — no LLM, no threshold, no weighted score. This is what code-anchored memory can do that probabilistic vector memory cannot: self-invalidate when the code it describes changes or dies, so recall never serves stale context silently.
+
+**Consequences:** New StructuralAnchor/MemoryFreshness/AnchoredMemory types and a pure anchor engine (decisions/anchor.ts) plus a disk adapter. record_decision now captures anchors. Two new opt-in MCP tools (remember/recall) in a 'memory' preset, kept out of the default/minimal surface. recall enforces a no-silent-stale guarantee (orphaned memories are never authoritative). Notes stored in .openlore/memory, isolated from the decisions gate. Wiring memory-staleness into check_spec_drift and orient is deferred.
+
+### Code-anchored memory store is separate from the decision store
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** 517ab4c6
+
+Memories (durable agent notes) serve a different lifecycle than architectural decisions — they have no commit gate, no consolidation, and no spec-sync. Keeping them in .openlore/memory/notes.json avoids coupling two independent persistence concerns.
+
+**Consequences:** Two distinct stores must be loaded and freshness-checked independently at recall time; recall merges results from both stores into one response so callers see a unified view.
+
+### Orphaned memories are never served as authoritative context
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** dbe6a95e
+
+A memory whose every structural anchor points to deleted or unreachable code cannot be trusted — serving it as fact risks misleading agents into acting on stale assumptions.
+
+**Consequences:** Recall responses partition results into `authoritative` (fresh + drifted) and `needsReanchoring` (orphaned); consumers must not treat needsReanchoring entries as ground truth.
+
+### Decisions carry structural anchors for self-invalidation
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** 10e6a55e
+
+Anchoring decisions to call-graph nodes (not just file paths) lets the system detect when the described code has been refactored or deleted, enabling deterministic staleness detection without LLM inference.
+
+**Consequences:** record_decision now depends on AnchorContext / call-graph data at recording time; if no analysis exists the decision falls back to file-level freshness, which is less precise but not a failure.
+
+### Value-level impact/trace falls back to function granularity on ill-posed queries instead of reporting zero
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** a37d851f
+
+Dogfooding revealed that valueReachableLines() could return an empty set on ill-posed queries (mistyped valueParam, or 'all parameters' on a function with no overlay params), which an agent interprets as 'this change is safe' — the exact failure value-level must avoid. The handlers now validate that the target resolves in the overlay (a named valueParam is a known parameter or tracked def-use variable; an unnamed request needs at least one parameter) and fall back to full function-granularity with an explicit reason when it does not, rather than returning a misleading zero-impact narrowing.
+
+**Consequences:** analyze_impact and trace_execution_path return applied:false with a clear reason (plus the full blast radius / unrestricted first hop) when the value-level target can't be resolved. A genuine zero — a real parameter that flows to no callee — is still reported as applied:true. Regression-tested in graph.test.ts.
+
+### Downgrade stable-id move confidence from 'exact' to 'stable-id' with verify semantics
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** a3ede102
+
+A content-addressed stable id (name + parameter shape) is necessary but not sufficient to prove a symbol moved: a deleted symbol independently replaced by a same-name/same-shape homonym is indistinguishable from a genuine move. Labeling it 'exact' gave agents false certainty; 'stable-id' plus a verify directive is more honest.
+
+**Consequences:** Agents consuming structural-diff output must treat confidence:'stable-id' as strong-but-not-proven and verify cross-file moves instead of trusting them blindly. Any downstream automation that branches on confidence === 'exact' must update to handle 'stable-id'.
+
+### Pass language to signatureShape for heuristic rename pairing
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** 767d5274
+
+Signature shape comparison without language context could incorrectly pair symbols across languages that happen to share textual shape; threading the language parameter makes the heuristic language-aware.
+
+**Consequences:** signatureShape callers must supply the language argument; cross-language false-positive rename pairings are reduced.
+
+### Locate the stableId parameter group by the symbol's name, not the first paren
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** 4a5c5353
+
+signatureShape assumed the parameter group is the first `(` in the captured signature (after a Go-receiver skip). For languages whose captured signature includes the body of a paren-less definition — Ruby (`def total; compute(5); end`), Scala (`def total = compute(5)`), and paren-less arrows (`const f = a => g(a)`) — the first `(` belongs to a body call, so the body leaked into the stableId. That broke the spec's body-invariance guarantee: editing the body flipped the id, so a moved-and-edited symbol read `orphaned`/remove+add instead of `drifted`/move. Fix: parameterGroupStart is now name-anchored — the parameter group is the first `(` whose immediately preceding token is the symbol's own name (or operator name), with an assigned lambda (`= (a) =>`) recognized too. This also subsumes the Go receiver skip (the receiver `(` is preceded by `func`, not the method name) and skips arg-bearing decorators. When no name is supplied (bare unit-test calls) the legacy first-`(` heuristic is preserved, so the change is backward-compatible.
+
+**Consequences:** stableId is now genuinely body-invariant for paren-less Ruby/Scala/arrow definitions (verified end-to-end: a paren-less Ruby method moved across files with a body edit is reported as a stable-id move, not remove+add). arityOf (SCIP monikers) shares the same name-anchored detection. All 13 supported-language stableIds are byte-identical to before (zero regressions); full suite 3673 green; audit clean. signatureShape/parameterGroupStart gain an optional trailing `name` argument.
+
+### Anchor stableId parameter-group detection to the symbol's own name, not the first parenthesis
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** 52b10e56
+
+signatureShape assumed the parameter group starts at the first `(` in the captured signature (after a Go-receiver skip). For languages whose captured signature includes the body of a paren-less definition — Ruby (`def total; compute(5); end`), Scala (`def total = compute(5)`), and paren-less arrows (`const f = a => g(a)`) — the first `(` belongs to a body call, so body content leaked into the stableId. That broke the spec's body-invariance guarantee: editing the body flipped the id, causing a moved-and-edited symbol to read as remove+add instead of a stable move. Fix: the parameter group is now the first `(` whose immediately preceding token is the symbol's own name (or operator name), with assigned lambdas (`= (a) =>`) recognized too. This subsumes the Go receiver skip (receiver `(` is preceded by `func`, not the method name) and skips arg-bearing decorators. When no name is supplied (bare unit-test calls) the legacy first-`(` heuristic is preserved for backward compatibility.
+
+**Consequences:** stableId is genuinely body-invariant for paren-less Ruby/Scala/arrow definitions; a paren-less method moved across files with a body edit is reported as a stable-id move, not remove+add. arityOf (SCIP monikers) shares the same name-anchored detection. signatureShape/parameterGroupStart gain an optional trailing `name` argument. All 13 supported-language stableIds are byte-identical to before (zero regressions).

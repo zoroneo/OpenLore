@@ -24,6 +24,10 @@ jobs:
       - run: npm ci
 
       - name: Audit dependencies
+        # Gate ALL dependencies (prod + dev) at high severity. Transitive advisories
+        # inside dev tooling (@earendil-works/pi-coding-agent → @google/genai →
+        # protobufjs/ws) are pinned to patched versions via `overrides`, so the full
+        # tree is clean — no need to scope dev out.
         run: npm audit --audit-level=high
 
       - name: Run ESLint

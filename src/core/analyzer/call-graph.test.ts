@@ -363,6 +363,30 @@ impl Engine {
     expect(startNode?.className).toBe('Engine');
     expect(startNode?.isAsync).toBe(true);
   });
+
+  it('uses the implementing type (not the trait) as className for `impl Trait for Struct`', async () => {
+    // Regression: the impl-block className must be the implementing type, not the
+    // trait — otherwise every impl of a trait collapses onto the trait name and
+    // distinct types' methods collide (and content-addressed stableIds collide).
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'draw.rs',
+      language: 'Rust',
+      content: `
+trait Drawable { fn draw(&self); }
+struct Circle {}
+struct Square {}
+impl Drawable for Circle { fn draw(&self) {} }
+impl Drawable for Square { fn draw(&self) {} }
+impl<T> Holder<T> { fn get(&self) {} }
+`,
+    }]);
+    const draws = Array.from(result.nodes.values()).filter(n => n.name === 'draw');
+    expect(draws.map(n => n.className).sort()).toEqual(['Circle', 'Square']); // not "Drawable"
+    // generic impl keeps the base type as className (generics stripped), not undefined
+    const get = Array.from(result.nodes.values()).find(n => n.name === 'get');
+    expect(get?.className).toBe('Holder');
+  });
 });
 
 // ---------------------------------------------------------------------------

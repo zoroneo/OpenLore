@@ -485,6 +485,14 @@ export interface DecisionStore {
 export interface StructuralAnchor {
   /** Call-graph node id; absent for a file-level anchor. */
   nodeId?: string;
+  /**
+   * Content-addressed, location-independent stable id of the anchored symbol
+   * (add-content-addressed-stable-symbol-ids). Recorded alongside `nodeId` so a
+   * symbol that is later moved/renamed can be re-resolved when its `nodeId` no
+   * longer matches. Absent on anchors recorded before this change and on symbols
+   * with no derivable stable id — both keep their exact current behavior.
+   */
+  stableId?: string;
   /** Symbol name resolved at record time; absent for a pure file-level anchor. */
   symbolName?: string;
   /** Repo-relative path of the anchored file. Always present. */
