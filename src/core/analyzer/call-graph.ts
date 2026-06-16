@@ -4617,52 +4617,28 @@ export class CallGraphBuilder {
  * Assign a content-addressed `stableId` to every internal function node that has
  * a derivable descriptor (change: add-content-addressed-stable-symbol-ids).
  *
- * A symbol's stable id excludes its file path, so two distinct same-named,
- * same-signature symbols in different files share a base id. Such collisions are
- * broken with a deterministic source-order ordinal (`~0`, `~1`, …) so every
- * stable id is unique within a run and identical across runs. External and
+ * The id is a pure function of each node's own name + parameter shape — no file
+ * path, no body, and crucially no position-dependent discriminator. Homonyms
+ * (distinct symbols sharing a qualified name + parameter shape) therefore receive
+ * the SAME `stableId`; consumers resolve only when an id is unique and otherwise
+ * fall back (see `EdgeStore.getNodeByStableId`). Because nothing here depends on
+ * the OTHER nodes in the build, a symbol's id is identical whether computed in a
+ * full build or an incremental single-file rebuild. External and
  * anonymous/synthetic symbols receive none (they keep only the path-based `id`).
  */
 function assignStableIds(nodes: Iterable<FunctionNode>): void {
-  const byBase = new Map<string, FunctionNode[]>();
   for (const n of nodes) {
     if (n.isExternal) continue;
-    const base = stableSymbolId(n);
-    if (!base) continue;
-    const group = byBase.get(base);
-    if (group) group.push(n);
-    else byBase.set(base, [n]);
-  }
-  for (const [base, group] of byBase) {
-    if (group.length === 1) {
-      group[0].stableId = base;
-      continue;
-    }
-    group.sort((a, b) =>
-      a.filePath.localeCompare(b.filePath) ||
-      a.startIndex - b.startIndex ||
-      a.id.localeCompare(b.id));
-    group.forEach((n, i) => { n.stableId = `${base}~${i}`; });
+    const sid = stableSymbolId(n);
+    if (sid) n.stableId = sid;
   }
 }
 
-/** Stable ids for class/module nodes — same base+ordinal scheme as functions. */
+/** Stable ids for class nodes — same content-only, position-free scheme. */
 function assignClassStableIds(classes: ClassNode[]): void {
-  const byBase = new Map<string, ClassNode[]>();
   for (const c of classes) {
-    const base = stableClassId(c.name, c.isModule);
-    if (!base) continue;
-    const group = byBase.get(base);
-    if (group) group.push(c);
-    else byBase.set(base, [c]);
-  }
-  for (const [base, group] of byBase) {
-    if (group.length === 1) {
-      group[0].stableId = base;
-      continue;
-    }
-    group.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.id.localeCompare(b.id));
-    group.forEach((c, i) => { c.stableId = `${base}~${i}`; });
+    const sid = stableClassId(c.name, c.isModule);
+    if (sid) c.stableId = sid;
   }
 }
 

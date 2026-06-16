@@ -201,4 +201,34 @@ describe('handleStructuralDiff — stable-id matching', () => {
     expect(heuristic).toBeDefined();
     expect(heuristic!.confidence).toBe('high'); // same file, same shape
   });
+
+  it('handles a move when a same-id homonym is deleted in the same change (no ordinal flip)', async () => {
+    // Regression for the old positional-ordinal scheme: v1 has two `dup`s sharing a
+    // stable id; v2 deletes one and moves the other. With content-only ids the
+    // survivor is matched exactly (no ordinal to flip), the deleted one is removed.
+    const repo2 = mkdtempSync(join(tmpdir(), 'struct-diff-homonym-'));
+    try {
+      const g = (args: string[]) => execFileSync('git', args, { cwd: repo2, stdio: 'ignore', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+      g(['init', '-q', '-b', 'main']); g(['config', 'user.name', 'T']); g(['config', 'user.email', 't@e.com']); g(['config', 'commit.gpgsign', 'false']);
+      const dup = `export function dup(n: number): number { return n; }\n`;
+      write(repo2, 'src/keep.ts', dup);
+      write(repo2, 'src/gone.ts', dup);
+      g(['add', '.']); g(['commit', '-q', '-m', 'v1', '--no-gpg-sign']);
+      write(repo2, 'src/keep.ts', `// dup moved out\nexport const K = 1;\n`); // keep.ts loses dup
+      write(repo2, 'src/gone.ts', ``);                                        // gone.ts emptied (dup deleted)
+      write(repo2, 'src/moved.ts', dup);                                       // dup reappears here (moved)
+      vi.mocked(readCachedContext).mockResolvedValue(null as never);
+      const r = await handleStructuralDiff({ directory: repo2, baseRef: 'HEAD' }) as {
+        added: Array<{ name: string }>; removed: Array<{ name: string }>;
+        renameCandidates: Array<{ from: { name: string; file: string }; to: { name: string; file: string }; confidence: string }>;
+      };
+      const exact = r.renameCandidates.filter(c => c.from.name === 'dup' && c.confidence === 'exact');
+      expect(exact.length).toBe(1);                          // exactly one move detected
+      expect(exact[0].to.file).toBe('src/moved.ts');
+      expect(r.removed.filter(n => n.name === 'dup').length).toBe(1); // the genuinely-deleted dup
+      expect(r.added.some(n => n.name === 'dup')).toBe(false);        // moved dup is not a fresh add
+    } finally {
+      rmSync(repo2, { recursive: true, force: true });
+    }
+  });
 });

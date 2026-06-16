@@ -314,7 +314,7 @@ function emptySummary() {
 }
 function diffSoundness(empty: boolean): { posture: string; caveats: string[] } {
   const caveats = [
-    'Move detection is exact when a symbol carries a content-addressed stable id (reported as the same symbol, confidence "exact"). Identifier renames and symbols without a stable id (anonymous/synthetic) stay heuristic — paired by signature shape and reported separately; never assume a heuristic rename without verifying.',
+    'Move detection is exact when a symbol carries a content-addressed stable id (reported as the same symbol, confidence "exact"). Identifier renames and symbols without a stable id (anonymous/synthetic) stay heuristic — paired by signature shape and reported separately; never assume a heuristic rename without verifying. Homonyms (distinct symbols sharing a name + parameter shape, hence a stable id) are matched first-found; an ambiguous homonym pairing should be verified like any rename.',
     'Signature-change detection is limited to what the analyzer extracts per language; cross-language signature notions differ.',
     'Edge deltas cover calls among/out of the changed files; calls into unchanged files resolve against the canonical graph for stale callers only.',
   ];

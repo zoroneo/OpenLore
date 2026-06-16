@@ -119,20 +119,38 @@ export function symbolMoniker(node: FunctionNode, repoRelPath: string, pkg: Pack
 const STABLE_ID_PREFIX = 'sid:';
 
 /**
- * Normalized signature shape with the identifier removed — the parenthesized
- * parameter group and any trailing return type, whitespace-collapsed. Shared by
- * {@link stableSymbolId} (as an overload disambiguator) and structural-diff's
+ * Normalized signature shape: the balanced parenthesized parameter group only,
+ * identifier removed, whitespace-collapsed (e.g. `(a: number, b: string)`).
+ * Shared by {@link stableSymbolId} (overload disambiguator) and structural-diff's
  * rename-recovery heuristic, so both agree on one notion of "same shape".
  *
- * Because the leading identifier and modifiers are dropped, a change confined to
- * those (a function rename, `async`/`export`/visibility) does NOT change the
- * shape — which is exactly why a moved symbol whose modifiers shift still keeps
- * its `stableId` and is reported as *modified*, not remove+add.
+ * Deliberately bounded to the parameter list — it excludes everything *after* the
+ * matching close paren, which matters for two reasons:
+ *  - Leading modifiers/the name (a rename, `async`/`export`/visibility) and the
+ *    trailing return type are NOT in the shape, so a change confined to those
+ *    keeps a symbol's `stableId` and is reported as *modified*, not remove+add.
+ *  - For expression-bodied arrows (`const f = (a) => a.length`) the analyzer's
+ *    captured `signature` includes the body; bounding to the param group keeps the
+ *    `stableId` BODY-INVARIANT — essential so a moved-and-edited symbol resolves as
+ *    `drifted` (not `orphaned`) via its anchor's `stableId`.
+ *
+ * Returns `''` when there is no parameter group at all.
  */
 export function signatureShape(signature: string | undefined): string {
   if (!signature) return '';
-  const paren = signature.indexOf('(');
-  return (paren >= 0 ? signature.slice(paren) : signature).replace(/\s+/g, ' ').trim();
+  const open = signature.indexOf('(');
+  if (open === -1) return '';
+  // Walk to the matching close paren (tracking nesting), then slice the group.
+  let depth = 0;
+  for (let i = open; i < signature.length; i++) {
+    const ch = signature[i];
+    if (ch === '(') depth++;
+    else if (ch === ')' && --depth === 0) {
+      return signature.slice(open, i + 1).replace(/\s+/g, ' ').trim();
+    }
+  }
+  // Unbalanced (truncated capture) — take from '(' to end, normalized.
+  return signature.slice(open).replace(/\s+/g, ' ').trim();
 }
 
 /** Per-segment-escaped qualified name: `Class.method` or bare `function`, each
@@ -150,40 +168,41 @@ function hasDerivableName(name: string | undefined): boolean {
 }
 
 /**
- * Content-addressed, location-independent stable identity for a symbol — the
- * base value, before any same-id ordinal disambiguation the caller applies
- * across the whole graph (see call-graph build).
+ * Content-addressed, location-independent stable identity for a function symbol.
  * (change: add-content-addressed-stable-symbol-ids)
  *
- * Deliberately excludes the repo-relative path that {@link symbolMoniker} bakes
- * into its namespace, so a symbol keeps its identity across a file rename or
- * move. Derived from the SCIP descriptor *tail* only: the qualified name
- * (`Class.method` or bare function) plus an overload disambiguator — the
- * normalized {@link signatureShape}, falling back to {@link arityOf} when no
- * signature is available.
+ * A pure function of the symbol's OWN structure: the qualified name
+ * (`Class.method` or bare function) plus the normalized {@link signatureShape}
+ * (the parameter group). It deliberately excludes the repo-relative path that
+ * {@link symbolMoniker} bakes into its namespace AND the function body, so a
+ * symbol keeps its identity across a file rename/move and across body edits.
+ *
+ * A function id always carries a `(...)` parameter group (empty `()` when no
+ * signature was captured), so it never collides with a {@link stableClassId} of
+ * the same name (classes carry none).
+ *
+ * Because the id is content-only, two genuinely distinct symbols that share a
+ * qualified name and parameter shape (homonyms) receive the SAME `stableId`. This
+ * is intentional: the change never fabricates a position-dependent discriminator
+ * (which a file rename/add/remove would silently flip). Consumers resolve a
+ * `stableId` only when it identifies a UNIQUE symbol (see
+ * `EdgeStore.getNodeByStableId`) and otherwise fall back rather than guess.
  *
  * Returns `undefined` for symbols with no derivable descriptor (anonymous or
- * synthetic), which keep only their path-based `id` — the change never
- * fabricates a non-deterministic identity.
+ * synthetic), which keep only their path-based `id`.
  */
 export function stableSymbolId(node: FunctionNode): string | undefined {
   if (!hasDerivableName(node.name)) return undefined;
-  const qn = escapedQualifiedName(node);
   const shape = signatureShape(node.signature);
-  let disambiguator: string;
-  if (shape) {
-    disambiguator = shape;
-  } else {
-    const arity = arityOf(node);
-    disambiguator = arity === undefined ? '' : `(${arity})`;
-  }
-  return `${STABLE_ID_PREFIX}${qn}${disambiguator}`;
+  return `${STABLE_ID_PREFIX}${escapedQualifiedName(node)}${shape || '()'}`;
 }
 
 /**
- * Stable id for a class/module symbol: the escaped class name only (a class has
- * no signature). Returns `undefined` for synthetic module groupings and
- * non-derivable names.
+ * Stable id for a class symbol: the escaped class name only (a class has no
+ * parameter group, so it never collides with a function's `sid:Name(...)`).
+ * Returns `undefined` for synthetic module groupings and non-derivable names.
+ * Like {@link stableSymbolId}, homonym classes share an id and resolve only when
+ * unique.
  */
 export function stableClassId(name: string, isModule?: boolean): string | undefined {
   if (isModule || !hasDerivableName(name)) return undefined;

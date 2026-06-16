@@ -52,6 +52,17 @@ export interface GraphFreshnessView {
    * Returns the relocated node's id + current span hash, or `undefined` when no
    * unambiguous node carries that stable id. Optional — absent on legacy views.
    * (change: add-content-addressed-stable-symbol-ids)
+   *
+   * Resolution is unique-only: because `stableId` is name+parameter-shape (a
+   * homonym — a genuinely different symbol with the same name and signature —
+   * shares it), the resolver returns a node only when exactly one carries the id,
+   * never guessing between candidates. A residual false-`fresh` is still possible
+   * if a homonym is the sole survivor AND its span hash happens to equal the
+   * recorded one; the content-hash equality check in `anchorFreshness` is the
+   * guard that makes any *changed* survivor read `drifted` instead. During an
+   * incremental cross-file move the old and new rows can briefly both carry the id
+   * (ambiguous → `undefined` → falls through to `orphaned`); the state self-heals
+   * once the batch finishes and is corrected by the next full analyze.
    */
   resolveStableId?(stableId: string): { nodeId: string; contentHash: string } | undefined;
   /**

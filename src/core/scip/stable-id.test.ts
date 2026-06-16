@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CallGraphBuilder, serializeCallGraph, type FunctionNode } from '../analyzer/call-graph.js';
-import { stableSymbolId, signatureShape } from './moniker.js';
+import { stableSymbolId, stableClassId, signatureShape } from './moniker.js';
 import { EdgeStore } from '../services/edge-store.js';
 
 type InFile = { path: string; content: string; language: string };
@@ -45,9 +45,38 @@ describe('stableSymbolId (unit)', () => {
     expect(stableSymbolId(plain)).toEqual(stableSymbolId(asyncd));
   });
 
-  it('falls back to arity when no signature is available', () => {
+  it('uses empty parentheses when no signature is available', () => {
     const node = { name: 'f' } as FunctionNode;
-    expect(stableSymbolId(node)).toBe('sid:f');
+    expect(stableSymbolId(node)).toBe('sid:f()');
+  });
+
+  it('is body-invariant for expression-bodied arrows (shape is the param group only)', () => {
+    // The analyzer captures the whole `const f = (a) => <body>` as the signature.
+    // The id must depend only on the parameter group, never the body, so a body
+    // edit keeps the id (a moved-and-edited symbol must resolve drifted, not orphaned).
+    const v1 = { name: 'widget', signature: 'const widget = (a: string) => a.length;' } as FunctionNode;
+    const v2 = { name: 'widget', signature: 'const widget = (a: string) => a.length + 1;' } as FunctionNode;
+    expect(stableSymbolId(v1)).toBe('sid:widget(a: string)');
+    expect(stableSymbolId(v2)).toBe(stableSymbolId(v1));
+  });
+
+  it('excludes the return type from the shape (return-type change keeps the id)', () => {
+    const a = { name: 'f', signature: 'function f(x: number): void' } as FunctionNode;
+    const b = { name: 'f', signature: 'function f(x: number): Promise<void>' } as FunctionNode;
+    expect(stableSymbolId(a)).toBe('sid:f(x: number)');
+    expect(stableSymbolId(b)).toBe(stableSymbolId(a));
+  });
+
+  it('handles nested parens in the parameter group (callback params)', () => {
+    const node = { name: 'on', signature: 'function on(ev: string, cb: (x: number) => void): void' } as FunctionNode;
+    expect(stableSymbolId(node)).toBe('sid:on(ev: string, cb: (x: number) => void)');
+  });
+
+  it('a signatureless function never collides with a class of the same name', () => {
+    const fn = { name: 'Foo' } as FunctionNode;
+    expect(stableSymbolId(fn)).toBe('sid:Foo()');
+    expect(stableClassId('Foo')).toBe('sid:Foo'); // no parens → distinct
+    expect(stableSymbolId(fn)).not.toBe(stableClassId('Foo'));
   });
 
   it('returns undefined for anonymous / synthetic names', () => {
@@ -55,6 +84,11 @@ describe('stableSymbolId (unit)', () => {
     expect(stableSymbolId({ name: '*' } as FunctionNode)).toBeUndefined();
     expect(stableSymbolId({ name: 'src/a.ts::*' } as FunctionNode)).toBeUndefined();
     expect(stableSymbolId({ name: '<anonymous>' } as FunctionNode)).toBeUndefined();
+  });
+
+  it('stableClassId returns undefined for synthetic module groupings', () => {
+    expect(stableClassId('[anon]', true)).toBeUndefined();
+    expect(stableClassId('RealClass', false)).toBe('sid:RealClass');
   });
 });
 
@@ -88,16 +122,51 @@ describe('ContentAddressedStableSymbolId (analyzer spec)', () => {
     expect(ids1).toEqual(ids2);
   });
 
-  it('same-base collisions across files get a deterministic ordinal', async () => {
-    // Two identical free functions in different files share a base id → ordinals.
+  it('homonyms (same name + param shape in different files) share one stable id', async () => {
+    // No position-dependent ordinal: distinct same-shape symbols get the SAME id.
     const nodes = await build([
       ts('src/a.ts', 'export function dup(n: number): number { return n; }\n'),
-      ts('src/b.ts', 'export function dup(n: number): number { return n; }\n'),
+      ts('src/b.ts', 'export function dup(n: number): number { return n + 1; }\n'), // different body
     ]);
-    const ids = nodes.filter(n => n.name === 'dup').map(n => n.stableId).sort();
+    const ids = nodes.filter(n => n.name === 'dup').map(n => n.stableId);
     expect(ids.length).toBe(2);
-    expect(ids[0]).not.toBe(ids[1]);
-    expect(ids.every(id => id!.includes('~'))).toBe(true);
+    expect(ids[0]).toBe(ids[1]); // shared — body is not part of the id
+    expect(ids[0]).toBe('sid:dup(n: number)');
+  });
+
+  it('a surviving homonym keeps its stable id when a same-base sibling is added or removed', async () => {
+    // The regression that the positional-ordinal scheme had: an unrelated file
+    // entering/leaving the build must NOT rewrite an untouched symbol's identity.
+    const dup = 'export function dup(n: number): number { return n; }\n';
+    const solo = byName(await build([ts('src/b.ts', dup)]), 'dup')!;
+    const withSibling = (await build([ts('src/a.ts', dup), ts('src/b.ts', dup)]))
+      .filter(n => n.name === 'dup');
+    // b.ts's id is identical whether or not a.ts (a same-base sibling) is present,
+    // and survives a.ts being "renamed" to z.ts.
+    expect(withSibling.every(n => n.stableId === solo.stableId)).toBe(true);
+    const afterRename = (await build([ts('src/z.ts', dup), ts('src/b.ts', dup)]))
+      .find(n => n.filePath === 'src/b.ts')!;
+    expect(afterRename.stableId).toBe(solo.stableId);
+  });
+
+  it('a const-assigned arrow keeps its stable id across a body edit and a file move', async () => {
+    const before = byName(await build([ts('src/a.ts', 'export const f = (a: string) => a.length;\n')]), 'f')!;
+    const movedAndEdited = byName(await build([ts('src/b.ts', 'export const f = (a: string) => a.length * 2;\n')]), 'f')!;
+    expect(before.stableId).toBe('sid:f(a: string)');
+    expect(movedAndEdited.stableId).toBe(before.stableId); // moved file + edited body → same id
+  });
+
+  it('Anonymous functions get no stable id (real analyzer output)', async () => {
+    // An inline callback the analyzer never turns into a named node, plus the
+    // synthetic per-file module grouping — neither carries a stableId.
+    const g = serializeCallGraph(await new CallGraphBuilder().build([
+      ts('src/a.ts', 'export function run(xs: number[]) { return xs.map(n => n + 1).filter(x => x > 0); }\n'),
+    ]));
+    const internal = g.nodes.filter(n => !n.isExternal);
+    // The only real node is `run`; the bare arrows produced no node at all.
+    expect(internal.map(n => n.name)).toEqual(['run']);
+    // Synthetic module groupings (isModule) never receive a stableId.
+    expect(g.classes.filter(c => c.isModule).every(c => c.stableId === undefined)).toBe(true);
   });
 });
 
