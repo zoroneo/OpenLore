@@ -1,4 +1,4 @@
-# ADR-0011: Epistemic lease emits neutral freshness facts, not coercive imperatives
+# ADR-0012: Epistemic lease emits neutral freshness facts, not coercive imperatives
 
 ## Status
 
