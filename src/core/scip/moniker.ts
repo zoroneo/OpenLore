@@ -76,16 +76,19 @@ export function qualifiedName(node: FunctionNode): string {
  * Index of the `(` that opens the PARAMETER group in a captured signature, or
  * `-1` when there is none. Normally the first `(`, but a Go method signature is
  * `func (recv) Name(params)` — the first `(` is the *receiver*, not the params —
- * so when the text immediately before the first `(` is exactly the `func`
- * keyword (no method name between), the receiver group is skipped and the next
- * `(` is returned. Free functions (`func Name(params)`) and every other language
- * keep the first `(`. This keeps Go method identity keyed on real parameters, not
- * the receiver variable.
+ * so for Go, when the text before the first `(` is exactly the `func` keyword (no
+ * method name between), the receiver group is skipped and the next `(` is returned.
+ *
+ * The skip is GATED ON `language === 'Go'`. `func` is a legal, common identifier
+ * in JS/TS/Python/C/Ruby/…; a class method named `func` has signature `func(a)`
+ * whose prefix also trims to `func`, so without the language gate the receiver-skip
+ * would misfire and silently drop the real parameter group (corrupting that
+ * symbol's identity). Go and Swift reserve `func`, so the gate is safe there.
  */
-function parameterGroupStart(sig: string): number {
+function parameterGroupStart(sig: string, language?: string): number {
   const first = sig.indexOf('(');
   if (first === -1) return -1;
-  if (sig.slice(0, first).trim() !== 'func') return first;
+  if (language !== 'Go' || sig.slice(0, first).trim() !== 'func') return first;
   // Go method: skip the balanced receiver group, then take the next '('.
   let depth = 0;
   for (let i = first; i < sig.length; i++) {
@@ -107,7 +110,7 @@ function parameterGroupStart(sig: string): number {
 export function arityOf(node: FunctionNode): number | undefined {
   const sig = node.signature;
   if (!sig) return undefined;
-  const open = parameterGroupStart(sig);
+  const open = parameterGroupStart(sig, node.language);
   if (open === -1) return undefined;
   // Walk to the matching close paren, counting top-level commas.
   let depth = 0;
@@ -162,11 +165,12 @@ const STABLE_ID_PREFIX = 'sid:';
  *
  * For a Go method (`func (recv) Name(params)`) the leading receiver group is
  * skipped (see {@link parameterGroupStart}) so the shape is the real parameters,
- * not the receiver variable. Returns `''` when there is no parameter group.
+ * not the receiver variable. Pass the symbol's `language` so the Go-receiver skip
+ * is gated correctly. Returns `''` when there is no parameter group.
  */
-export function signatureShape(signature: string | undefined): string {
+export function signatureShape(signature: string | undefined, language?: string): string {
   if (!signature) return '';
-  const open = parameterGroupStart(signature);
+  const open = parameterGroupStart(signature, language);
   if (open === -1) return '';
   // Walk to the matching close paren (tracking nesting), then slice the group.
   let depth = 0;
@@ -221,7 +225,7 @@ function hasDerivableName(name: string | undefined): boolean {
  */
 export function stableSymbolId(node: FunctionNode): string | undefined {
   if (!hasDerivableName(node.name)) return undefined;
-  const shape = signatureShape(node.signature);
+  const shape = signatureShape(node.signature, node.language);
   return `${STABLE_ID_PREFIX}${escapedQualifiedName(node)}${shape || '()'}`;
 }
 

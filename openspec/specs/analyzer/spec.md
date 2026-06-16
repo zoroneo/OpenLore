@@ -4942,6 +4942,8 @@ The system SHALL compute intraprocedural control-flow graphs and reaching-defini
 
 The system SHALL compute, for every named function and class symbol, a content-addressed stable identity (`stableId`) that is independent of the symbol's file path, derived deterministically from the symbol's qualified name (class.method or function) and a normalized parameter-list signature shape (empty parentheses when no signature was captured). The shape SHALL exclude the function body and the return type, so the `stableId` is invariant to body edits and to leading-modifier/return-type changes. The `stableId` SHALL be a pure function of the symbol's own static structure — no file path and no position-dependent discriminator — so it is identical across runs, machines, and full-vs-incremental builds, and is preserved when a symbol's file is renamed or moved. Symbols whose identity cannot be derived deterministically (anonymous or dynamically-generated) SHALL NOT receive a `stableId`. Two distinct symbols sharing a qualified name and parameter shape (homonyms) MAY share a `stableId`; the system SHALL resolve a `stableId` to a symbol only when it identifies a unique symbol, and SHALL fall back rather than guess when it is ambiguous. Full scenarios: `openspec/changes/add-content-addressed-stable-symbol-ids/specs/analyzer/spec.md`.
 
+> Known container-qualification limitations (degrade to the homonym fallback above — they widen the set of symbols that share a `stableId`; they never cause a *wrong* resolution): C++ overloaded definitions collide at the path-based node `id` before `stableId` is computed (one overload is dropped by the analyzer); C++ namespaces and module-level functions are not part of the qualified name (cross-namespace same-name functions share a `stableId`); and deeply nested classes use only the innermost enclosing class as the container (e.g. `A.Inner.m` and `B.Inner.m` share `Inner.m`). Go method receivers and Rust `impl Trait for Struct` / generic `impl` blocks ARE correctly attributed to the implementing type. These analyzer-side qualification gaps are tracked separately from the `stableId` derivation, which is correct wherever the container is.
+
 ### Requirement: AdditiveStableIdentity
 
 The system SHALL introduce `stableId` additively, without changing the existing path-based symbol `id`, which SHALL remain the canonical key for the call graph, the store primary keys, edge endpoints, the file-from-id derivation, the serialized graph, and all existing path-based consumers. `stableId` SHALL be persisted as a nullable serialized-node field and a nullable indexed store column, introduced by bumping the store schema version so existing caches drop-and-rebuild with no data-migration code. A graph or store that predates `stableId` SHALL remain valid, with an absent `stableId` treated as "no stable identity available".
@@ -5030,6 +5032,12 @@ The system SHALL isolate CFG overlay build and read failures so they degrade to 
 The system SHALL model infinite loops (loop {}, for(;;), for {}) without a skip-body edge so that a pre-loop definition is never labeled exact when the loop body unconditionally reassigns it.
 
 > Decision recorded: 7b1d823d
+> Date: 2026-06-16
+### Requirement: RustImplExtractionKeysMethodsOnImplementingTypeNotTrait
+
+The system SHALL attribute Rust impl methods to the implementing type (not the trait) and strip generic parameters from the type name.
+
+> Decision recorded: 2ec9dd45
 > Date: 2026-06-16
 
 ## Technical Notes
@@ -5368,3 +5376,13 @@ The CfgLangSpec builder is field-centric (childForFieldName for condition/conseq
 Dogfooding revealed that valueReachableLines() could return an empty set on ill-posed queries (mistyped valueParam, or 'all parameters' on a function with no overlay params), which an agent interprets as 'this change is safe' — the exact failure value-level must avoid. The handlers now validate that the target resolves in the overlay (a named valueParam is a known parameter or tracked def-use variable; an unnamed request needs at least one parameter) and fall back to full function-granularity with an explicit reason when it does not, rather than returning a misleading zero-impact narrowing.
 
 **Consequences:** analyze_impact and trace_execution_path return applied:false with a clear reason (plus the full blast radius / unrestricted first hop) when the value-level target can't be resolved. A genuine zero — a real parameter that flows to no callee — is still reported as applied:true. Regression-tested in graph.test.ts.
+
+### Rust impl extraction keys methods on implementing type, not trait
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** 2ec9dd45
+
+For `impl Trait for Struct`, the previous heuristic (first `type_identifier` child) picked the trait name, wrongly attributing methods to the trait and causing collisions across all impls of that trait. Using the tree-sitter `type` field targets the implementing type, and stripping generic args normalizes `Box<T>` to `Box`.
+
+**Consequences:** Rust method stable IDs and call-graph edges change for any method inside `impl Trait for X` or generic impl blocks; downstream caches keyed on className may need rebuilding.

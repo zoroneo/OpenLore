@@ -1399,13 +1399,18 @@ async function extractRustGraph(
     const name = nameCapture.node.text;
     const fnNode = nodeCapture.node;
 
-    // Find enclosing impl block → use as className
+    // Find enclosing impl block → use the IMPLEMENTING TYPE as className.
+    // Use the `type` field, not the first `type_identifier`: for
+    // `impl Trait for Struct` the first type_identifier is the TRAIT, which would
+    // wrongly attribute the method to the trait (and collide across all impls of
+    // that trait). `impl<T> Box<T>` exposes a `generic_type` node, so strip the
+    // generic args to key methods on `Box`, not the whole generic application.
     let className: string | undefined;
     let cursor = fnNode.parent;
     while (cursor) {
       if (cursor.type === 'impl_item') {
-        const typeNode = cursor.children.find(c => c.type === 'type_identifier');
-        if (typeNode) className = typeNode.text;
+        const typeNode = cursor.childForFieldName('type');
+        if (typeNode) className = typeNode.text.replace(/<[\s\S]*>$/, '').trim();
         break;
       }
       cursor = cursor.parent;

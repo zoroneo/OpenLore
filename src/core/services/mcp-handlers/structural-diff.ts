@@ -206,22 +206,26 @@ export async function handleStructuralDiff(input: StructuralDiffInput): Promise<
   }
 
   // ── Rename/move candidates ───────────────────────────────────────────────────
-  // Exact: a stable-id pair that changed file — a confirmed move/rename of the
-  // same symbol, NOT a remove+add. Heuristic: leftover removed↔added paired by
-  // signature shape (catches identifier renames and anonymous nodes that carry no
-  // stableId). Both interpretations are surfaced, never silently merged.
+  // stable-id: a cross-file pair with the same content-addressed id (name +
+  // parameter shape). Strong signal that the symbol MOVED — but a symbol that was
+  // deleted and independently replaced by a same-name/same-shape homonym is
+  // indistinguishable here, so this is labeled `stable-id` (not `exact`) and the
+  // note tells the agent to verify rather than asserting "the same symbol". The id
+  // is unique within the CHANGED-FILE set; a same-shape symbol in an unchanged file
+  // is not considered. Heuristic: leftover removed↔added paired by signature shape
+  // (identifier renames, anonymous/synthetic nodes). Both interpretations surface.
   const renameCandidates: Array<{ from: ReturnType<typeof nodeRef>; to: ReturnType<typeof nodeRef>; confidence: string; note: string }> = [];
   for (const p of pairs) {
     if (p.via === 'stableId' && p.old.filePath !== p.cur.filePath) {
       renameCandidates.push({
-        from: nodeRef(p.old), to: nodeRef(p.cur), confidence: 'exact',
-        note: `"${p.old.name}" moved from "${p.old.filePath}" to "${p.cur.filePath}" (identical stable id). Reported as the same symbol, not remove+add.`,
+        from: nodeRef(p.old), to: nodeRef(p.cur), confidence: 'stable-id',
+        note: `"${p.old.name}" in "${p.old.filePath}" and "${p.cur.filePath}" share a content-addressed id (name + parameter shape) — most likely the same symbol moved (not remove+add), but a delete-and-replace by a same-shape homonym is indistinguishable here. Verify.`,
       });
     }
   }
   for (const r of removed) {
     for (const a of added) {
-      const sameShape = signatureShape(r.signature) && signatureShape(r.signature) === signatureShape(a.signature);
+      const sameShape = signatureShape(r.signature, r.language) && signatureShape(r.signature, r.language) === signatureShape(a.signature, a.language);
       const sameFile = r.filePath === a.filePath;
       if (!sameShape) continue;
       const confidence = sameFile ? 'high' : 'medium';
@@ -323,7 +327,7 @@ function emptySummary() {
 }
 function diffSoundness(empty: boolean): { posture: string; caveats: string[] } {
   const caveats = [
-    'Move detection is exact when a symbol carries a content-addressed stable id (reported as the same symbol, confidence "exact"). Identifier renames and symbols without a stable id (anonymous/synthetic) stay heuristic — paired by signature shape and reported separately; never assume a heuristic rename without verifying. Homonyms (distinct symbols sharing a name + parameter shape, hence a stable id) are matched first-found; an ambiguous homonym pairing should be verified like any rename.',
+'A cross-file pair sharing a content-addressed stable id (name + parameter shape) is reported as a move with confidence "stable-id" — a strong signal, but NOT proof: a symbol that was deleted and independently replaced by a same-name/same-shape homonym is indistinguishable, so verify rather than assume "same symbol". The stable id is matched only when unique within the changed-file set (a same-shape symbol in an unchanged file is not considered). Identifier renames and symbols without a stable id (anonymous/synthetic) stay heuristic — paired by signature shape and reported separately.',
     'Signature-change detection is limited to what the analyzer extracts per language; cross-language signature notions differ.',
     'Edge deltas cover calls among/out of the changed files; calls into unchanged files resolve against the canonical graph for stale callers only.',
   ];

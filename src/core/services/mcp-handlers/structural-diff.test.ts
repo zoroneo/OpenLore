@@ -166,15 +166,36 @@ describe('handleStructuralDiff — stable-id matching', () => {
   it('reports a pure cross-file move as the same symbol, not remove+add', async () => {
     const r = await handleStructuralDiff({ directory: repo, baseRef: 'HEAD' }) as {
       added: Array<{ name: string }>; removed: Array<{ name: string }>;
-      renameCandidates: Array<{ from: { name: string; file: string }; to: { name: string; file: string }; confidence: string }>;
+      renameCandidates: Array<{ from: { name: string; file: string }; to: { name: string; file: string }; confidence: string; note: string }>;
     };
     expect(r.added.map(n => n.name)).not.toContain('mover');
     expect(r.removed.map(n => n.name)).not.toContain('mover');
     const move = r.renameCandidates.find(c => c.from.name === 'mover');
     expect(move).toBeDefined();
-    expect(move!.confidence).toBe('exact');
+    expect(move!.confidence).toBe('stable-id'); // honest label — strong signal, not "exact"/proof
+    expect(move!.note).toMatch(/verify/i);       // conveys uncertainty to the agent
     expect(move!.from.file).toBe('src/a.ts');
     expect(move!.to.file).toBe('src/b.ts');
+  });
+
+  it('labels a stable-id cross-file match as "stable-id" with a verify note, never overclaiming "exact"', async () => {
+    // A delete-and-replace by a same-name/same-shape homonym is indistinguishable
+    // from a move here. The match is still surfaced (useful) but must be honestly
+    // labeled and tell the agent to verify — never asserted as proof of identity.
+    write(repo, 'src/a.ts', `// mover deleted from here\nexport const A = 1;\n`);
+    write(repo, 'src/b.ts',
+      `export function stay(): void {}\n` +
+      `export function shifter(n: number): number { return n; }\n` +
+      `export function mover(p: string): number { return p.length * 99; }\n`); // same name+shape, different body
+    const r = await handleStructuralDiff({ directory: repo, baseRef: 'HEAD' }) as {
+      renameCandidates: Array<{ from: { name: string }; to: { name: string }; confidence: string; note: string }>;
+    };
+    const m = r.renameCandidates.find(c => c.from.name === 'mover' && c.to.name === 'mover');
+    expect(m).toBeDefined();
+    expect(m!.confidence).toBe('stable-id');
+    expect(m!.confidence).not.toBe('exact');
+    expect(m!.note).toMatch(/verify/i);
+    expect(m!.note).toMatch(/indistinguishable|delete-and-replace|homonym/i);
   });
 
   it('reports a moved symbol with a modifier-only signature change as modified', async () => {
@@ -223,7 +244,8 @@ describe('handleStructuralDiff — stable-id matching', () => {
         added: Array<{ name: string; file: string }>; removed: Array<{ name: string; file: string }>;
         renameCandidates: Array<{ from: { name: string; file: string }; to: { name: string; file: string }; confidence: string }>;
       };
-      // No false "exact same symbol" merge across files for the ambiguous homonyms.
+      // No cross-file stable-id merge for the ambiguous homonyms (id not unique).
+      expect(r.renameCandidates.some(c => c.confidence === 'stable-id')).toBe(false);
       expect(r.renameCandidates.some(c => c.confidence === 'exact')).toBe(false);
       // keep.ts's dup survived in place → must NOT be reported removed.
       expect(r.removed.some(n => n.name === 'dup' && n.file === 'src/keep.ts')).toBe(false);

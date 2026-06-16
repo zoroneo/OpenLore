@@ -128,6 +128,12 @@ The system SHALL fall back to function-granularity impact when a value-level que
 
 > Decision recorded: a37d851f
 > Date: 2026-06-16
+### Requirement: DowngradeStableidMoveConfidenceFromExactToStableidWithVerifySemantics
+
+The system SHALL report cross-file stable-id matches with confidence 'stable-id' and instruct the consumer to verify, rather than asserting the match is exact.
+
+> Decision recorded: a3ede102
+> Date: 2026-06-16
 
 ## Decisions
 
@@ -210,3 +216,23 @@ Anchoring decisions to call-graph nodes (not just file paths) lets the system de
 Dogfooding revealed that valueReachableLines() could return an empty set on ill-posed queries (mistyped valueParam, or 'all parameters' on a function with no overlay params), which an agent interprets as 'this change is safe' — the exact failure value-level must avoid. The handlers now validate that the target resolves in the overlay (a named valueParam is a known parameter or tracked def-use variable; an unnamed request needs at least one parameter) and fall back to full function-granularity with an explicit reason when it does not, rather than returning a misleading zero-impact narrowing.
 
 **Consequences:** analyze_impact and trace_execution_path return applied:false with a clear reason (plus the full blast radius / unrestricted first hop) when the value-level target can't be resolved. A genuine zero — a real parameter that flows to no callee — is still reported as applied:true. Regression-tested in graph.test.ts.
+
+### Downgrade stable-id move confidence from 'exact' to 'stable-id' with verify semantics
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** a3ede102
+
+A content-addressed stable id (name + parameter shape) is necessary but not sufficient to prove a symbol moved: a deleted symbol independently replaced by a same-name/same-shape homonym is indistinguishable from a genuine move. Labeling it 'exact' gave agents false certainty; 'stable-id' plus a verify directive is more honest.
+
+**Consequences:** Agents consuming structural-diff output must treat confidence:'stable-id' as strong-but-not-proven and verify cross-file moves instead of trusting them blindly. Any downstream automation that branches on confidence === 'exact' must update to handle 'stable-id'.
+
+### Pass language to signatureShape for heuristic rename pairing
+
+**Status:** Approved
+**Date:** 2026-06-16
+**ID:** 767d5274
+
+Signature shape comparison without language context could incorrectly pair symbols across languages that happen to share textual shape; threading the language parameter makes the heuristic language-aware.
+
+**Consequences:** signatureShape callers must supply the language argument; cross-language false-positive rename pairings are reduced.
