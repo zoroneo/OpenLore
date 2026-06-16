@@ -140,11 +140,15 @@
     "@google/genai": { "protobufjs": "^7.6.4" },
     "ws": "^8.21.0",
     "js-yaml": "^4.2.0",
-    "hono": "^4.12.25"
+    "hono": "^4.12.25",
+    "@earendil-works/pi-coding-agent": {
+      "@google/genai": { "protobufjs": "^7.6.4" },
+      "ws": "^8.21.0"
+    }
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.79.0",
-    "@earendil-works/pi-coding-agent": "^0.79.0",
+    "@earendil-works/pi-ai": "^0.79.4",
+    "@earendil-works/pi-coding-agent": "^0.79.4",
     "@eslint/js": "^9.17.0",
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^4.0.18",

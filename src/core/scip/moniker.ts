@@ -73,15 +73,41 @@ export function qualifiedName(node: FunctionNode): string {
 }
 
 /**
+ * Index of the `(` that opens the PARAMETER group in a captured signature, or
+ * `-1` when there is none. Normally the first `(`, but a Go method signature is
+ * `func (recv) Name(params)` — the first `(` is the *receiver*, not the params —
+ * so when the text immediately before the first `(` is exactly the `func`
+ * keyword (no method name between), the receiver group is skipped and the next
+ * `(` is returned. Free functions (`func Name(params)`) and every other language
+ * keep the first `(`. This keeps Go method identity keyed on real parameters, not
+ * the receiver variable.
+ */
+function parameterGroupStart(sig: string): number {
+  const first = sig.indexOf('(');
+  if (first === -1) return -1;
+  if (sig.slice(0, first).trim() !== 'func') return first;
+  // Go method: skip the balanced receiver group, then take the next '('.
+  let depth = 0;
+  for (let i = first; i < sig.length; i++) {
+    if (sig[i] === '(') depth++;
+    else if (sig[i] === ')' && --depth === 0) {
+      const next = sig.indexOf('(', i + 1);
+      return next; // -1 if a receiver-only form (no param group) — handled by callers
+    }
+  }
+  return first; // unbalanced receiver — fall back to the first group
+}
+
+/**
  * Best-effort parameter count from a node's declaration `signature`. Counts
- * top-level comma-separated parameters inside the first parenthesized group.
+ * top-level comma-separated parameters inside the parameter group.
  * Returns `undefined` when no signature is available (the analyzer does not
  * persist arity directly — TODO(spec-04-followup): arity in analyzer).
  */
 export function arityOf(node: FunctionNode): number | undefined {
   const sig = node.signature;
   if (!sig) return undefined;
-  const open = sig.indexOf('(');
+  const open = parameterGroupStart(sig);
   if (open === -1) return undefined;
   // Walk to the matching close paren, counting top-level commas.
   let depth = 0;
@@ -134,11 +160,13 @@ const STABLE_ID_PREFIX = 'sid:';
  *    `stableId` BODY-INVARIANT — essential so a moved-and-edited symbol resolves as
  *    `drifted` (not `orphaned`) via its anchor's `stableId`.
  *
- * Returns `''` when there is no parameter group at all.
+ * For a Go method (`func (recv) Name(params)`) the leading receiver group is
+ * skipped (see {@link parameterGroupStart}) so the shape is the real parameters,
+ * not the receiver variable. Returns `''` when there is no parameter group.
  */
 export function signatureShape(signature: string | undefined): string {
   if (!signature) return '';
-  const open = signature.indexOf('(');
+  const open = parameterGroupStart(signature);
   if (open === -1) return '';
   // Walk to the matching close paren (tracking nesting), then slice the group.
   let depth = 0;

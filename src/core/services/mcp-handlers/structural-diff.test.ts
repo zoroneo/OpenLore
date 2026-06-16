@@ -202,10 +202,12 @@ describe('handleStructuralDiff — stable-id matching', () => {
     expect(heuristic!.confidence).toBe('high'); // same file, same shape
   });
 
-  it('handles a move when a same-id homonym is deleted in the same change (no ordinal flip)', async () => {
-    // Regression for the old positional-ordinal scheme: v1 has two `dup`s sharing a
-    // stable id; v2 deletes one and moves the other. With content-only ids the
-    // survivor is matched exactly (no ordinal to flip), the deleted one is removed.
+  it('does NOT falsely merge ambiguous homonyms: in-place edit + sibling deletion', async () => {
+    // Two `dup`s share a stable id (homonyms). One is genuinely DELETED while the
+    // other is edited IN PLACE (never moved). The matcher must not "exact"-merge
+    // them across files (the first-wins bug) nor report the surviving in-place one
+    // as removed. Ambiguous stable ids resolve only when unique — here they don't,
+    // so it falls back to the path id (correct, honest result).
     const repo2 = mkdtempSync(join(tmpdir(), 'struct-diff-homonym-'));
     try {
       const g = (args: string[]) => execFileSync('git', args, { cwd: repo2, stdio: 'ignore', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
@@ -214,19 +216,19 @@ describe('handleStructuralDiff — stable-id matching', () => {
       write(repo2, 'src/keep.ts', dup);
       write(repo2, 'src/gone.ts', dup);
       g(['add', '.']); g(['commit', '-q', '-m', 'v1', '--no-gpg-sign']);
-      write(repo2, 'src/keep.ts', `// dup moved out\nexport const K = 1;\n`); // keep.ts loses dup
-      write(repo2, 'src/gone.ts', ``);                                        // gone.ts emptied (dup deleted)
-      write(repo2, 'src/moved.ts', dup);                                       // dup reappears here (moved)
+      write(repo2, 'src/keep.ts', `export function dup(n: number): number { return n + 1; }\n`); // edited in place, still in keep.ts
+      write(repo2, 'src/gone.ts', `export function other(): void {}\n`);                          // dup genuinely deleted here
       vi.mocked(readCachedContext).mockResolvedValue(null as never);
       const r = await handleStructuralDiff({ directory: repo2, baseRef: 'HEAD' }) as {
-        added: Array<{ name: string }>; removed: Array<{ name: string }>;
+        added: Array<{ name: string; file: string }>; removed: Array<{ name: string; file: string }>;
         renameCandidates: Array<{ from: { name: string; file: string }; to: { name: string; file: string }; confidence: string }>;
       };
-      const exact = r.renameCandidates.filter(c => c.from.name === 'dup' && c.confidence === 'exact');
-      expect(exact.length).toBe(1);                          // exactly one move detected
-      expect(exact[0].to.file).toBe('src/moved.ts');
-      expect(r.removed.filter(n => n.name === 'dup').length).toBe(1); // the genuinely-deleted dup
-      expect(r.added.some(n => n.name === 'dup')).toBe(false);        // moved dup is not a fresh add
+      // No false "exact same symbol" merge across files for the ambiguous homonyms.
+      expect(r.renameCandidates.some(c => c.confidence === 'exact')).toBe(false);
+      // keep.ts's dup survived in place → must NOT be reported removed.
+      expect(r.removed.some(n => n.name === 'dup' && n.file === 'src/keep.ts')).toBe(false);
+      // gone.ts's dup was genuinely deleted → reported removed.
+      expect(r.removed.some(n => n.name === 'dup' && n.file === 'src/gone.ts')).toBe(true);
     } finally {
       rmSync(repo2, { recursive: true, force: true });
     }

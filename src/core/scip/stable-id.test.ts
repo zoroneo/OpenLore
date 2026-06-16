@@ -72,6 +72,25 @@ describe('stableSymbolId (unit)', () => {
     expect(stableSymbolId(node)).toBe('sid:on(ev: string, cb: (x: number) => void)');
   });
 
+  it('skips a Go method receiver — shape is the params, not the receiver', () => {
+    // `func (r *Repo) Save(x int) error` — the first (...) is the receiver.
+    const save = { name: 'Save', className: 'Repo', signature: 'func (r *Repo) Save(x int) error' } as FunctionNode;
+    const load = { name: 'Load', className: 'Repo', signature: 'func (r *Repo) Load(y string) error' } as FunctionNode;
+    expect(signatureShape(save.signature)).toBe('(x int)');
+    expect(stableSymbolId(save)).toBe('sid:Repo.Save(x int)');
+    // Two methods on the same receiver get DISTINCT ids (keyed on real params/name),
+    // not a collision on the receiver group.
+    expect(stableSymbolId(save)).not.toBe(stableSymbolId(load));
+    // A free Go function keeps its first (...) as the params.
+    expect(signatureShape('func Helper(a int)')).toBe('(a int)');
+  });
+
+  it('a Go method id is invariant to renaming the receiver variable', () => {
+    const a = { name: 'Save', className: 'Repo', signature: 'func (r *Repo) Save(x int) error' } as FunctionNode;
+    const b = { name: 'Save', className: 'Repo', signature: 'func (repo *Repo) Save(x int) error' } as FunctionNode;
+    expect(stableSymbolId(a)).toBe(stableSymbolId(b)); // receiver var name is not identity
+  });
+
   it('a signatureless function never collides with a class of the same name', () => {
     const fn = { name: 'Foo' } as FunctionNode;
     expect(stableSymbolId(fn)).toBe('sid:Foo()');

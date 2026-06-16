@@ -24,12 +24,11 @@ jobs:
       - run: npm ci
 
       - name: Audit dependencies
-        # Gate on PRODUCTION (+ optional) dependencies only — those are what ship to
-        # users. Dev-tooling transitive advisories (e.g. versions pinned inside
-        # @earendil-works/pi-coding-agent) cannot be reached by `overrides` and never
-        # reach a published artifact, so they must not block CI. Production deps,
-        # including optionalDependencies like protobufjs, are still gated at high.
-        run: npm audit --omit=dev --audit-level=high
+        # Gate ALL dependencies (prod + dev) at high severity. Transitive advisories
+        # inside dev tooling (@earendil-works/pi-coding-agent → @google/genai →
+        # protobufjs/ws) are pinned to patched versions via `overrides`, so the full
+        # tree is clean — no need to scope dev out.
+        run: npm audit --audit-level=high
 
       - name: Run ESLint
         run: npm run lint

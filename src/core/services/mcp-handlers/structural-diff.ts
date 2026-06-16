@@ -158,22 +158,31 @@ export async function handleStructuralDiff(input: StructuralDiffInput): Promise<
   // or whose modifiers shifted keeps its stableId, so it pairs across versions
   // instead of looking like remove+add. Nodes without a stableId (anonymous /
   // synthetic) fall back to the path-based id — today's exact behavior.
-  const oldByStable = new Map<string, FunctionNode>();
   const oldById = new Map<string, FunctionNode>();
+  // Group by stableId on BOTH sides: because stableId is non-unique (homonyms
+  // share one), a stableId is a trustworthy cross-version match ONLY when it maps
+  // to exactly one node on each side. Otherwise we must NOT guess which homonym
+  // moved — we fall back to the path id and the signature-shape heuristic, exactly
+  // the "resolve only when unique" contract the rest of the change follows.
+  const oldByStable = new Map<string, FunctionNode[]>();
+  const newByStable = new Map<string, FunctionNode[]>();
   for (const n of oldList) {
     oldById.set(n.id, n);
-    if (n.stableId && !oldByStable.has(n.stableId)) oldByStable.set(n.stableId, n);
+    if (n.stableId) (oldByStable.get(n.stableId) ?? oldByStable.set(n.stableId, []).get(n.stableId)!).push(n);
+  }
+  for (const n of newList) {
+    if (n.stableId) (newByStable.get(n.stableId) ?? newByStable.set(n.stableId, []).get(n.stableId)!).push(n);
   }
   const matchedOld = new Set<string>();
   const matchedNew = new Set<string>();
   const pairs: Array<{ old: FunctionNode; cur: FunctionNode; via: 'stableId' | 'id' }> = [];
-  // Pass A — stable id (takes precedence).
+  // Pass A — stable id, unambiguous 1:1 only (takes precedence over the path id).
   for (const n of newList) {
-    if (!n.stableId) continue;
-    const o = oldByStable.get(n.stableId);
-    if (o && !matchedOld.has(o.id)) {
-      pairs.push({ old: o, cur: n, via: 'stableId' });
-      matchedOld.add(o.id); matchedNew.add(n.id);
+    if (!n.stableId || newByStable.get(n.stableId)!.length !== 1) continue;
+    const olds = oldByStable.get(n.stableId);
+    if (olds && olds.length === 1 && !matchedOld.has(olds[0].id)) {
+      pairs.push({ old: olds[0], cur: n, via: 'stableId' });
+      matchedOld.add(olds[0].id); matchedNew.add(n.id);
     }
   }
   // Pass B — remaining nodes by path-based id.
