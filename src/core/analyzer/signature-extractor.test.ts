@@ -759,6 +759,89 @@ public class Repo {
     expect(names).toContain('findAll');
     expect(names).toContain('byId');
   });
+
+  it('preserves access/abstract modifiers and the throws clause in the signature (#138)', () => {
+    const { entries } = extractSignatures('Service.java', `
+public abstract class Service {
+    protected abstract void run();
+    public void risky() throws IOException, SQLException {}
+}
+`);
+    const run = entries.find(e => e.name === 'run');
+    expect(run?.signature.trim()).toBe('protected abstract void run()');
+    const risky = entries.find(e => e.name === 'risky');
+    expect(risky?.signature.trim()).toBe('public void risky() throws IOException, SQLException');
+  });
+
+  it('extracts generic methods with intersection-type bounds instead of dropping them (#138)', () => {
+    const { entries } = extractSignatures('Util.java', `
+public class Util {
+    public <T extends Number & Comparable<T>> T mid(T a, T b) { return a; }
+    public <T> List<T> asList(T... items) { return null; }
+}
+`);
+    const mid = entries.find(e => e.name === 'mid');
+    // Before the fix the nested/intersection bound broke the regex and the
+    // whole method vanished from the model.
+    expect(mid).toBeDefined();
+    expect(mid?.signature).toContain('<T extends Number & Comparable<T>>');
+    const asList = entries.find(e => e.name === 'asList');
+    expect(asList?.signature).toContain('<T>');
+    expect(asList?.signature).toContain('asList(T... items)');
+  });
+
+  it('keeps annotated parameters whole when they contain parens (#138)', () => {
+    const { entries } = extractSignatures('OwnerController.java', `
+public class OwnerController {
+    public Owner findOwner(@PathVariable(name = "ownerId", required = false) Integer ownerId) {
+        return null;
+    }
+}
+`);
+    const findOwner = entries.find(e => e.name === 'findOwner');
+    // The @PathVariable(...) parens must not truncate the parameter list.
+    expect(findOwner?.signature).toContain('@PathVariable(name = "ownerId", required = false) Integer ownerId');
+  });
+
+  it('does not capture body statements like `return foo(args)` as methods (#138)', () => {
+    const { entries } = extractSignatures('OwnerController.java', `
+public class OwnerController {
+    public String process(Model model) {
+        return addPaginationModel(page, model, results);
+    }
+    private String addPaginationModel(int page, Model model, Page<Owner> paginated) {
+        return "x";
+    }
+}
+`);
+    const names = entries.map(e => e.name);
+    // `addPaginationModel` is captured once — from its real declaration, not the
+    // `return addPaginationModel(...)` call inside process().
+    expect(names.filter(n => n === 'addPaginationModel')).toHaveLength(1);
+    const decl = entries.find(e => e.name === 'addPaginationModel');
+    expect(decl?.signature).toContain('private String addPaginationModel(int page, Model model, Page<Owner> paginated)');
+    expect(names).not.toContain('return');
+  });
+
+  it('ignores prose inside a license-header block comment (#138)', () => {
+    // Apache-style header: a /* */ block whose lines start with spaces, not `*`.
+    const { entries } = extractSignatures('Option.java', `/*
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+*/
+package org.apache.commons.cli;
+
+public class Option {
+    public String getOpt() { return opt; }
+}
+`);
+    const names = entries.map(e => e.name);
+    expect(names).toContain('getOpt');
+    // No phantom method mined from the header prose.
+    expect(names).not.toContain('Foundation');
+    expect(entries.every(e => !/Licensed|Apache Software/.test(e.signature))).toBe(true);
+  });
 });
 
 describe('extractSignatures — spec-08 additional languages (Stage-1, best-effort)', () => {

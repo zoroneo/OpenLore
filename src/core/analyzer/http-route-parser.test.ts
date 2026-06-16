@@ -1065,6 +1065,21 @@ public class UserController {
     expect(routes[0].method).toBe('GET');
   });
 
+  it('resolves the handler name when an annotation sits in the return-type position (#138)', async () => {
+    const file = await createFile(tempDir, 'VetController.java', `
+@Controller
+public class VetController {
+    @GetMapping("/vets")
+    public @ResponseBody Vets showResourcesVetList() { return null; }
+}
+`);
+
+    const routes = await extractJavaRouteDefinitions(file);
+    expect(routes).toHaveLength(1);
+    // Before the fix the inline @ResponseBody broke the regex → "unknown".
+    expect(routes[0].handlerName).toBe('showResourcesVetList');
+  });
+
   it('should ignore non-Java files', async () => {
     const file = await createFile(tempDir, 'App.py', '@app.get("/foo")');
     expect(await extractJavaRouteDefinitions(file)).toEqual([]);

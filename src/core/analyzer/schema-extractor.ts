@@ -24,7 +24,7 @@ export interface SchemaField {
   nullable: boolean;
 }
 
-export type OrmType = 'prisma' | 'typeorm' | 'drizzle' | 'sqlalchemy' | 'unknown';
+export type OrmType = 'prisma' | 'typeorm' | 'drizzle' | 'sqlalchemy' | 'jpa' | 'unknown';
 
 export interface SchemaTable {
   /** Model / table name */
@@ -232,6 +232,82 @@ function parseSqlAlchemy(source: string, rel: string): SchemaTable[] {
 }
 
 // ============================================================================
+// JPA / HIBERNATE PARSER (.java files)
+// ============================================================================
+
+// @Entity / @MappedSuperclass marks a persistent class. javax.* and jakarta.*
+// both use the bare annotation name at the use site.
+const JPA_ENTITY_CLASS_RE = /@(?:Entity|MappedSuperclass)\b[\s\S]*?\bclass\s+(\w+)/;
+// @Table(name = "owners") → explicit table name (otherwise the class name).
+const JPA_TABLE_RE = /@Table\s*\([^)]*\bname\s*=\s*"([^"]+)"/;
+// A persistent field: `[modifiers] Type name [= …];` at class-body level.
+// Methods never match because a `;`/`=` must follow the name (methods have `(`).
+const JPA_FIELD_RE =
+  /^(?:private|protected|public)\s+(?:final\s+|transient\s+|volatile\s+)*([\w.<>[\], ]+?)\s+(\w+)\s*[;=]/;
+
+/**
+ * Parse JPA / Hibernate entities from a Java source file. Captures the table
+ * name (from @Table or the class name) and the declared instance fields, with
+ * a best-effort nullable flag (JPA columns default to nullable unless marked
+ * @Id / @NotNull / @NotBlank / nullable = false). @Transient and static fields
+ * are skipped — they are not persisted.
+ */
+function parseJpaEntity(source: string, rel: string): SchemaTable[] {
+  const classMatch = source.match(JPA_ENTITY_CLASS_RE);
+  if (!classMatch) return [];
+
+  const name = classMatch[1];
+  const tableMatch = source.match(JPA_TABLE_RE);
+  const line = lineOfIndex(source, classMatch.index ?? 0);
+
+  const lines = source.split('\n');
+  const startLine = source.slice(0, classMatch.index ?? 0).split('\n').length - 1;
+  const fields: SchemaField[] = [];
+  const seen = new Set<string>();
+
+  let depth = 0;
+  let started = false;
+  let pendingAnn: string[] = [];
+
+  for (let i = startLine; i < lines.length; i++) {
+    const lineText = lines[i];
+    const trimmed = lineText.trim();
+
+    // Only inspect declarations directly inside the class body (depth 1), so
+    // calls and locals inside method bodies (depth ≥ 2) are ignored.
+    if (depth === 1) {
+      if (trimmed.startsWith('@')) {
+        pendingAnn.push(trimmed);
+      } else if (trimmed) {
+        const fieldMatch = trimmed.match(JPA_FIELD_RE);
+        const isStatic = /\bstatic\b/.test(trimmed);
+        const isTransient = /@Transient\b/.test(pendingAnn.join(' '));
+        if (fieldMatch && !isStatic && !isTransient) {
+          const fieldName = fieldMatch[2];
+          if (!isAuditField(fieldName) && !seen.has(fieldName)) {
+            seen.add(fieldName);
+            const ann = pendingAnn.join(' ');
+            const nullable = !(
+              /@(?:Id|NotNull|NotBlank|NotEmpty)\b/.test(ann) || /nullable\s*=\s*false/.test(ann)
+            );
+            fields.push({ name: fieldName, type: fieldMatch[1].trim(), nullable });
+          }
+        }
+        pendingAnn = [];
+      }
+    }
+
+    const opens = (lineText.match(/\{/g) ?? []).length;
+    const closes = (lineText.match(/\}/g) ?? []).length;
+    depth += opens - closes;
+    if (opens > 0) started = true;
+    if (started && depth <= 0) break;
+  }
+
+  return [{ name: tableMatch ? tableMatch[1] : name, file: rel, orm: 'jpa', fields, line }];
+}
+
+// ============================================================================
 // PUBLIC API
 // ============================================================================
 
@@ -251,13 +327,24 @@ export async function extractSchemas(
     filePaths.map(async filePath => {
       const ext = extname(filePath).toLowerCase();
       const rel = relative(rootDir, filePath);
-      let source: string;
+      let raw: string;
 
       try {
-        source = getSkeletonContent(await readFile(filePath, 'utf-8'), ext === '.py' ? 'python' : 'typescript');
+        raw = await readFile(filePath, 'utf-8');
       } catch {
         return;
       }
+
+      // Java entities are parsed from raw source — annotations and field
+      // declarations must survive intact (the TS/Py skeletonizer would mangle them).
+      if (ext === '.java') {
+        if (/@(?:Entity|MappedSuperclass)\b/.test(raw)) {
+          results.push(...parseJpaEntity(raw, rel));
+        }
+        return;
+      }
+
+      const source = getSkeletonContent(raw, ext === '.py' ? 'python' : 'typescript');
 
       if (ext === '.prisma') {
         results.push(...parsePrisma(source, rel));

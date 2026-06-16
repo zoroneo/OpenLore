@@ -496,10 +496,12 @@ function extractNextJavaMethodName(lines: string[], annotationLine: number): str
     const l = lines[i] ?? '';
     // Skip further annotation lines
     if (l.trim().startsWith('@')) continue;
-    // Match `[modifiers] ReturnType methodName(` — return type can include
-    // generics, arrays, and dotted names.
+    // Match `[modifiers] [@Annotation...] ReturnType methodName(` — return type
+    // can include generics, arrays, and dotted names. Annotations may sit in the
+    // return-type position (e.g. Spring's `public @ResponseBody Vets list()`),
+    // so allow and skip them — otherwise the handler name resolves to "unknown".
     const match = l.match(
-      /\b(?:public|private|protected)\s+(?:static\s+|final\s+|abstract\s+|synchronized\s+|default\s+|native\s+)*(?:<[^>]+>\s+)?[\w<>[\], ?.]+?\s+(\w+)\s*\(/
+      /\b(?:public|private|protected)\s+(?:static\s+|final\s+|abstract\s+|synchronized\s+|default\s+|native\s+)*(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:<[^>]+>\s+)?[\w<>[\], ?.]+?\s+(\w+)\s*\(/
     );
     if (match && !skipNames.has(match[1])) return match[1];
   }

@@ -315,6 +315,94 @@ model Thing { id Int @id }
   });
 });
 
+describe('extractSchemas – JPA / Hibernate (Java)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => { tmpDir = await createTempDir(); });
+  afterEach(async () => { await rm(tmpDir, { recursive: true, force: true }); });
+
+  it('extracts a JPA @Entity with @Table, fields, and nullability (#138)', async () => {
+    const fp = await createFile(tmpDir, 'Owner.java', `
+package com.example;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.Table;
+import jakarta.persistence.Column;
+import jakarta.persistence.OneToMany;
+import jakarta.validation.constraints.NotBlank;
+
+@Entity
+@Table(name = "owners")
+public class Owner extends Person {
+\t@Column
+\t@NotBlank
+\tprivate String address;
+
+\t@Column(nullable = false)
+\tprivate String city;
+
+\t@OneToMany(cascade = CascadeType.ALL)
+\tprivate final List<Pet> pets = new ArrayList<>();
+
+\tprivate static final long serialVersionUID = 1L;
+
+\tpublic String getAddress() {
+\t\treturn this.address;
+\t}
+}
+`);
+    const tables = await extractSchemas([fp], tmpDir);
+    expect(tables).toHaveLength(1);
+    const t = tables[0];
+    expect(t.orm).toBe('jpa');
+    // @Table(name=...) wins over the class name.
+    expect(t.name).toBe('owners');
+
+    const byName = Object.fromEntries(t.fields.map(f => [f.name, f]));
+    expect(Object.keys(byName).sort()).toEqual(['address', 'city', 'pets']);
+    // getter must not be picked up as a field, static const must be skipped.
+    expect(byName['getAddress']).toBeUndefined();
+    expect(byName['serialVersionUID']).toBeUndefined();
+    // nullability: @NotBlank and nullable=false ⇒ non-null; relationship ⇒ nullable.
+    expect(byName['address'].nullable).toBe(false);
+    expect(byName['city'].nullable).toBe(false);
+    expect(byName['pets'].nullable).toBe(true);
+    expect(byName['pets'].type).toBe('List<Pet>');
+  });
+
+  it('falls back to the class name when @Table is absent and supports @MappedSuperclass', async () => {
+    const fp = await createFile(tmpDir, 'BaseEntity.java', `
+package com.example;
+
+import jakarta.persistence.MappedSuperclass;
+import jakarta.persistence.Id;
+
+@MappedSuperclass
+public class BaseEntity {
+\t@Id
+\tprivate Integer id;
+}
+`);
+    const tables = await extractSchemas([fp], tmpDir);
+    expect(tables).toHaveLength(1);
+    expect(tables[0].name).toBe('BaseEntity');
+    expect(tables[0].fields.map(f => f.name)).toEqual(['id']);
+    // @Id ⇒ non-null primary key.
+    expect(tables[0].fields[0].nullable).toBe(false);
+  });
+
+  it('ignores Java files that are not entities', async () => {
+    const fp = await createFile(tmpDir, 'PlainService.java', `
+package com.example;
+public class PlainService {
+\tprivate String name;
+\tpublic void run() {}
+}
+`);
+    expect(await extractSchemas([fp], tmpDir)).toEqual([]);
+  });
+});
+
 describe('summarizeSchemas', () => {
   it('counts tables by ORM', () => {
     const tables = [

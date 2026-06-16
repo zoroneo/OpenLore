@@ -585,13 +585,38 @@ const JAVA_SKIP_NAMES = new Set([
   'new', 'throw', 'class', 'interface', 'enum', 'record',
 ]);
 
+/**
+ * Statement keywords that can appear in the "return type" position of the
+ * method regex on a body line (e.g. `return foo(args);`, `throw new X();`).
+ * Because signatures are extracted from raw source (bodies are not stripped),
+ * such lines must be rejected — they are calls, not declarations.
+ */
+const JAVA_STMT_KEYWORDS = new Set([
+  'return', 'throw', 'yield', 'assert', 'else', 'case', 'default', 'break',
+  'continue', 'new', 'this', 'super',
+]);
+
 function extractJava(content: string): ExtractedSignature[] {
   const entries: ExtractedSignature[] = [];
   const lines = content.split('\n');
+  let inBlockComment = false;
 
   for (let i = 0; i < lines.length && entries.length < MAX_SIGS_PER_FILE; i++) {
     const line = lines[i];
     const trimmed = line.trimStart();
+
+    // Track multi-line `/* … */` blocks. License headers (e.g. Apache's) wrap
+    // prose in a block comment whose continuation lines start with spaces, not
+    // `*`, so a line like "Licensed to the Apache Software Foundation (ASF)…"
+    // would otherwise be mis-parsed as a method declaration.
+    if (inBlockComment) {
+      if (trimmed.includes('*/')) inBlockComment = false;
+      continue;
+    }
+    if (trimmed.startsWith('/*') && !trimmed.includes('*/')) {
+      inBlockComment = true;
+      continue;
+    }
 
     // Skip lines that are clearly not declarations
     if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue;
@@ -615,23 +640,40 @@ function extractJava(content: string): ExtractedSignature[] {
       continue;
     }
 
-    // Method: `[modifiers] [<generics>] ReturnType name(params)` — return type
-    // may include generics, arrays, and dotted package-qualified names.
+    // Method: `[modifiers] [<generics>] ReturnType name(params) [throws …]`.
+    // Captured parts (modifiers, type parameters, throws) are preserved in the
+    // signature so the reader can see visibility, abstractness, and checked
+    // exceptions. The type-parameter sub-pattern allows one level of nested
+    // generics and `&` intersection bounds (`<T extends Number & Comparable<T>>`)
+    // so such methods are no longer dropped entirely. See #138.
     const methodMatch = trimmed.match(
       new RegExp(
-        '^' + JAVA_MODIFIER_PREFIX + '(?:<[^>]+>\\s+)?([\\w<>\\[\\], ?.]+?)\\s+(\\w+)\\s*\\(([^)]*)\\)'
+        '^(' + JAVA_MODIFIER_PREFIX + ')' +
+          '(<(?:[^<>]|<[^<>]*>)*>\\s+)?' +     // optional method type params
+          '([\\w<>\\[\\], ?.]+?)\\s+' +        // return type
+          '(\\w+)\\s*\\(((?:[^()]|\\([^()]*\\))*)\\)' + // name(params) — params may
+                                                       // contain annotations with
+                                                       // parens, e.g. @PathVariable(...)
+          '(?:\\s*throws\\s+([^{;]+))?'         // optional throws clause
       )
     );
     if (methodMatch) {
-      const returnType = methodMatch[1].trim();
-      const name = methodMatch[2];
+      const modifiers = methodMatch[1].trim().replace(/\s+/g, ' ');
+      const typeParams = (methodMatch[2] ?? '').trim();
+      const returnType = methodMatch[3].trim();
+      const name = methodMatch[4];
       if (JAVA_SKIP_NAMES.has(name)) continue;
+      // Reject body statements like `return foo(args);` that slipped into the
+      // declaration regex (signatures are extracted from un-skeletonized source).
+      if (JAVA_STMT_KEYWORDS.has(returnType.split(/[\s.]/)[0])) continue;
       // Skip obvious field declarations like `private final Foo bar = ...` —
       // fields don't have `(` so the regex wouldn't match. This path is
       // method-only by construction.
-      const params = compactParams(methodMatch[3]);
+      const params = compactParams(methodMatch[5]);
+      const throwsClause = methodMatch[6] ? ` throws ${methodMatch[6].trim().replace(/\s+/g, ' ')}` : '';
       const isMethod = line.startsWith('  ') || line.startsWith('\t');
-      const sig = `${returnType} ${name}(${params})`;
+      const head = [modifiers, typeParams, returnType].filter(Boolean).join(' ');
+      const sig = `${head} ${name}(${params})${throwsClause}`;
       entries.push({
         kind: isMethod ? 'method' : 'function',
         name,

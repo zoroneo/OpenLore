@@ -277,6 +277,36 @@ describe('AnalysisArtifactGenerator', () => {
       }
     });
 
+    it('does not leak source file extensions into entity names (#138)', async () => {
+      const javaFiles: ScoredFile[] = [
+        createScoredFile({ name: 'VetController.java', path: 'src/main/java/com/acme/vet/VetController.java', directory: 'src/main/java/com/acme/vet', score: 70 }),
+        createScoredFile({ name: 'VetRepository.java', path: 'src/main/java/com/acme/vet/VetRepository.java', directory: 'src/main/java/com/acme/vet', score: 65 }),
+      ];
+      const repoMap = createMockRepoMap({
+        highValueFiles: javaFiles,
+        allFiles: javaFiles,
+        clusters: {
+          byDirectory: { 'src/main/java/com/acme/vet': javaFiles },
+          byDomain: { vet: javaFiles },
+          byLayer: { presentation: javaFiles, business: [], data: [], infrastructure: [] },
+        },
+      });
+      const depGraph = createMockDepGraph();
+
+      const artifacts = await generateArtifacts(repoMap, depGraph, {
+        rootDir: tempDir,
+        outputDir,
+      });
+
+      const vetDomain = artifacts.repoStructure.domains.find(d => d.name === 'vet');
+      expect(vetDomain).toBeDefined();
+      expect(vetDomain!.entities).toContain('VetController');
+      expect(vetDomain!.entities).toContain('VetRepository');
+      for (const entity of vetDomain!.entities) {
+        expect(entity).not.toMatch(/Java$/);
+      }
+    });
+
     it('should generate entry points', async () => {
       const repoMap = createMockRepoMap();
       const depGraph = createMockDepGraph();

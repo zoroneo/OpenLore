@@ -652,8 +652,10 @@ export class AnalysisArtifactGenerator {
     const entities: Set<string> = new Set();
 
     for (const file of files) {
-      // Extract from file name
-      const name = file.name.replace(/\.(ts|js|tsx|jsx|py)$/, '');
+      // Extract from file name. Strip the final extension generically so
+      // non-JS languages don't leak it into the entity name (e.g. Java's
+      // `VetController.java` must not become `VetControllerJava`). See #138.
+      const name = file.name.replace(/\.[a-z0-9]+$/i, '');
 
       // Convert to PascalCase as potential entity name
       const entityName = name
