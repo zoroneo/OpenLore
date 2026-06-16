@@ -5,8 +5,10 @@ before reading source files when starting a new task. This returns the relevant
 functions, callers, spec sections, and insertion points for the task at hand —
 one structural lookup instead of file-by-file rediscovery.
 
-Re-orient whenever the Epistemic Lease indicates staleness (you'll see a prefix
-on tool responses telling you to do so).
+OpenLore prefixes tool responses with a brief, factual freshness note (the
+Epistemic Lease) once your cached context has aged or the repo has moved since
+your last `orient()`. It is informational — re-`orient()` if you are relying on
+cached cross-module structure; otherwise carry on.
 
 For the MCP setup, ensure `openlore mcp` is configured as an MCP server.
 See https://github.com/clay-good/OpenLore for details.

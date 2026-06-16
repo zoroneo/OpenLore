@@ -3,6 +3,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createTracker, updateTracker, injectFreshness, getSourceRoots } from './epistemic-lease.js';
 import type { EpistemicTracker } from './epistemic-lease.js';
 
@@ -630,5 +632,34 @@ describe('updateTracker — V3.1 cross-module trajectory', () => {
     // One more call — oldest entry drops off
     updateTracker(t, 'get_function_body', '/fake/repo', 'src/auth/y.ts');
     expect(t.moduleAccessWindow).toHaveLength(15);
+  });
+});
+
+// ============================================================================
+// User-facing description stays consistent with the neutral signal
+// (regression guard for the dogfood finding: the install template + README
+//  described the OLD coercive lease — "telling you to do so", a STOP banner —
+//  which contradicted the neutral, factual behavior the module now emits.)
+// ============================================================================
+
+describe('user-facing lease description is neutral, not coercive', () => {
+  const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
+
+  it('the install agent-instructions template describes the lease as informational', () => {
+    const tpl = read('src/cli/install/templates/agent-instructions.md');
+    expect(tpl).toMatch(/Epistemic Lease/);
+    expect(tpl).toMatch(/informational/i);
+    // none of the old coercive framing
+    expect(tpl).not.toMatch(/telling you to do so/i);
+    expect(tpl).not.toMatch(/\bSTOP\b/);
+    expect(tpl).not.toMatch(/EXPIRED/);
+  });
+
+  it('the README lease section frames the signal as facts, not commands', () => {
+    const readme = read('README.md');
+    // the coercive table row and imperative banner are gone
+    expect(readme).not.toContain('STOP. Call orient().');
+    expect(readme).not.toMatch(/Procedural block prepended: what NOT to do/);
+    expect(readme).toMatch(/factual freshness note/i);
   });
 });

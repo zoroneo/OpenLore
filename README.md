@@ -315,22 +315,20 @@ Compares git changes against spec mappings in milliseconds. Detects: Gap (code c
 
 As a session grows longer, agents naturally shift from authoritative graph retrieval toward internally cached reasoning. This is useful for fluency but dangerous for architectural correctness — cross-module assumptions go stale, dependency hallucinations accumulate, and delegation prompts embed incorrect repository understanding that cannot easily be corrected downstream.
 
-The Epistemic Lease models this decay explicitly. Every MCP tool response carries a freshness signal when the agent's architectural context has degraded or expired. Decay is triggered by any of: time elapsed since `orient()`, git hash divergence from the orient baseline, weighted cognitive load accumulation (heavier tools count more), or cross-module file access breadth.
+The Epistemic Lease models this decay explicitly. Once your cached context ages or the repository moves since your last `orient()`, every MCP tool response carries a brief, **factual freshness note** — minutes since `orient()`, the cognitive-load score, modules touched, and whether the repo has new commits — phrased as information you can act on, *not* a command (it closes with "Informational signal; you decide whether to act on it"). Decay is driven by time elapsed since `orient()`, weighted cognitive load (heavier tools count more), and cross-module access breadth. A repo that has moved since `orient()` — very often your own commits — is surfaced as a fact and nudges the note to *degraded*; it never expires your model, because committing well-understood work is the most-informed action in a session.
 
-The signal escalates through three levels to resist [warning blindness](https://en.wikipedia.org/wiki/Alarm_fatigue):
+The note has two states, with a load-driven detail line so it stays skimmable without resorting to coercion:
 
-| Level | Trigger | Signal style |
+| Level | Trigger | Note |
 |---|---|---|
-| Degraded | load ≥ 30, age ≥ 15min, or cross-module density ≥ 0.15 | Advisory signal appended |
-| Stale | load ≥ 60, age ≥ 30min, git hash divergence, or density ≥ 0.30 | Procedural block prepended: what NOT to do |
-| Stale [Elevated] | load ≥ 85 or age ≥ 45min | Risk-framing: names downstream consequences |
-| Stale [Critical] | load ≥ 110 or age ≥ 60min | Imperative: `STOP. Call orient().` — minimal, hardest to skim |
+| Degraded | load ≥ 30, age ≥ 15min, density ≥ 0.15, or repo moved since `orient()` | One-line factual note appended |
+| Stale | load ≥ 60, age ≥ 30min, or density ≥ 0.30 | One-line factual note prepended; severity (a short "a fair amount / a lot of analysis has accumulated" detail) is driven by accumulated cognitive load (≥ 85 / ≥ 110), **not** the wall clock |
 
 Cross-module density is computed as a sliding-window trajectory model: `switches_in_last_15_calls / 15`. The fixed denominator prevents false positives during session warmup. Each module switch adds +5 cognitive debt; a high-density window adds +15; a burst (density ≥ 0.60) adds +20. A 5s dampening window prevents back-and-forth from double-counting.
 
-An oscillation coefficient (`repeated_bigram_transitions / total_transitions`) separately distinguishes confusion loops (A→B→A→B scores 1.0) from genuine exploration (A→B→C→D scores 0.0). When already stale, a heavy architectural tool (weight ≥ 8) or density burst (≥ 0.60) triggers immediate escalation to Stale [Critical].
+An oscillation coefficient (`repeated_bigram_transitions / total_transitions`) separately distinguishes confusion loops (A→B→A→B scores 1.0) from genuine exploration (A→B→C→D scores 0.0). Severity within *stale* is driven by accumulated cognitive load, not the wall clock — so an idle-but-oriented session never escalates on time alone; once stale, a heavy architectural tool (weight ≥ 8) or density burst (≥ 0.60) is a genuine activity burst that raises the note to its highest detail.
 
-When fresh, injection is zero-overhead. Calling `orient()` resets the tracker. Unlike governance systems, the lease never blocks — it modulates the agent's confidence in its own cached reasoning rather than constraining its actions.
+When fresh, injection is zero-overhead. Calling `orient()` resets the tracker. The lease never blocks and never commands — it surfaces neutral facts and leaves the decision to the agent, the same facts-not-coercion principle as the rest of OpenLore (decision `8e95746d`).
 
 **Decisions** (API key for consolidation)
 
