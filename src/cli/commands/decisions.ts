@@ -29,6 +29,7 @@ import {
   INACTIVE_STATUSES,
 } from '../../core/decisions/store.js';
 import { consolidateDrafts } from '../../core/decisions/consolidator.js';
+import { classifyGateState } from '../../core/decisions/gate-state.js';
 import { acquireDecisionsLock } from '../../core/decisions/lock.js';
 import { extractFromDiff } from '../../core/decisions/extractor.js';
 import { verifyDecisions } from '../../core/decisions/verifier.js';
@@ -769,9 +770,49 @@ Examples:
 
     // ── Gate only (no consolidation — consolidation happens on record_decision) ──
     if (options.gate && !options.consolidate) {
-      // Block if approved decisions haven't been synced to spec files yet.
       const approved = getDecisionsByStatus(store, 'approved');
-      if (approved.length > 0) {
+      const verified = getDecisionsByStatus(store, 'verified');
+      const drafts = getDecisionsByStatus(store, 'draft');
+      const missing: Array<{ file: string; description: string }> = [];
+
+      // Phantom decisions ("recorded but no code evidence") are excluded — stale
+      // phantoms from previous sessions would otherwise silently bypass the gate.
+      const activeCount = store.decisions.filter((d) => !INACTIVE_STATUSES.has(d.status)).length;
+      const consolidatedRecently = !!store.lastConsolidatedAt
+        && (Date.now() - new Date(store.lastConsolidatedAt).getTime()) < CONSOLIDATION_GRACE_PERIOD_MS;
+
+      // The staged-source check is the only input requiring git; resolve it lazily,
+      // only in the state where it can change the outcome (nothing else gates).
+      let isGitRepo = false;
+      let hasStagedSourceChanges = false;
+      if (approved.length === 0 && verified.length === 0 && drafts.length === 0
+          && !consolidatedRecently && activeCount === 0) {
+        isGitRepo = await isGitRepository(rootPath);
+        if (isGitRepo) {
+          try {
+            const { stdout } = await execFileAsync(
+              'git', ['diff', '--cached', '--name-only', '--diff-filter=ACDMR'],
+              { cwd: rootPath },
+            );
+            const stagedFiles = stdout.trim().split('\n').filter(Boolean);
+            const SOURCE_EXTS = /\.(ts|js|tsx|jsx|py|go|rs|rb|java|cpp|cc|swift)$/;
+            hasStagedSourceChanges = stagedFiles.some((f) => SOURCE_EXTS.test(f));
+          } catch { /* git unavailable — skip */ }
+        }
+      }
+
+      // The pure reason machine is the single arbiter of which reason applies.
+      const outcome = classifyGateState({
+        approvedCount: approved.length,
+        verifiedCount: verified.length,
+        draftCount: drafts.length,
+        consolidatedRecently,
+        activeCount,
+        isGitRepo,
+        hasStagedSourceChanges,
+      });
+
+      if (outcome.reason === GATE_REASONS.APPROVED_NOT_SYNCED) {
         const payload = {
           gated: true,
           reason: GATE_REASONS.APPROVED_NOT_SYNCED,
@@ -784,74 +825,48 @@ Examples:
         return;
       }
 
-      const verified = getDecisionsByStatus(store, 'verified');
-      const missing: Array<{ file: string; description: string }> = [];
+      if (outcome.reason === GATE_REASONS.DRAFTS_PENDING_CONSOLIDATION) {
+        // Drafts recorded but consolidation never completed.
+        // Output structured JSON so the agent can relay to the user and act on the answer.
+        const payload = {
+          gated: true,
+          reason: GATE_REASONS.DRAFTS_PENDING_CONSOLIDATION,
+          message: `${drafts.length} draft decision(s) were recorded but never consolidated.`,
+          drafts: drafts.map((d) => ({ id: d.id, title: d.title, recordedAt: d.recordedAt })),
+          actions: {
+            consolidate: 'openlore decisions --consolidate',
+            consolidateAndGate: 'openlore decisions --consolidate --gate',
+            skip: 'git commit --no-verify',
+          },
+        };
+        process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+        process.exitCode = 1;
+        return;
+      }
 
-      if (verified.length === 0) {
-        const drafts = getDecisionsByStatus(store, 'draft');
-        if (drafts.length > 0) {
-          // Drafts recorded but consolidation never completed.
-          // Output structured JSON so the agent can relay to the user and act on the answer.
-          const payload = {
-            gated: true,
-            reason: GATE_REASONS.DRAFTS_PENDING_CONSOLIDATION,
-            message: `${drafts.length} draft decision(s) were recorded but never consolidated.`,
-            drafts: drafts.map((d) => ({ id: d.id, title: d.title, recordedAt: d.recordedAt })),
-            actions: {
-              consolidate: 'openlore decisions --consolidate',
-              consolidateAndGate: 'openlore decisions --consolidate --gate',
-              skip: 'git commit --no-verify',
-            },
-          };
-          process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
-          process.exitCode = 1;
-          return;
-        }
+      if (outcome.reason === GATE_REASONS.NO_DECISIONS_RECORDED) {
+        // Source files staged but nothing recorded — output JSON for agent to relay.
+        const payload = {
+          gated: true,
+          reason: GATE_REASONS.NO_DECISIONS_RECORDED,
+          message: 'Source files are staged but no architectural decisions were recorded.',
+          actions: {
+            consolidateAndGate: 'openlore decisions --consolidate --gate',
+            skip: 'git commit --no-verify',
+          },
+        };
+        process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+        process.exitCode = 1;
+        return;
+      }
 
-        // If consolidation already ran recently, trust it found nothing — skip the warning.
-        const consolidatedRecently = store.lastConsolidatedAt
-          && (Date.now() - new Date(store.lastConsolidatedAt).getTime()) < CONSOLIDATION_GRACE_PERIOD_MS;
-        if (consolidatedRecently) {
-          process.exitCode = 0;
-          return;
-        }
-
-        // If source files are staged but nothing was recorded, offer to run the fallback extractor.
-        // Phantom decisions ("recorded but no code evidence") are excluded — stale phantoms from
-        // previous sessions would otherwise silently bypass the gate for all future commits.
-        const activeDecisions = store.decisions.filter(
-          (d) => !INACTIVE_STATUSES.has(d.status),
-        );
-        if (activeDecisions.length === 0 && await isGitRepository(rootPath)) {
-          try {
-            const { stdout } = await execFileAsync(
-              'git', ['diff', '--cached', '--name-only', '--diff-filter=ACDMR'],
-              { cwd: rootPath },
-            );
-            const stagedFiles = stdout.trim().split('\n').filter(Boolean);
-            const SOURCE_EXTS = /\.(ts|js|tsx|jsx|py|go|rs|rb|java|cpp|cc|swift)$/;
-            const hasSourceChanges = stagedFiles.some((f) => SOURCE_EXTS.test(f));
-            if (hasSourceChanges) {
-              // Source files staged but nothing recorded — output JSON for agent to relay.
-              const payload = {
-                gated: true,
-                reason: GATE_REASONS.NO_DECISIONS_RECORDED,
-                message: 'Source files are staged but no architectural decisions were recorded.',
-                actions: {
-                  consolidateAndGate: 'openlore decisions --consolidate --gate',
-                  skip: 'git commit --no-verify',
-                },
-              };
-              process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
-              process.exitCode = 1;
-              return;
-            }
-          } catch { /* git unavailable — skip */ }
-        }
+      if (!outcome.gated) {
+        // Clean commit — nothing to review.
         process.exitCode = 0;
         return;
       }
 
+      // outcome.reason === GATE_REASONS.VERIFIED — verified decisions await review.
       // TTY: interactive TUI
       if (process.stdin.isTTY && process.stdout.isTTY && verified.length > 0) {
         const results = await runTuiApproval(verified);

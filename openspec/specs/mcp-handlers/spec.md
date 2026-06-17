@@ -116,6 +116,72 @@ The system SHALL The recall tool SHALL partition returned memories into authorit
 
 > Decision recorded: dbe6a95e
 > Date: 2026-06-16
+
+### Requirement: AuthoritativeRecallInvariant
+
+The system SHALL guarantee, as a single named and test-enforced invariant, that **no
+memory whose freshness verdict is `drifted` or `orphaned` ever appears in an authoritative
+recall path unlabeled**. The authoritative recall paths are the `recall` tool and the
+memory (decision) section of `orient`. An `orphaned` memory SHALL be fully withheld from
+the authoritative set (surfaced only under `needsReanchoring` / `staleDecisions`); a
+`drifted` memory MAY remain in the authoritative set only when it carries an explicit
+`verify` label. This invariant is the operational definition of the project promise:
+*OpenLore never serves an unverified or stale fact as authoritative.* It SHALL be enforced
+by a property-based test (`memory-invariant.test.ts`) that generates arbitrary memories and
+arbitrary code mutations and asserts the property holds for every generated case.
+
+#### Scenario: A drifted memory is excluded from the authoritative set unlabeled
+
+- **GIVEN** a memory whose anchor verdict is `drifted`
+- **WHEN** `recall` or `orient` produces its response
+- **THEN** the memory does not appear in the authoritative set unlabeled; it is withheld or
+  carries an explicit verify/non-authoritative label
+
+#### Scenario: The invariant holds under generated mutation
+
+- **GIVEN** an arbitrary memory and an arbitrary mutation to the code it anchors
+- **WHEN** the authoritative recall path is computed
+- **THEN** the authoritative set contains only `fresh` memories and explicitly-labeled
+  `drifted` ones, never an `orphaned` memory
+
+### Requirement: FreshnessFailsSafeTowardDistrust
+
+The freshness computation (`anchorFreshness`, `hashSpan`) SHALL fail safe toward distrust:
+any ambiguity, hash collision, or boundary error SHALL bias the verdict toward `drifted` or
+`orphaned`, never toward a false `fresh`. A renamed, moved, or deleted symbol SHALL yield
+`orphaned` (or `drifted` only when a confident relocation is established). `hashSpan` SHALL
+slice spans by byte offset so multibyte UTF-8 boundaries hash correctly. A test that
+produces a false `fresh` SHALL be treated as a correctness failure; a false `orphaned` is
+acceptable. This is guarded by the adversarial suite (`anchor-adversarial.test.ts`).
+
+#### Scenario: A forced collision does not produce false fresh
+
+- **GIVEN** two distinct source spans
+- **WHEN** freshness is computed for a memory anchored to one after the other replaces it
+- **THEN** the verdict is `drifted` or `orphaned`, never `fresh` (distinct spans do not
+  collide on the truncated content hash; a collision would fail the suite loudly)
+
+#### Scenario: A multibyte span boundary hashes correctly
+
+- **GIVEN** an anchored span whose start or end falls on a multibyte UTF-8 boundary
+- **WHEN** `hashSpan` computes the content hash before and after an unrelated edit elsewhere
+- **THEN** the hash is byte-correct and stable, producing `fresh` only when the span bytes
+  are unchanged
+
+### Requirement: ConcurrentMemoryWriteSafety
+
+The `remember` and `record_decision` tools SHALL be safe under concurrent invocation: two
+concurrent writes to the same store SHALL NOT cause either write to be lost. On a write
+conflict the system SHALL re-read the current store and re-apply the pending
+append/upsert (compare-and-swap on a monotonic `sequence`), rather than overwrite the
+competing write.
+
+#### Scenario: Concurrent remember calls lose no write
+
+- **GIVEN** N concurrent `remember` calls against the same memory store
+- **WHEN** all calls complete
+- **THEN** the persisted store contains all N memories
+
 ### Requirement: DecisionsCarryStructuralAnchorsForSelfinvalidation
 
 The system SHALL resolve structural anchors against the call graph when recording a decision, falling back to file-level anchors when no analysis is available.

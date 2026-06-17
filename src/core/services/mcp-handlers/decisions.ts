@@ -13,7 +13,7 @@ import { validateDirectory, sanitizeMcpError, safeOpenspecDir } from './utils.js
 import { emit } from '../telemetry.js';
 import {
   loadDecisionStore,
-  saveDecisionStore,
+  updateDecisionStore,
   upsertDecisions,
   patchDecision,
   makeDecisionId,
@@ -154,14 +154,22 @@ export async function handleRecordDecision(
       syncedToSpecs: [],
     };
 
-    const updated = upsertDecisions(store, [decision]);
-    await saveDecisionStore(rootPath, updated);
+    // CAS upsert so concurrent record_decision calls never lose a draft: the
+    // id-keyed merge is re-applied to the latest store on a write conflict.
+    // The decision id is derived from the committed store's sessionId (not the
+    // separately-loaded one) so repeated records in a session dedupe correctly —
+    // a fresh load of an absent store mints a new random sessionId. (harden-memory-integrity-invariant)
+    let recordedId = id;
+    await updateDecisionStore(rootPath, (s) => {
+      recordedId = makeDecisionId(s.sessionId, primaryDomain, title.trim());
+      return upsertDecisions(s, [{ ...decision, id: recordedId, sessionId: s.sessionId }]);
+    });
 
     // Consolidate in background so commit-time gate is instant
     spawnConsolidateBackground(rootPath);
 
     return {
-      id,
+      id: recordedId,
       message: `Decision recorded: "${title}". Consolidation running in background.`,
     };
   } catch (err) {
@@ -224,12 +232,11 @@ export async function handleApproveDecision(
     if (!decision) return { error: `Decision ${id} not found.` };
     if (decision.status === 'synced') return { error: `Decision ${id} is already synced to spec files — re-approval not allowed.` };
 
-    const updated = patchDecision(store, id, {
+    await updateDecisionStore(rootPath, (s) => patchDecision(s, id, {
       status: 'approved',
       reviewedAt: new Date().toISOString(),
       reviewNote: note,
-    });
-    await saveDecisionStore(rootPath, updated);
+    }));
     emit(rootPath, 'decisions', { event: 'decision_approved', id, title: decision.title });
 
     return { id, status: 'approved', title: decision.title };
@@ -254,12 +261,11 @@ export async function handleRejectDecision(
     const decision = store.decisions.find((d) => d.id === id);
     if (!decision) return { error: `Decision ${id} not found.` };
 
-    const updated = patchDecision(store, id, {
+    await updateDecisionStore(rootPath, (s) => patchDecision(s, id, {
       status: 'rejected',
       reviewedAt: new Date().toISOString(),
       reviewNote: note,
-    });
-    await saveDecisionStore(rootPath, updated);
+    }));
     emit(rootPath, 'decisions', { event: 'decision_rejected', id, title: decision.title });
 
     return { id, status: 'rejected', title: decision.title };

@@ -38,6 +38,44 @@ The system SHALL implement security via: API key-based authentication for LLM pr
 - **WHEN** accessing protected resources
 - **THEN** access is denied
 
+### Requirement: DurableAtomicStorePersistence
+
+The persisted memory and decision stores (`.openlore/memory/notes.json`,
+`.openlore/decisions/pending.json`) SHALL be written atomically: a write goes to a temporary
+file and is moved into place with an atomic rename (after `fsync`), so a crash or
+interruption mid-write leaves the previously committed store intact and never a partially
+written (torn) file. Each store SHALL carry a monotonic `sequence` field used to order writes
+and detect conflicts; the field defaults to `0` for legacy stores. Saves use compare-and-swap
+on `sequence`: on a conflict the save re-reads the current store and re-applies the pending
+append/upsert rather than overwriting a competing write. Implemented in
+`src/core/decisions/atomic-store.ts`; guarded by `atomic-store.test.ts`.
+
+#### Scenario: A crash mid-write preserves the prior store
+- **GIVEN** a store write interrupted between writing the temporary file and the rename
+- **WHEN** the store is next loaded
+- **THEN** the previously committed store is returned intact, with no torn or partial content
+
+#### Scenario: Save uses compare-and-swap on sequence
+- **GIVEN** a store loaded at sequence S
+- **WHEN** a save is attempted but the on-disk sequence is no longer S
+- **THEN** the save re-reads the current store, re-applies the pending change, and writes at
+  the new sequence instead of overwriting
+
+### Requirement: CorruptStoreQuarantineNotSilentEmpty
+
+When a persisted store fails validation on load, the system SHALL move the unreadable file
+aside to a quarantine path (`*.corrupt-<n>`) and emit a recoverable signal. The system SHALL
+NOT silently substitute an empty store for a corrupt one, because silently losing persisted
+memory presents absence as current fact and violates the authoritative-recall invariant. The
+quarantine suffix SHALL be derived from on-disk state (the next free index), not wall-clock
+time, to keep recovery reproducible.
+
+#### Scenario: A malformed store is quarantined, not silently emptied
+- **GIVEN** a store file that fails schema or JSON validation
+- **WHEN** the store is loaded
+- **THEN** the file is moved to `*.corrupt-<n>` and a recoverable signal is emitted, rather
+  than an empty store being returned silently
+
 ## System Diagram
 
 ```mermaid
