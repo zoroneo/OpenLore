@@ -300,8 +300,15 @@ export async function extractRouteDefinitions(filePath: string): Promise<RouteDe
   const routes: RouteDefinition[] = [];
   const lines = content.split('\n');
 
-  // Remove comments for cleaner matching
-  const clean = content.replace(/#.*$/gm, '');
+  // Mask comments AND triple-quoted strings, length-preservingly, before matching.
+  // Length-preserving is load-bearing: every regex `m.index` below is fed to
+  // getLine(lines, …), which measures against the ORIGINAL line lengths, so the
+  // masked string must stay byte-aligned with `content` or the reported line (and
+  // the handler resolved by scanning forward from it) drifts. Masking docstrings
+  // also stops route patterns embedded in `.. code-block::` examples (e.g. Flask's
+  // sansio/scaffold.py) from being matched as real routes. See the "non-code
+  // masking" regression tests.
+  const clean = maskPythonNonCode(content);
 
   // ── FastAPI / Starlette decorators ─────────────────────────────────────────
   // @app.get("/items/{item_id}")
@@ -803,6 +810,26 @@ export async function extractAllHttpEdges(filePaths: string[]): Promise<{
 // ============================================================================
 // PRIVATE UTILITIES
 // ============================================================================
+
+/** Replace every non-newline char of `match` with a space (length- and line-preserving). */
+function blankKeepNewlines(match: string): string {
+  return match.replace(/[^\n]/g, ' ');
+}
+
+/**
+ * Length-preserving mask of Python triple-quoted strings and `#` line comments.
+ * Triple-quoted strings are masked first (a docstring can contain `#` and route
+ * patterns), then `#` comments on what remains. Masked regions become spaces with
+ * newlines kept, so the result is byte-aligned with `content`: route regexes can
+ * neither match inside docstrings/comments nor shift the offsets getLine() turns
+ * into line numbers. Over-masking (e.g. a stray `"""` inside a comment) only ever
+ * drops a potential match — never invents one — which matches the false-negatives-
+ * over-false-positives bias of the route-handler synthesis that consumes this.
+ */
+function maskPythonNonCode(content: string): string {
+  const stringsMasked = content.replace(/'''[\s\S]*?'''|"""[\s\S]*?"""/g, blankKeepNewlines);
+  return stringsMasked.replace(/#[^\n]*/g, blankKeepNewlines);
+}
 
 /** Convert a character offset in `content` to a 1-based line number */
 function getLine(lines: string[], charOffset: number): number {

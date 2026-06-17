@@ -649,6 +649,60 @@ describe('extractRouteDefinitions', () => {
       expect(routes.every(r => r.framework === 'django')).toBe(true);
     });
   });
+
+  // ── Non-code masking: docstrings & comments ──────────────────────────────────
+  // Regression for the false-positive route (and downstream synthesized
+  // route→handler edge) found by dogfooding on Flask's sansio/scaffold.py, whose
+  // method docstrings embed `.. code-block:: python` examples containing
+  // `@app.route("/")`. Two compounding defects: (1) route regexes matched inside
+  // triple-quoted docstrings, and (2) `#`-comment stripping shifted match offsets
+  // so getLine() reported the wrong line and bound the wrong `def` as handler.
+
+  describe('non-code masking (docstrings & comments)', () => {
+    it('does not match a route decorator inside a triple-quoted docstring', async () => {
+      const src = [
+        'class Scaffold:',
+        '    def route(self, rule, **options):',
+        '        """Register a view function for a URL rule.',
+        '',
+        '        .. code-block:: python',
+        '',
+        '            @app.route("/")',
+        '            def index():',
+        '                return "Hello, World!"',
+        '        """',
+        '        return self._add(rule, **options)',
+        '',
+        '    @cached_property',
+        '    def jinja_loader(self):',
+        '        return None',
+      ].join('\n');
+      const filePath = await createFile(tempDir, 'scaffold.py', src);
+      const routes = await extractRouteDefinitions(filePath);
+      expect(routes).toHaveLength(0);
+    });
+
+    it('reports the correct line and handler when comments precede the route', async () => {
+      const src = [
+        '# Copyright (c) 2026',
+        '# Licensed under the terms of the MIT license.',
+        '# See LICENSE for details — this header pads the offset.',
+        '@app.route("/real")',
+        'def real_handler():',
+        '    return "ok"',
+      ].join('\n');
+      const filePath = await createFile(tempDir, 'app.py', src);
+      const routes = await extractRouteDefinitions(filePath);
+
+      expect(routes).toHaveLength(1);
+      expect(routes[0]).toMatchObject({
+        method: 'GET',
+        path: '/real',
+        handlerName: 'real_handler',
+        line: 4,
+      });
+    });
+  });
 });
 
 // ============================================================================
