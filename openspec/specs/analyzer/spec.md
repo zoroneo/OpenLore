@@ -5577,6 +5577,12 @@ The system SHALL resolve CHA base-class references using layered evidence (same-
 
 > Decision recorded: 320bf215
 > Date: 2026-06-17
+### Requirement: DetectGoStructEmbedsByAnonymousFieldNotFieldTypeAndUnwrapPointerEmbeds
+
+The system SHALL detect Go struct embedding only via anonymous fields (with pointer unwrapping), never via named fields.
+
+> Decision recorded: db3b354b
+> Date: 2026-06-17
 
 ## Technical Notes
 
@@ -6084,3 +6090,13 @@ When multiple classes share a bare name across different files (e.g. two unrelat
 The prior ambiguity-skip in buildClassNodes dropped cross-file override edges whenever the base class name was reused anywhere in the codebase — measured at ~37% of all base-references on Laravel (1034/2810). Replaced with layered, most-specific-evidence-first resolution: (1) class in child's own file; (2) file the child imports the name from via importMap; (3) class unique within child's directory (same package); (4) globally-unique class; (5) skip. Each layer carries real evidence, so only genuinely-ambiguous cross-directory bases with no import are skipped, preserving the false-negatives-over-false-positives bias while recovering legitimate edges.
 
 **Consequences:** Threads the existing importMap into buildClassNodes (new optional param). Recall recovered substantially with no precision loss: DesignPatternsPHP 71→87 override edges, Laravel 1758 override edges / 512 cross-package at ~100% precision. Residual: globally-duplicated base names without import or same-dir co-location are still skipped. True FQCN/namespace extraction for non-importMap languages (PHP/Kotlin/Swift/Scala/C#) remains a future enhancement.
+
+### Detect Go struct embeds by anonymous field (not field type), and unwrap pointer embeds
+
+**Status:** Approved
+**Date:** 2026-06-17
+**ID:** db3b354b
+
+Real-repo dogfood (cobra) showed the Go hierarchy extractor misread NAMED struct fields as embeds: the query captured the type of every field_declaration, so `CompletionOptions CompletionOptions` (a named field) produced phantom `embeds` inheritance edges and polluted ClassNode.parentClasses with field types. Go embedding is an ANONYMOUS field (a type with no field name); a named field is composition, not embedding. Changed the Go branch in extractClassRelationships to treat a field_declaration as an embed only when it has no `name:` child, and to unwrap a leading pointer (`*Base`) which the prior query had also missed (false negative).
+
+**Consequences:** Go embedding edges are now precise: anonymous Base and *Mixin embeds wire; named fields do not. parentClasses is no longer polluted with field types. Verified on cobra and a synthetic struct. Go structural interface satisfaction remains unsupported (future work).

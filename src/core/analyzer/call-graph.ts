@@ -2857,31 +2857,44 @@ async function extractClassRelationships(
         }
 
       } else if (file.language === 'Go') {
-        // Go has no inheritance but has struct embedding; treat as 'embeds' edges
+        // Go has no inheritance but has struct embedding; treat as 'embeds' edges.
         const r = await getGoParser();
         if (!r) continue;
         const { parser, lang } = r;
         const tree = (parser as Parser).parse(file.content);
 
-        // Anonymous (embedded) field in a struct: type Foo struct { Bar }
+        // An EMBEDDED field is an ANONYMOUS field (a type with no field name):
+        // `type Foo struct { Bar }` or `{ *Bar }`. A NAMED field `Name Bar` is NOT an
+        // embed — capturing its type as a parent wires phantom edges (e.g. cobra's
+        // `CompletionOptions CompletionOptions` field looked like an embed) and pollutes
+        // parent_classes with field types. So capture the field_declaration and only
+        // treat it as an embed when it has no `name:` field; unwrap a leading `*`.
         const Q = `
           (type_declaration
             (type_spec
               name: (type_identifier) @cls
               type: (struct_type
                 (field_declaration_list
-                  (field_declaration
-                    type: (type_identifier) @embedded)))))`;
+                  (field_declaration) @field))))`;
         for (const m of safeQuery(lang, Q, tree.rootNode)) {
-          const cls      = m.captures.find(c => c.name === 'cls')?.node.text;
-          const embedded = m.captures.find(c => c.name === 'embedded')?.node.text;
-          if (cls && embedded) {
-            const key = `${file.path}::${cls}`;
-            const existing = out.get(key) ?? { parentClasses: [], interfaces: [] };
-            // Store Go embeds as parentClasses (will be tagged as 'embeds' when building edges)
-            if (!existing.parentClasses.includes(embedded)) existing.parentClasses.push(embedded);
-            out.set(key, existing);
-          }
+          const cls   = m.captures.find(c => c.name === 'cls')?.node.text;
+          const field = m.captures.find(c => c.name === 'field')?.node;
+          if (!cls || !field) continue;
+          if (field.childForFieldName('name')) continue; // named field — not an embed
+          const typeNode = field.childForFieldName('type');
+          // Embedded type: `Bar` (type_identifier) or `*Bar` (pointer_type → type_identifier).
+          // Skip qualified embeds (`pkg.Bar`) — they resolve to an external package type.
+          const embedded = typeNode?.type === 'type_identifier'
+            ? typeNode.text
+            : (typeNode?.type === 'pointer_type'
+                ? typeNode.namedChildren.find((c: { type: string }) => c.type === 'type_identifier')?.text
+                : undefined);
+          if (!embedded) continue;
+          const key = `${file.path}::${cls}`;
+          const existing = out.get(key) ?? { parentClasses: [], interfaces: [] };
+          // Store Go embeds as parentClasses (tagged 'embeds' when building edges).
+          if (!existing.parentClasses.includes(embedded)) existing.parentClasses.push(embedded);
+          out.set(key, existing);
         }
       }
       // Rust: trait impls are structural but less like OOP inheritance; skip for now

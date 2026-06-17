@@ -355,6 +355,27 @@ describe('CHA — multi-language hierarchy (override edges)', () => {
     expect(overrideEdgeNames(b).has('Base.speak->Derived.speak')).toBe(true);
   });
 
+  it('Go embedding: anonymous + pointer embeds wire; named fields do not', async () => {
+    // Regression for the cobra dogfood: a NAMED field `CompletionOptions CompletionOptions`
+    // was misread as an embed (phantom edge + polluted parent_classes). Only anonymous
+    // fields (`Base`, `*Mixin`) are embeds; `Name string` is a plain field.
+    const b = await new CallGraphBuilder().build([{ path: 'm.go', language: 'Go', content:
+      `package m
+       type Base struct{}
+       func (b Base) Speak() string { return "b" }
+       type Mixin struct{}
+       func (m Mixin) Help() string { return "h" }
+       type Derived struct {
+         Base
+         *Mixin
+         Name string
+       }
+       func (d Derived) Speak() string { return "d" }` }]);
+    const derived = b.classes.find(c => c.name === 'Derived');
+    expect(derived?.parentClasses).toEqual(['Base', 'Mixin']); // not 'string'
+    expect(overrideEdgeNames(b).has('Base.Speak->Derived.Speak')).toBe(true);
+  });
+
   it('Kotlin qualified supertype (Outer.Inner) does not wire to the outer type', async () => {
     // Regression for the kotlinx.coroutines finding: `Job : CoroutineContext.Element`
     // must NOT create a `Job <: CoroutineContext` edge (which wired extension-function

@@ -120,6 +120,40 @@
 > still skipped (rare; e.g. a non-importMap language using cross-namespace inheritance without same-dir
 > co-location). Tests: +1 (`cha.test.ts` directory-locality recovery resolves to the correct twin).
 > Full suite green (3763).
+>
+> **Go/Ruby/C++ real-repo dogfood (follow-up, same PR #155).** The languages whose CHA had only ever
+> been exercised on synthetic fixtures (Go embedding, Ruby modules, C++ multiple/virtual inheritance)
+> were dogfooded on real repos (cobra, jekyll, RefactoringGuru/design-patterns-cpp) via adversarial
+> agents. One tractable false-positive bug found and fixed; the rest characterized as known limits:
+> - **FIXED — Go named-field misread as an embed.** The embedding query captured the *type* of every
+>   struct field, so a NAMED field (`CompletionOptions CompletionOptions` in cobra) became a phantom
+>   `embeds` edge and polluted `parent_classes` with field types (`string`/`bool`/…). Now captures the
+>   `field_declaration` and treats it as an embed only when it has no `name:` field; also unwraps
+>   pointer embeds (`*Mixin`), which the bare-`type_identifier` query had MISSED. Verified on cobra
+>   (phantom edge 1→0, `Command.parentClasses` `[]`) and a synthetic struct (anonymous + pointer embeds
+>   wire, named field excluded, override `Base.Speak→Derived.Speak` forms). +1 test.
+> - **C++ (known limit, abstract-base boundary).** A pure-virtual-only base (`class Subject { virtual
+>   void f()=0; };`) has no body-bearing method, so it is not extracted as a node; in the patterns repo
+>   (many independent programs each redefining `Subject`/`Component`) the layered resolver's
+>   global-unique fallback then bound a derived class to a same-named base in another program's file.
+>   In real cohesive C++ this surfaces as a missing edge (the documented abstract-base node boundary),
+>   not a false edge; the sound fix is abstract/interface-method node extraction (a cross-cutting
+>   change, deferred — same class as `widen-js-function-node-extraction`). C++ multiple inheritance was
+>   verified CORRECT (both bases captured).
+> - **Ruby (known limit, latent).** Two same-name classes in different modules (`Kramdown::Parser::
+>   SmartyPants` vs `Jekyll::Converters::SmartyPants`) merge into one ClassNode because grouping keys on
+>   the bare class name; no false edge resulted here (arity-matched by luck). Module-qualified class
+>   identity is the fix (Ruby-extractor change, deferred). All 14 jekyll override edges were correct.
+> - **Go interface-satisfaction (coverage gap, separate work).** Go's primary polymorphism is
+>   structural interface satisfaction (a type satisfies an interface by having its method set, no
+>   `implements` keyword); the hierarchy extractor handles only embedding, so Go override edges are
+>   limited. Recovering this needs structural method-set matching — a distinct mechanism, future work.
+> - **cha-name-arity ubiquitous-name volume (spec-sanctioned).** On jekyll, `to_s` alone produced ~33%
+>   of the 977 cha-name-arity edges, fanning across unrelated classes (receiver type unrecoverable).
+>   This is the documented over-approximation; `HighPrecisionCHABounds` explicitly forbids a method-name
+>   denylist, so the fan-out cap remains the bound and these edges keep the weakest provenance label.
+> Tests: +1 (`cha.test.ts` Go embedding). Full suite green (3764). CHA hierarchy support across TS/JS,
+> Python, Java, C++, C#, Ruby, Go, Kotlin, PHP, Swift, Scala has now been real-repo-dogfooded.
 
 ## 1. Confirm the surface is purely additive (no type changes)
 - [x] Verify `EdgeConfidence` already includes `'synthesized'` (`call-graph.ts:34`), `CallEdge` already
