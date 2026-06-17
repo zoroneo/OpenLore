@@ -6,7 +6,7 @@
  */
 
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { join, basename, isAbsolute } from 'node:path';
 import {
   TOKENS_PER_CHAR_DEFAULT,
   PHASE2_FILE_CONTENT_MAX_CHARS,
@@ -24,7 +24,7 @@ import {
 import type { ScoredFile, ProjectType } from '../../types/index.js';
 import type { RepositoryMap } from './repository-mapper.js';
 import type { DependencyGraphResult } from './dependency-graph.js';
-import { toMermaidFormat, injectCallGraphEdges, IMPLICIT_IMPORT_LANGS } from './dependency-graph.js';
+import { toMermaidFormat, injectCallGraphEdges, IMPLICIT_IMPORT_LANGS, SAME_PACKAGE_IMPLICIT_LANGS } from './dependency-graph.js';
 import type { UIComponent } from './ui-component-extractor.js';
 import type { SchemaTable } from './schema-extractor.js';
 import type { RouteInventory } from './http-route-parser.js';
@@ -657,6 +657,10 @@ export class AnalysisArtifactGenerator {
       // `VetController.java` must not become `VetControllerJava`). See #138.
       const name = file.name.replace(/\.[a-z0-9]+$/i, '');
 
+      // Java/Kotlin marker files are not entities (package-info.java →
+      // "PackageInfo", module-info.java → "ModuleInfo" would be noise).
+      if (/^(package|module)-info$/i.test(name)) continue;
+
       // Convert to PascalCase as potential entity name
       const entityName = name
         .split(/[-_.]/)
@@ -1182,13 +1186,28 @@ export class AnalysisArtifactGenerator {
         }))
       : undefined;
 
-    // For languages without intra-module imports (Swift, C++, …), the dependency
-    // graph has no import edges. Synthesize file-level dependency edges from the
-    // call graph so the viewer shows a meaningful graph.
+    // Synthesize file-level dependency edges from the call graph so the viewer
+    // shows a meaningful graph. Two cases:
+    //  - import-less languages (Swift, C++, C): only when there are no import
+    //    edges at all, matching the original behavior.
+    //  - JVM languages (Java, Kotlin): always, because they import across
+    //    packages but reference same-package classes with no import — the
+    //    import-only graph misses most relationships. injectCallGraphEdges
+    //    dedupes against existing import edges, so this never double-counts.
     const hasImplicitImportFiles = callGraphFiles.some(f => IMPLICIT_IMPORT_LANGS.has(f.language));
-    if (hasImplicitImportFiles && depGraph.statistics.importEdgeCount === 0) {
+    const hasSamePackageImplicitFiles = callGraphFiles.some(f => SAME_PACKAGE_IMPLICIT_LANGS.has(f.language));
+    if (
+      (hasImplicitImportFiles && depGraph.statistics.importEdgeCount === 0) ||
+      hasSamePackageImplicitFiles
+    ) {
+      // Dep-graph nodes are keyed by absolute path; the call graph keys files by
+      // the repo-relative path. Resolve to absolute so the two id spaces line up
+      // (otherwise no call edge ever matches a dep-graph node).
       const nodeMap = new Map<string, string>(
-        Array.from(callGraphResult.nodes.values()).map(n => [n.id, n.filePath])
+        Array.from(callGraphResult.nodes.values()).map(n => [
+          n.id,
+          isAbsolute(n.filePath) ? n.filePath : join(this.options.rootDir, n.filePath),
+        ])
       );
       injectCallGraphEdges(depGraph, callGraphResult.edges, id => nodeMap.get(id));
     }

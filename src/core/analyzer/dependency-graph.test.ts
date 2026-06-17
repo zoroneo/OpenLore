@@ -1051,6 +1051,36 @@ export function d() {}
       expect(depGraph.statistics.avgDegree).toBeGreaterThan(0);
     });
 
+    it('injectCallGraphEdges does not duplicate a file pair that already has an import edge (#138)', async () => {
+      // Java/Kotlin keep cross-package imports AND same-package call refs, so
+      // injection runs even when import edges exist — it must not double-count.
+      const fileA = await createFile(tempDir, 'src/main/java/com/acme/A.java', '');
+      const fileB = await createFile(tempDir, 'src/main/java/com/acme/B.java', '');
+      const files = [
+        createScoredFile({ absolutePath: fileA, name: 'A.java', extension: '.java', directory: 'src/main/java/com/acme' }),
+        createScoredFile({ absolutePath: fileB, name: 'B.java', extension: '.java', directory: 'src/main/java/com/acme' }),
+      ];
+      const depGraph = await buildDependencyGraph(files, { rootDir: tempDir });
+      // Simulate a pre-existing import edge A→B.
+      depGraph.edges.push({ source: fileA, target: fileB, importedNames: ['B'], isTypeOnly: false, weight: 1 });
+
+      injectCallGraphEdges(
+        depGraph,
+        [
+          { callerId: `${fileA}::a`, calleeId: `${fileB}::b` }, // A→B: already an import edge
+          { callerId: `${fileB}::b`, calleeId: `${fileA}::a` }, // B→A: new same-package edge
+        ],
+        (nodeId) => (nodeId.startsWith(fileA) ? fileA : nodeId.startsWith(fileB) ? fileB : undefined),
+      );
+
+      // A→B not duplicated; B→A added as a fresh call edge.
+      const ab = depGraph.edges.filter(e => e.source === fileA && e.target === fileB);
+      const ba = depGraph.edges.filter(e => e.source === fileB && e.target === fileA);
+      expect(ab).toHaveLength(1);
+      expect(ba).toHaveLength(1);
+      expect(ba[0].isCallEdge).toBe(true);
+    });
+
     it('injectCallGraphEdges deduplicates multiple calls between the same two files', async () => {
       const fileA = await createFile(tempDir, 'Sources/A2.swift', '');
       const fileB = await createFile(tempDir, 'Sources/B2.swift', '');

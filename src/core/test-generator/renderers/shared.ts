@@ -60,9 +60,16 @@ export function toSnakeCase(s: string): string {
     .toLowerCase();
 }
 
-/** Convert to CamelCase (for C++ test names etc.) */
+/**
+ * Convert to PascalCase for use as a code identifier (JUnit method/class names,
+ * Go func names, C++ suite/test names). Separators (including `.`) are folded to
+ * camel boundaries and any remaining non-identifier characters are stripped, so
+ * a scenario like `"create owner (v2.1)"` yields `CreateOwnerV21`, not an
+ * un-compilable `CreateOwner(v2.1)`. See #138.
+ */
 export function toPascalCase(s: string): string {
   return s
-    .replace(/[_\-\s]+(.)/g, (_, c) => c.toUpperCase())
+    .replace(/[_\-\s.]+(.)/g, (_, c) => c.toUpperCase())
+    .replace(/[^a-zA-Z0-9_$]/g, '')
     .replace(/^(.)/, (c) => c.toUpperCase());
 }

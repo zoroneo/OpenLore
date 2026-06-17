@@ -806,6 +806,15 @@ export async function buildDependencyGraph(
 const IMPLICIT_IMPORT_LANGS = new Set(['Swift', 'C++', 'C']);
 
 /**
+ * Languages that DO use explicit imports for cross-package references but need
+ * NO import for same-package classes (JVM package semantics). Their dependency
+ * graph would otherwise show only the sparse cross-package import edges and miss
+ * every same-package relationship — so call-graph edges are injected (deduped
+ * against existing import edges) regardless of the import-edge count. See #138.
+ */
+const SAME_PACKAGE_IMPLICIT_LANGS = new Set(['Java', 'Kotlin']);
+
+/**
  * Synthesize dependency edges from cross-file call edges and inject them into
  * an existing DependencyGraphResult in-place.
  *
@@ -820,8 +829,12 @@ export function injectCallGraphEdges(
   // Build a Set of node IDs for quick membership test
   const nodeIds = new Set(depGraph.nodes.map(n => n.id));
 
-  // Collect unique file-level edges
-  const seen = new Set<string>();
+  // Collect unique file-level edges. Seed `seen` with the file pairs that
+  // already have an edge (e.g. cross-package imports) so injected call edges
+  // never duplicate an existing import edge — this makes injection safe to run
+  // for languages that mix explicit imports with implicit same-package refs
+  // (Java/Kotlin), not just import-less languages (Swift/C/C++).
+  const seen = new Set<string>(depGraph.edges.map(e => `${e.source}→${e.target}`));
   const newEdges: DependencyEdge[] = [];
 
   for (const ce of callEdges) {
@@ -878,7 +891,7 @@ export function injectCallGraphEdges(
   depGraph.statistics.structuralClusterCount = depGraph.structuralClusters.length;
 }
 
-export { IMPLICIT_IMPORT_LANGS };
+export { IMPLICIT_IMPORT_LANGS, SAME_PACKAGE_IMPLICIT_LANGS };
 
 // ============================================================================
 // EXPORT FORMATS

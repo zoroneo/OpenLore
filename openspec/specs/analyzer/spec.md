@@ -5079,6 +5079,12 @@ The system SHALL extract Java method signatures including modifiers, generic typ
 
 > Decision recorded: 8f94535c
 > Date: 2026-06-16
+### Requirement: InjectCallgraphEdgesIntoTheDependencyGraphForJvmLanguages
+
+The system SHALL inject call-graph edges into the file-level dependency graph for JVM languages whose same-package references produce no import statements.
+
+> Decision recorded: 67580817
+> Date: 2026-06-17
 
 ## Technical Notes
 
@@ -5486,3 +5492,13 @@ Java codebases using JPA/Hibernate annotations (@Entity, @MappedSuperclass) had 
 The analyzer hardcoded JS/TS/Python extensions in several places, causing Java/Kotlin files to leak extensions into entity names (e.g. VetControllerJava), miss handler methods with inline annotations (@ResponseBody), mis-parse license-header block comments as declarations, and drop methods with complex generic type parameters. Fixes generalize extension stripping, add block-comment tracking, widen the method regex for annotations in return-type position, and reject body-statement false positives.
 
 **Consequences:** Extension stripping is now generic (any single dot-extension), which is broader but could theoretically strip meaningful suffixes from unconventional filenames. Java signature extraction is richer (modifiers, type params, throws clauses preserved) but the regex is more complex to maintain.
+
+### Inject call-graph edges into the dependency graph for JVM languages
+
+**Status:** Approved
+**Date:** 2026-06-17
+**ID:** 67580817
+
+Java/Kotlin require imports only for cross-package references; same-package classes are used with no import. The dependency graph was built purely from import edges, so a Java project's file-level graph was nearly empty (spring-petclinic: 10 edges) while its call graph held 1261 — same-package relationships were invisible, hurting structural comprehension and leaving cluster views empty. Fix: (1) run injection for Java/Kotlin regardless of import-edge count, (2) seed the dedup set with existing edges so injected call edges never duplicate an import edge, (3) resolve call-graph file paths to absolute so the two id spaces align.
+
+**Consequences:** New exported SAME_PACKAGE_IMPLICIT_LANGS set (Java, Kotlin). injectCallGraphEdges now dedupes against pre-existing edges, making it safe to run alongside import edges. The absolute-path resolution also repairs the previously-silent no-op injection for Swift/C/C++. Java/Kotlin dependency graphs are now populated (petclinic 10→70 edges, gson 318→1517) with structural clusters; injected edges carry isCallEdge:true.
