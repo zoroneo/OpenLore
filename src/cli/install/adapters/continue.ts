@@ -25,6 +25,14 @@ const SLASH_COMMAND = {
 
 export const continueAdapter: Adapter = {
   name: 'continue',
+  async isConnected(root: string): Promise<boolean> {
+    try {
+      const parsed = JSON.parse(await readFile(join(root, CONFIG_PATH), 'utf8')) as Record<string, unknown>;
+      return readMeta(parsed) !== null;
+    } catch {
+      return false;
+    }
+  },
   async apply(ctx: ApplyContext): Promise<ApplyResult> {
     const configPath = join(ctx.root, CONFIG_PATH);
     let had = true;

@@ -2,13 +2,14 @@
  * cline adapter — appends the OpenLore instruction block to `.clinerules`.
  */
 
-import { applyMarkdownBlock, uninstallMarkdownBlock } from './markdown-block.js';
+import { applyMarkdownBlock, uninstallMarkdownBlock, hasManagedBlock } from './markdown-block.js';
 import type { Adapter, ApplyContext } from './types.js';
 
 const FILE_NAME = '.clinerules';
 
 export const clineAdapter: Adapter = {
   name: 'cline',
+  isConnected: (root) => hasManagedBlock(root, FILE_NAME),
   async apply(ctx: ApplyContext) {
     return applyMarkdownBlock(ctx, {
       fileName: FILE_NAME,

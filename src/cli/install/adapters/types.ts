@@ -26,6 +26,13 @@ export interface ApplyContext {
   instructionTemplate: string;
   dryRun: boolean;
   force: boolean;
+  /**
+   * Optional MCP tool preset (e.g. "memory", "navigation", "minimal"). When set,
+   * adapters that register the MCP server wire `openlore mcp --preset <name>` so
+   * the agent sees that curated surface instead of the full tool set. Undefined
+   * = the server's default (all tools).
+   */
+  preset?: string;
 }
 
 export interface ApplyResult {
@@ -40,4 +47,11 @@ export interface Adapter {
   name: AgentName;
   apply(ctx: ApplyContext): Promise<ApplyResult>;
   uninstall(ctx: ApplyContext): Promise<ApplyResult>;
+  /**
+   * Preset-insensitive presence check for `connect list`: is OpenLore's managed
+   * footprint present for this agent under `root`? Checks for our marker (a
+   * markdown block, or a managed JSON entry), NOT config equality — an agent
+   * wired with a different preset or an older template still counts as connected.
+   */
+  isConnected(root: string): Promise<boolean>;
 }

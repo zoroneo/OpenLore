@@ -14,6 +14,19 @@ import {
   removeBlock,
   renderBlock,
 } from '../block.js';
+
+/**
+ * True when `fileName` (relative to `root`) exists and contains an OpenLore-managed
+ * markdown block. Preset-insensitive presence check used by `connect list`.
+ */
+export async function hasManagedBlock(root: string, fileName: string): Promise<boolean> {
+  try {
+    const content = await readFile(join(root, fileName), 'utf8');
+    return extractBlock(content) !== null;
+  } catch {
+    return false;
+  }
+}
 import { previewCreate, previewDiff } from '../diff.js';
 import type { ApplyContext, ApplyResult, PlannedChange } from './types.js';
 

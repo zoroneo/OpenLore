@@ -50,6 +50,13 @@ async function loadTemplate(): Promise<string> {
 
 export interface InstallOptions {
   agent?: AgentName;
+  /**
+   * Explicit list of surfaces to wire (used by `openlore connect`'s multi-select).
+   * Takes precedence over `agent` and over detection. Each is rooted at `cwd`.
+   */
+  agents?: AgentName[];
+  /** MCP tool preset wired into the registered server (validated against TOOL_PRESETS). */
+  preset?: string;
   dryRun?: boolean;
   force?: boolean;
   uninstall?: boolean;
@@ -110,12 +117,56 @@ async function buildIndex(cwd: string): Promise<void> {
   }
 }
 
+export interface SurfaceStatus {
+  agent: AgentName;
+  /** A marker for this agent was found in the project tree. */
+  detected: boolean;
+  /** OpenLore is already fully wired for this agent (a fresh apply would be a no-op). */
+  connected: boolean;
+}
+
+/**
+ * Status of every supported surface for `openlore connect list`. "connected" is
+ * computed by asking each adapter to plan a dry-run apply and checking that it
+ * has nothing left to create or update — reusing the adapters' own logic instead
+ * of duplicating per-agent file knowledge here.
+ */
+export async function surfaceStatus(cwd?: string): Promise<SurfaceStatus[]> {
+  const root = cwd ?? process.cwd();
+  const detected = new Set((await detect(root)).map((s) => s.agent));
+  const out: SurfaceStatus[] = [];
+  for (const agent of ALL_AGENTS) {
+    const connected = await ADAPTERS[agent].isConnected(root);
+    out.push({ agent, detected: detected.has(agent), connected });
+  }
+  return out;
+}
+
 export async function runInstall(opts: InstallOptions): Promise<number> {
   const cwd = opts.cwd ?? process.cwd();
   const template = await loadTemplate();
 
+  // Validate the preset (only when given) against the real registry, without
+  // pulling the heavy MCP module onto the common path.
+  if (opts.preset) {
+    const { TOOL_PRESETS } = await import('../commands/mcp.js');
+    if (!TOOL_PRESETS[opts.preset]) {
+      logger.error(
+        `Unknown --preset "${opts.preset}". Known presets: ${Object.keys(TOOL_PRESETS).join(', ')}.`
+      );
+      return 2;
+    }
+  }
+
   let surfaces: DetectedSurface[];
-  if (opts.agent) {
+  if (opts.agents?.length) {
+    const unknown = opts.agents.filter((a) => !ALL_AGENTS.includes(a));
+    if (unknown.length) {
+      logger.error(`Unknown agent surface(s) "${unknown.join(', ')}". Known: ${ALL_AGENTS.join(', ')}`);
+      return 2;
+    }
+    surfaces = opts.agents.map((agent) => ({ agent, root: cwd, markers: ['(selected)'] }));
+  } else if (opts.agent) {
     if (!ALL_AGENTS.includes(opts.agent)) {
       logger.error(`Unknown agent surface "${opts.agent}". Known: ${ALL_AGENTS.join(', ')}`);
       return 2;
@@ -142,6 +193,7 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
       instructionTemplate: template,
       dryRun: !!opts.dryRun,
       force: !!opts.force,
+      preset: opts.preset,
     };
     const result: ApplyResult = opts.uninstall
       ? await adapter.uninstall(ctx)
@@ -215,6 +267,7 @@ export const installCommand = new Command('install')
     'to call orient(), then build the index so orient works on your first session.'
   )
   .option('--agent <name>', 'Install only for a specific surface (claude-code, cursor, cline, continue, agents-md)')
+  .option('--preset <name>', 'Wire the registered MCP server to a tool preset (minimal, navigation, memory) instead of the full surface')
   .option('--dry-run', 'Print the planned changes without writing any files', false)
   .option('--force', 'Overwrite OpenLore-managed blocks even if hand-edited', false)
   .option('--uninstall', 'Remove OpenLore-managed blocks and entries', false)

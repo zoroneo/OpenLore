@@ -12,19 +12,29 @@
 
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { applyMarkdownBlock, uninstallMarkdownBlock } from './markdown-block.js';
+import { applyMarkdownBlock, uninstallMarkdownBlock, hasManagedBlock } from './markdown-block.js';
 import { mergeEntries, readMeta, removeManaged, isHandEdited, editJsonPreservingFormat, type JsonPathEdit } from '../json-managed.js';
 import { previewCreate, previewDiff } from '../diff.js';
 import type { Adapter, ApplyContext, ApplyResult, PlannedChange } from './types.js';
 
 const MD_FILE = 'CLAUDE.md';
 const SETTINGS_PATH = '.claude/settings.json';
+const SETTINGS_LOCAL_PATH = '.claude/settings.local.json';
 const MCP_PATH = '.mcp.json';
 
-const MCP_ENTRY = {
-  command: 'npx',
-  args: ['--yes', 'openlore', 'mcp'],
-};
+/** Permission that lets the agent run the `openlore` CLI without a per-call prompt. */
+const OPENLORE_PERMISSION = 'Bash(openlore:*)';
+
+/**
+ * MCP server registration. When a preset is given, wire `openlore mcp --preset
+ * <name>` so the agent sees that curated surface; otherwise the full tool set.
+ */
+function mcpEntry(preset?: string): { command: string; args: string[] } {
+  return {
+    command: 'npx',
+    args: ['--yes', 'openlore', 'mcp', ...(preset ? ['--preset', preset] : [])],
+  };
+}
 
 /**
  * Our SessionStart entry is marked with `_openlore: true` so we can identify
@@ -148,6 +158,7 @@ async function fileExists(path: string): Promise<boolean> {
 
 export const claudeCodeAdapter: Adapter = {
   name: 'claude-code',
+  isConnected: (root) => hasManagedBlock(root, MD_FILE),
   async apply(ctx: ApplyContext): Promise<ApplyResult> {
     const mdResult = await applyMarkdownBlock(ctx, {
       fileName: MD_FILE,
@@ -172,13 +183,14 @@ export const claudeCodeAdapter: Adapter = {
       mdResult.conflict = true;
       return mdResult;
     }
+    const entry = mcpEntry(ctx.preset);
     const { next: nextMcp, action: mcpAction } = mergeEntries(existingMcp, [
-      { path: 'mcpServers.openlore', value: MCP_ENTRY },
+      { path: 'mcpServers.openlore', value: entry },
     ]);
     const rawMcp = hadMcp ? await readRawOrNull(mcpPath) : null;
     const mcpBefore = hadMcp ? (rawMcp ?? JSON.stringify(existingMcp, null, 2) + '\n') : '';
     const mcpAfter = serializeManaged(rawMcp, nextMcp, [
-      { path: ['mcpServers', 'openlore'], value: MCP_ENTRY },
+      { path: ['mcpServers', 'openlore'], value: entry },
       { path: ['_openlore'], value: (nextMcp as Record<string, unknown>)._openlore },
     ]);
     mdResult.changes.push({
@@ -260,6 +272,45 @@ export const claudeCodeAdapter: Adapter = {
     }
 
     mdResult.changes.push(change);
+
+    // --- 3. Tool permission → .claude/settings.local.json -----------------------
+    // Allow the agent to run the `openlore` CLI without a per-call approval. We
+    // append our single sentinel permission string to permissions.allow if absent
+    // (idempotent), preserving any permissions the user already configured.
+    const localPath = join(ctx.root, SETTINGS_LOCAL_PATH);
+    const rawLocal = await readRawOrNull(localPath);
+    const hadLocal = rawLocal != null;
+    const existingLocal = await readJsonOrEmpty(localPath);
+    const perms = (existingLocal.permissions as Record<string, unknown>) ?? {};
+    const allow = Array.isArray(perms.allow) ? (perms.allow as unknown[]) : [];
+    if (allow.includes(OPENLORE_PERMISSION)) {
+      mdResult.changes.push({
+        path: localPath,
+        kind: 'noop',
+        summary: `${SETTINGS_LOCAL_PATH}: ${OPENLORE_PERMISSION} already allowed`,
+      });
+    } else {
+      const nextAllow = [...allow, OPENLORE_PERMISSION];
+      const nextLocal = { ...existingLocal, permissions: { ...perms, allow: nextAllow } };
+      const localAfter = serializeManaged(rawLocal, nextLocal, [
+        { path: ['permissions', 'allow'], value: nextAllow },
+      ]);
+      mdResult.changes.push({
+        path: localPath,
+        kind: hadLocal ? 'update' : 'create',
+        summary: hadLocal
+          ? `add ${OPENLORE_PERMISSION} to ${SETTINGS_LOCAL_PATH}`
+          : `create ${SETTINGS_LOCAL_PATH} with ${OPENLORE_PERMISSION}`,
+        preview: hadLocal
+          ? previewDiff(localPath, rawLocal ?? '', localAfter)
+          : previewCreate(localPath, localAfter),
+      });
+      if (!ctx.dryRun) {
+        await mkdir(dirname(localPath), { recursive: true });
+        await writeFile(localPath, localAfter, 'utf8');
+      }
+    }
+
     return mdResult;
   },
 
@@ -349,6 +400,49 @@ export const claudeCodeAdapter: Adapter = {
         kind: 'update',
         summary: `strip OpenLore entries from ${SETTINGS_PATH}`,
       });
+    }
+
+    // Strip our permission from .claude/settings.local.json (mirror of apply step 3).
+    const localPath = join(ctx.root, SETTINGS_LOCAL_PATH);
+    const rawLocal = await readRawOrNull(localPath);
+    if (rawLocal != null) {
+      let parsedLocal: Record<string, unknown>;
+      try {
+        parsedLocal = JSON.parse(rawLocal);
+      } catch {
+        return md;
+      }
+      const permsObj = parsedLocal.permissions as Record<string, unknown> | undefined;
+      if (permsObj && Array.isArray(permsObj.allow) && permsObj.allow.includes(OPENLORE_PERMISSION)) {
+        const filtered = (permsObj.allow as unknown[]).filter((p) => p !== OPENLORE_PERMISSION);
+        const localEdits: JsonPathEdit[] = [];
+        if (filtered.length === 0) {
+          localEdits.push({ path: ['permissions', 'allow'], value: undefined });
+          delete permsObj.allow;
+          if (Object.keys(permsObj).length === 0) {
+            localEdits.push({ path: ['permissions'], value: undefined });
+            delete parsedLocal.permissions;
+          }
+        } else {
+          localEdits.push({ path: ['permissions', 'allow'], value: filtered });
+          permsObj.allow = filtered;
+        }
+        if (Object.keys(parsedLocal).length === 0) {
+          if (!ctx.dryRun) await unlink(localPath);
+          md.changes.push({
+            path: localPath,
+            kind: 'delete',
+            summary: `remove ${SETTINGS_LOCAL_PATH} (was OpenLore-only)`,
+          });
+        } else {
+          if (!ctx.dryRun) await writeFile(localPath, serializeManaged(rawLocal, parsedLocal, localEdits), 'utf8');
+          md.changes.push({
+            path: localPath,
+            kind: 'update',
+            summary: `strip ${OPENLORE_PERMISSION} from ${SETTINGS_LOCAL_PATH}`,
+          });
+        }
+      }
     }
     return md;
   },

@@ -7,7 +7,7 @@
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyMarkdownBlock, uninstallMarkdownBlock } from './markdown-block.js';
+import { applyMarkdownBlock, uninstallMarkdownBlock, hasManagedBlock } from './markdown-block.js';
 import { fingerprint } from '../block.js';
 import { mergeEntries, readMeta, removeManaged, isHandEdited } from '../json-managed.js';
 import { previewCreate, previewDiff } from '../diff.js';
@@ -17,10 +17,12 @@ const RULES_FILE = '.cursorrules';
 const MDC_FILE = '.cursor/rules/openlore.mdc';
 const MCP_FILE = '.cursor/mcp.json';
 
-const MCP_ENTRY = {
-  command: 'npx',
-  args: ['--yes', 'openlore', 'mcp'],
-};
+function mcpEntry(preset?: string): { command: string; args: string[] } {
+  return {
+    command: 'npx',
+    args: ['--yes', 'openlore', 'mcp', ...(preset ? ['--preset', preset] : [])],
+  };
+}
 
 async function loadMdcTemplate(): Promise<string> {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -49,6 +51,7 @@ async function renderMdc(instructions: string): Promise<string> {
 
 export const cursorAdapter: Adapter = {
   name: 'cursor',
+  isConnected: (root) => hasManagedBlock(root, RULES_FILE),
   async apply(ctx: ApplyContext): Promise<ApplyResult> {
     const rulesResult = await applyMarkdownBlock(ctx, {
       fileName: RULES_FILE,
@@ -131,7 +134,7 @@ export const cursorAdapter: Adapter = {
       return rulesResult;
     }
     const { next: nextMcp, action: mcpAction } = mergeEntries(mcpExisting, [
-      { path: 'mcpServers.openlore', value: MCP_ENTRY },
+      { path: 'mcpServers.openlore', value: mcpEntry(ctx.preset) },
     ]);
     const beforeMcp = mcpHad ? JSON.stringify(mcpExisting, null, 2) + '\n' : '';
     const afterMcp = JSON.stringify(nextMcp, null, 2) + '\n';

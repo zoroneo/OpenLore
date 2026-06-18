@@ -4,13 +4,14 @@
  * number of other tools) read, so it's the safest "always do this" target.
  */
 
-import { applyMarkdownBlock, uninstallMarkdownBlock } from './markdown-block.js';
+import { applyMarkdownBlock, uninstallMarkdownBlock, hasManagedBlock } from './markdown-block.js';
 import type { Adapter, ApplyContext } from './types.js';
 
 const FILE_NAME = 'AGENTS.md';
 
 export const agentsMdAdapter: Adapter = {
   name: 'agents-md',
+  isConnected: (root) => hasManagedBlock(root, FILE_NAME),
   async apply(ctx: ApplyContext) {
     return applyMarkdownBlock(ctx, {
       fileName: FILE_NAME,
