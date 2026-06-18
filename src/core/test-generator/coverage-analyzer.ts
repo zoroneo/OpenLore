@@ -237,7 +237,19 @@ export async function analyzeTestCoverage(opts: {
   } = opts;
 
   // ── 1. Parse all spec scenarios ──────────────────────────────────────────
-  const allScenarios = await parseScenarios({ rootPath, domains });
+  // Dedupe by scenario key up front. parseScenarios does not dedupe, so a spec with
+  // two identically-keyed scenarios (same domain::requirement::scenarioName — e.g. a
+  // copy-pasted `#### Scenario:` block) would make totalScenarios (a raw count) disagree
+  // with the key-deduped covered/uncovered sets and byDomain tallies, breaking the
+  // `coveredScenarios + uncovered.length = totalScenarios` invariant. Count each key once.
+  const parsedScenarios = await parseScenarios({ rootPath, domains });
+  const seenScenarioKeys = new Set<string>();
+  const allScenarios = parsedScenarios.filter((s) => {
+    const k = `${s.domain}::${s.requirement}::${s.scenarioName}`;
+    if (seenScenarioKeys.has(k)) return false;
+    seenScenarioKeys.add(k);
+    return true;
+  });
 
   // ── 2. Walk test files in testDirs ───────────────────────────────────────
   const testFiles: string[] = [];

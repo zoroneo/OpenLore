@@ -43,6 +43,25 @@ describe('spec-08 additional languages', () => {
     expect(edge(g, 'main', 'shout')).toBe(true);  // "hi".shout() extension call resolves
   });
 
+  it('Kotlin — a free function is NOT mis-filed under a parameter/return type', async () => {
+    // Regression: extraClassName picked the first user_type child, so a plain
+    // `fun f(x: Int): Int` (no receiver) was wrongly attributed to a phantom class
+    // `Int`. A receiver only exists as a user_type BEFORE the function name.
+    const result = await new CallGraphBuilder().build([{
+      path: 'k/Free.kt', language: 'Kotlin',
+      content:
+        'fun checkIndex(index: Int): Int { return index + 1 }\n' +
+        'fun List<String>.firstOrEmpty(): String { return this.firstOrNull() ?: "" }\n',
+    }]);
+    const g = serializeCallGraph(result);
+    const free = g.nodes.find(n => n.name === 'checkIndex');
+    expect(free).toBeDefined();
+    expect(free?.className).toBeUndefined();           // free function, not a method of `Int`
+    expect(g.classes.some(c => c.name === 'Int')).toBe(false); // no phantom `Int` class
+    // A genuine extension still attributes to its receiver (user_type before the name).
+    expect(g.nodes.find(n => n.name === 'firstOrEmpty')?.className).toBe('List<String>');
+  });
+
   it('PHP — $this->m(), Class::m(), free function calls', async () => {
     const g = await buildOne('php/app.php', 'PHP');
     expect(fnNames(g, 'PHP')).toEqual(['boot', 'helper', 'helper_free', 'run', 'save']);

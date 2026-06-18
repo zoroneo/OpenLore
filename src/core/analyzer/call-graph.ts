@@ -16,6 +16,7 @@ import { dirname, join as joinPath } from 'node:path';
 import type Parser from 'tree-sitter';
 import { FunctionRegistryTrie } from './function-registry-trie.js';
 import type { ImportMap } from './import-resolver-bridge.js';
+import { buildBaseImportMap } from './import-resolver-bridge.js';
 import { inferTypesFromSource, resolveViaTypeInference } from './type-inference-engine.js';
 import {
   extractAllHttpEdges,
@@ -2336,9 +2337,18 @@ const KOTLIN_SPEC: QueryLangSpec = {
   language: 'Kotlin',
   loader: () => loadGrammarSoft('Kotlin', () => import('tree-sitter-kotlin'), m => m.default),
   classTypes: new Set(['class_declaration', 'object_declaration', 'interface_declaration', 'companion_object']),
-  // Extension functions: `fun Foo.bar()` — receiver user_type becomes the className.
+  // Extension functions: `fun Foo.bar()` — the receiver user_type becomes the className.
+  // The receiver is the user_type that appears BEFORE the function name. A user_type
+  // AFTER the name is the return type, and parameter types are nested inside
+  // function_value_parameters — neither is a receiver. Picking the first user_type
+  // unconditionally mis-filed a plain `fun f(x: Int): Int` under a phantom class `Int`
+  // (and surfaced `Int`/`String`/`T` as classes). Only a true receiver counts.
   extraClassName: (fnNode) => {
-    const receiver = fnNode.namedChildren.find(c => c.type === 'user_type');
+    const nameNode = fnNode.namedChildren.find(c => c.type === 'simple_identifier');
+    if (!nameNode) return undefined;
+    const receiver = fnNode.namedChildren.find(
+      c => c.type === 'user_type' && c.endIndex <= nameNode.startIndex,
+    );
     return receiver?.text;
   },
   fnQuery: `
@@ -2980,12 +2990,15 @@ function buildClassNodes(
   const nameCount = new Map<string, number>();
   const byNameAndDir = new Map<string, ClassNode[]>(); // `${dir}\0${name}` → classes
   const dirOf = (p: string): string => { const i = p.lastIndexOf('/'); return i >= 0 ? p.slice(0, i) : ''; };
+  const byNameList = new Map<string, ClassNode[]>(); // name → all classes of that name (for import resolution)
   for (const cls of classMap.values()) {
     nameCount.set(cls.name, (nameCount.get(cls.name) ?? 0) + 1);
     if (!byName.has(cls.name)) byName.set(cls.name, cls);
     const dk = `${dirOf(cls.filePath)}\0${cls.name}`;
     const arr = byNameAndDir.get(dk);
     if (arr) arr.push(cls); else byNameAndDir.set(dk, [cls]);
+    const nl = byNameList.get(cls.name);
+    if (nl) nl.push(cls); else byNameList.set(cls.name, [cls]);
   }
   // Resolve a base/interface NAME to a ClassNode, most-specific evidence first:
   //   1. same file  2. the file the child imports the name from  3. unique within the
@@ -2999,7 +3012,15 @@ function buildClassNodes(
     if (sameFile) return sameFile;
     const importedFrom = importMap?.get(childFile)?.get(parentName);
     if (importedFrom) {
-      const viaImport = classMap.get(`${importedFrom}::${parentName}`);
+      // `importedFrom` is an extensionless, repo-relative module path (e.g. `shapes/base`)
+      // while class filePaths carry an extension (`shapes/base.ts`) or index a directory
+      // (`shapes/base/index.ts`). Prefix-match rather than exact-key, anchored on `.` / `/`
+      // so `shapes/base` never collides with `shapes/base2.ts`.
+      const viaImport = byNameList.get(parentName)?.find(c =>
+        c.filePath === importedFrom
+        || c.filePath.startsWith(`${importedFrom}.`)
+        || c.filePath.startsWith(`${importedFrom}/`),
+      );
       if (viaImport) return viaImport;
     }
     const sameDir = byNameAndDir.get(`${dirOf(childFile)}\0${parentName}`);
@@ -4792,7 +4813,13 @@ export class CallGraphBuilder {
 
     // Pass 7: Build class hierarchy (inheritance + grouping)
     const relationships = await extractClassRelationships(files);
-    const { classes, inheritanceEdges } = buildClassNodes(allNodes, relationships, importMap);
+    // Base-class resolution needs the per-file import map so a child's explicit import
+    // outranks a same-named class in its own directory (precision: avoid wiring a false
+    // base). Production callers never thread `importMap`, so derive it from the sources
+    // we already hold. Scoped to buildClassNodes — the Pass-2 callee path keeps using the
+    // caller-provided `importMap` unchanged.
+    const baseImportMap = importMap ?? buildBaseImportMap(files);
+    const { classes, inheritanceEdges } = buildClassNodes(allNodes, relationships, baseImportMap);
     // Merge IaC module groupings (deduped by id) into the class set.
     const classIds = new Set(classes.map(c => c.id));
     for (const c of iacClasses) if (!classIds.has(c.id)) classes.push(c);
@@ -4832,6 +4859,7 @@ export class CallGraphBuilder {
         rawMethodCalls,
         fileContents,
         directCalleeIdsByCaller,
+        importMap: baseImportMap,
       }));
     } catch {
       // CHA is best-effort; a failure must never abort the build.

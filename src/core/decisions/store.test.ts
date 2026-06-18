@@ -11,6 +11,7 @@ import {
   newSessionId,
   upsertDecisions,
   replaceDecisions,
+  applyConsolidationResult,
   patchDecision,
   purgeInactiveDecisions,
   getDecisionsByStatus,
@@ -189,6 +190,47 @@ describe('replaceDecisions', () => {
     expect(result.decisions).toHaveLength(2);
     expect(result.decisions.find(d => d.id === 'aaaa0001')?.status).toBe('approved');
     expect(result.decisions.find(d => d.id === 'bbbb0002')?.status).toBe('verified');
+  });
+});
+
+// ============================================================================
+// applyConsolidationResult
+// ============================================================================
+
+describe('applyConsolidationResult', () => {
+  it('transitions a draft to verified when the consolidated decision reuses its id', () => {
+    // The bug this guards: consolidated decisions reuse their drafts' deterministic ids.
+    // An upsert would see the id already present and silently drop the verified status,
+    // leaving the decision stuck as a draft. applyConsolidationResult must overwrite it.
+    const draft = makeDecision({ id: 'aaaa0001', status: 'draft', title: 'Use SQLite' });
+    const store: DecisionStore = { ...emptyStore(), decisions: [draft] };
+    const verified = makeDecision({ id: 'aaaa0001', status: 'verified', title: 'Use SQLite' });
+
+    const result = applyConsolidationResult(store, { verified: [verified], phantom: [], supersededIds: [] });
+
+    expect(result.decisions).toHaveLength(1);
+    expect(result.decisions[0].status).toBe('verified');
+    // Contrast: the buggy upsert path would leave it as a draft.
+    const upserted = upsertDecisions(store, [verified]);
+    expect(upserted.decisions[0].status).toBe('draft');
+  });
+
+  it('marks superseded drafts rejected and persists phantom decisions', () => {
+    const primary = makeDecision({ id: 'aaaa0001', status: 'draft' });
+    const absorbed = makeDecision({ id: 'bbbb0002', status: 'draft' });
+    const store: DecisionStore = { ...emptyStore(), decisions: [primary, absorbed] };
+    const verified = makeDecision({ id: 'aaaa0001', status: 'verified' });
+    const phantom = makeDecision({ id: 'cccc0003', status: 'phantom' });
+
+    const result = applyConsolidationResult(store, {
+      verified: [verified],
+      phantom: [phantom],
+      supersededIds: ['bbbb0002'],
+    });
+
+    expect(result.decisions.find(d => d.id === 'aaaa0001')?.status).toBe('verified');
+    expect(result.decisions.find(d => d.id === 'bbbb0002')?.status).toBe('rejected');
+    expect(result.decisions.find(d => d.id === 'cccc0003')?.status).toBe('phantom');
   });
 });
 

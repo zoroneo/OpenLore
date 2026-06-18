@@ -1,11 +1,16 @@
-# openlore
+# OpenLore
 
-> [!NOTE]
-> **`spec-gen` has been renamed to `OpenLore`.** The npm package is now [`openlore`](https://www.npmjs.com/package/openlore) and the CLI command is `openlore`. Existing projects: rename your `.spec-gen/` directory to `.openlore/` and reinstall (`npm i -g openlore`). See [docs/RENAME-TO-OPENLORE.md](docs/RENAME-TO-OPENLORE.md) for the full migration checklist.
+**Deterministic, persistent memory that empowers AI coding agents to accurately map their knowledge boundaries — and eliminate guesswork — across massive code repositories.**
 
-**Persistent architectural memory and structural cognition for AI coding agents.**
+OpenLore runs a one-time static analysis of your codebase and keeps a navigable knowledge graph — call structure, types, tests, decisions, and spec drift — incrementally fresh as you edit. Agents query it through MCP tools (or the CLI) to start every task already oriented, instead of re-deriving the system from dozens of file reads. It's deterministic and local-first — no LLM in the hot path — so the same question returns the same grounded answer, and an agent is told when a fact has gone stale rather than served a confident guess.
 
-openlore turns any evolving codebase into a navigable knowledge graph backed by [OpenSpec](https://github.com/Fission-AI/OpenSpec) living specifications. It maintains persistent architectural context across agent sessions: graph structure, specs, decisions, drift state, and semantic retrieval — so agents start each task already oriented instead of re-discovering the system from file reads.
+<p align="center">
+  <img src="docs/openlore-demo.gif" alt="OpenLore on Django (7,066 files): onboard once, then one deterministic orient() call replaces grepping and reading 75 files to find a function's 160-caller blast radius" width="100%">
+</p>
+
+<p align="center"><em>Onboard a 7,066-file repo once, then replace "grep 75 files and hope" with one deterministic call that returns the exact blast radius.</em></p>
+
+> Migrating from `spec-gen`? The package is now [`openlore`](https://www.npmjs.com/package/openlore) and the command is `openlore` — see [docs/RENAME-TO-OPENLORE.md](docs/RENAME-TO-OPENLORE.md) for the short checklist (rename `.spec-gen/` → `.openlore/`, reinstall).
 
 ---
 

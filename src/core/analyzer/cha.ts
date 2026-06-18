@@ -13,8 +13,10 @@
  *  - **Virtual-dispatch** (`kind: 'calls'`): from an unpinned `recv.m()` call site
  *    to each implementation of `m` in `recv`'s subtree. Labeled `cha-declared-type`
  *    when the receiver type was statically recovered (so the target set is narrowed
- *    to that type's subtree) and `cha-name-arity` when it was not (a deliberately
- *    weaker over-approximation over the whole hierarchy).
+ *    to that type's subtree) and `cha-name-only` when it was not (a deliberately
+ *    weaker over-approximation: every implementation of `m` by method NAME across the
+ *    whole hierarchy — the call site's argument count is not recovered, so no arity
+ *    narrowing is applied here).
  *  - **Override** (`kind: 'overrides'`): from a base method `B.m` to every overriding
  *    `D.m` where `D <: B` and both declare `m` with compatible arity. The precise,
  *    consistent replacement for the legacy class-level N×M adjacency cross-product.
@@ -25,6 +27,7 @@
  * over-cap call sites are dropped (not partially wired) and logged.
  */
 import type { FunctionNode, ClassNode, InheritanceEdge, CallEdge } from './call-graph.js';
+import type { ImportMap } from './import-resolver-bridge.js';
 import { inferTypesFromSource } from './type-inference-engine.js';
 import { logger } from '../../utils/logger.js';
 
@@ -42,6 +45,12 @@ export interface RawMethodCall {
 }
 
 const SELF_RECEIVERS = new Set(['self', 'this', 'cls']);
+
+/** Directory portion of a repo-relative path (posix-style separators, as used by node ids). */
+function dirOfPath(p: string): string {
+  const i = p.lastIndexOf('/');
+  return i >= 0 ? p.slice(0, i) : '';
+}
 
 /**
  * Extract a parameter count from a function declaration signature. Returns
@@ -95,6 +104,7 @@ class Hierarchy {
     private readonly nodes: Map<string, FunctionNode>,
     classes: ClassNode[],
     inheritanceEdges: InheritanceEdge[],
+    private readonly importMap?: ImportMap,
   ) {
     for (const c of classes) {
       // Synthetic module groupings (free functions grouped by file) are NOT a real
@@ -145,6 +155,43 @@ class Hierarchy {
       }
     }
     return seen;
+  }
+
+  /** ClassNode ids in the subtree rooted at `classId` (inclusive). */
+  subtreeFromClassId(classId: string): Set<string> {
+    const seen = this.descendantClassIds(classId);
+    seen.add(classId);
+    return seen;
+  }
+
+  /**
+   * Resolve a receiver TYPE NAME to a single ClassNode id. A name shared by classes in
+   * several files is disambiguated, most-specific-evidence first: the caller's own file
+   * (decisive for `self`/`this`/`cls` and local shadows) → the file the caller imports the
+   * name from → unique within the caller's directory. Returns undefined when the name is
+   * unknown OR remains genuinely ambiguous — the caller then over-approximates by name
+   * rather than guessing a specific class (mirrors base-class resolution; same bias).
+   */
+  resolveTypeToClassId(typeName: string, callerFile: string): string | undefined {
+    const ids = this.classIdsByName.get(typeName);
+    if (!ids || ids.length === 0) return undefined;
+    if (ids.length === 1) return ids[0];
+    const sameFile = ids.find((id) => this.classById.get(id)?.filePath === callerFile);
+    if (sameFile) return sameFile;
+    const importedFrom = this.importMap?.get(callerFile)?.get(typeName);
+    if (importedFrom) {
+      const viaImport = ids.find((id) => {
+        const c = this.classById.get(id);
+        return !!c && (c.filePath === importedFrom
+          || c.filePath.startsWith(`${importedFrom}.`)
+          || c.filePath.startsWith(`${importedFrom}/`));
+      });
+      if (viaImport) return viaImport;
+    }
+    const dir = dirOfPath(callerFile);
+    const sameDir = ids.filter((id) => dirOfPath(this.classById.get(id)!.filePath) === dir);
+    if (sameDir.length === 1) return sameDir[0];
+    return undefined; // genuinely ambiguous across directories
   }
 
   /** ClassNode ids strictly below `classId` (its descendants). */
@@ -269,16 +316,31 @@ function synthesizeVirtualDispatchEdges(
 
     // ── Resolve targets + provenance label ──────────────────────────────────
     let targets: FunctionNode[];
-    let rule: 'cha-declared-type' | 'cha-name-arity';
+    let rule: 'cha-declared-type' | 'cha-name-only';
     if (declaredType) {
       // A statically-recovered receiver type that is NOT a user-defined hierarchy
       // class is an external/stdlib type (e.g. Array) — emit nothing, don't guess.
       if (!h.hasClass(declaredType)) continue;
-      targets = h.methodsInSubtree(h.subtreeClassIds(declaredType), call.method);
-      rule = 'cha-declared-type';
+      // Resolve the type NAME to a specific class using the caller's import/dir context.
+      // Only a uniquely-resolved type yields a precise edge narrowed to that class's
+      // subtree (cha-declared-type). A name shared across files that can't be pinned must
+      // NOT wear the precise label — it over-approximates across the union of those types'
+      // subtrees, honestly labeled name-only (was a false `cha-declared-type` to a
+      // wrong-directory same-named class).
+      const resolvedTypeId = h.resolveTypeToClassId(declaredType, caller.filePath);
+      if (resolvedTypeId) {
+        targets = h.methodsInSubtree(h.subtreeFromClassId(resolvedTypeId), call.method);
+        rule = 'cha-declared-type';
+      } else {
+        targets = h.methodsInSubtree(h.subtreeClassIds(declaredType), call.method);
+        rule = 'cha-name-only';
+      }
     } else {
+      // No receiver type recovered: over-approximate by method name across the whole
+      // hierarchy. Arity is NOT matched here — the call site's argument count isn't
+      // captured in RawMethodCall — so the label reflects name-only resolution.
       targets = h.methodsNamed(call.method);
-      rule = 'cha-name-arity';
+      rule = 'cha-name-only';
     }
 
     // Drop targets already directly resolved from this call site, and self-edges.
@@ -328,8 +390,11 @@ export function synthesizeTypeHierarchyEdges(input: {
   rawMethodCalls: RawMethodCall[];
   fileContents: Map<string, string>;
   directCalleeIdsByCaller: Map<string, Set<string>>;
+  /** Per-file import map, so a receiver type NAME shared across files resolves to the
+   *  class the caller actually imports (precise dispatch) instead of every same-named class. */
+  importMap?: ImportMap;
 }): CallEdge[] {
-  const h = new Hierarchy(input.nodes, input.classes, input.inheritanceEdges);
+  const h = new Hierarchy(input.nodes, input.classes, input.inheritanceEdges, input.importMap);
   let overrideEdges: CallEdge[] = [];
   let dispatchEdges: CallEdge[] = [];
   try {

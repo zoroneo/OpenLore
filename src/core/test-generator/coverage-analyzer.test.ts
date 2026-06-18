@@ -204,6 +204,40 @@ describe("test 3") {}
     expect(report.byDomain['auth'].covered).toBe(1);
   });
 
+  it('holds covered + uncovered = total when a spec repeats a scenario key', async () => {
+    // A spec with two identically-keyed scenarios (dup::DupReq::DupScenario). The covered/
+    // uncovered/byDomain sets dedup by key; totalScenarios must too, or covering the
+    // duplicate breaks the covered + uncovered = total invariant (the deduped covered set
+    // counts it once, the raw total counts it twice).
+    const dupSpecDir = join(tmpDir, 'openspec', 'specs', 'dup');
+    await mkdir(dupSpecDir, { recursive: true });
+    await writeFile(
+      join(dupSpecDir, 'spec.md'),
+      [
+        '# Dup', '', '## Requirements', '', '### Requirement: DupReq', '',
+        '#### Scenario: DupScenario',
+        '- **GIVEN** x', '- **WHEN** y', '- **THEN** z', '',
+        '#### Scenario: DupScenario',
+        '- **GIVEN** x', '- **WHEN** y', '- **THEN** z', '',
+      ].join('\n')
+    );
+    const testDir = join(tmpDir, 'spec-tests', 'dup');
+    await mkdir(testDir, { recursive: true });
+    await writeFile(
+      join(testDir, 'dup.spec.ts'),
+      '// openlore: {"domain":"dup","requirement":"DupReq","scenario":"DupScenario"}\ndescribe("d") {}'
+    );
+
+    const report = await analyzeTestCoverage({ rootPath: tmpDir, testDirs: ['spec-tests'] });
+
+    // The duplicate scenario key is counted exactly once everywhere.
+    expect(report.byDomain['dup'].total).toBe(1);
+    expect(report.byDomain['dup'].covered).toBe(1);
+    expect(report.coveredScenarios).toBe(1);
+    // The invariant holds despite the repeated key.
+    expect(report.coveredScenarios + report.uncovered.length).toBe(report.totalScenarios);
+  });
+
   it('supports Python # openlore: tags', async () => {
     const testDir = join(tmpDir, 'spec-tests', 'auth');
     await mkdir(testDir, { recursive: true });

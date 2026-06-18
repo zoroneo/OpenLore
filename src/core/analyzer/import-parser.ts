@@ -150,7 +150,7 @@ function parseNamedImports(namesStr: string): string[] {
 /**
  * Parse imports from JavaScript/TypeScript content
  */
-function parseJSImports(content: string): ImportInfo[] {
+export function parseJSImports(content: string): ImportInfo[] {
   const imports: ImportInfo[] = [];
 
   // Remove comments to avoid false matches
@@ -504,7 +504,7 @@ const PYTHON_BUILTINS = new Set([
 /**
  * Parse imports from Python content
  */
-function parsePythonImports(content: string): ImportInfo[] {
+export function parsePythonImports(content: string): ImportInfo[] {
   const imports: ImportInfo[] = [];
 
   // Remove comments and collapse multi-line parenthesized imports onto one line

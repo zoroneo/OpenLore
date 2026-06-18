@@ -5438,8 +5438,10 @@ class pairs, and was applied inconsistently across reachability paths.
 The system SHALL label every CHA-synthesized edge with a provenance distinct from directly-resolved
 edges by setting its `confidence` to `synthesized` and recording the producing rule in the
 `synthesizedBy` property, using `cha-declared-type` for a virtual-dispatch edge whose target set was
-narrowed by a statically-recovered receiver type, `cha-name-arity` for a virtual-dispatch edge
-resolved by name and arity over the whole hierarchy, and `override` for a method-level override edge.
+narrowed by a statically-recovered receiver type, `cha-name-only` for a virtual-dispatch edge
+resolved by method name over the whole hierarchy (the receiver type was not statically recovered and
+the call site's argument count is not captured, so no arity narrowing is applied), and `override` for
+a method-level override edge.
 Directly-resolved edges SHALL retain their existing `confidence` value and SHALL NOT carry
 `synthesizedBy`. A virtual-dispatch edge SHALL NOT introduce a new `EdgeConfidence` member or a new
 call-distance cost — it SHALL reuse the existing `synthesized` cost, which is strictly greater than
@@ -5449,10 +5451,10 @@ unchanged.
 #### Scenario: Precise and over-approximating dispatch are distinguishable
 
 - **GIVEN** one virtual-dispatch edge resolved via a recovered declared type and one resolved only by
-  name and arity
+  method name
 - **WHEN** the two edges are inspected
 - **THEN** the first carries `synthesizedBy: 'cha-declared-type'` and the second carries
-  `synthesizedBy: 'cha-name-arity'`, and both carry `confidence: 'synthesized'`
+  `synthesizedBy: 'cha-name-only'`, and both carry `confidence: 'synthesized'`
 
 #### Scenario: Override edge carries provenance
 

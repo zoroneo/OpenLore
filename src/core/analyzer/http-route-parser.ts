@@ -28,6 +28,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
+import { isTestFile } from './test-file.js';
 import { getSkeletonContent, detectLanguage } from './code-shaper.js';
 
 // ============================================================================
@@ -940,8 +941,12 @@ function extractContractFromHandler(
 //   app.get('/path', handler)
 //   router.post('/path', ...)
 //   app.use('/prefix', router)     ← prefix accumulation
-const EXPRESS_ROUTE_RE = /(?:^|[\s;(,])(?:app|router|server|api|r)\.(get|post|put|delete|patch|head|options|all)\s*\(\s*['"`]([^'"`]+)['"`]/gm;
-const EXPRESS_USE_RE = /(?:^|[\s;(,])(?:app|router|server|api|r)\.use\s*\(\s*['"`]([^'"`]+)['"`]/gm;
+// `fastify` is included because the Fastify plugin idiom names the instance `fastify`
+// (the closure param) and registers routes as `fastify.get('/path', …)` — the standard
+// in Fastify's own docs/demo. The receiver allowlist stays explicit (not `\w+`) to avoid
+// matching unrelated `.get(...)` calls (e.g. an axios `instance.get(url)`).
+const EXPRESS_ROUTE_RE = /(?:^|[\s;(,])(?:app|router|server|api|fastify|r)\.(get|post|put|delete|patch|head|options|all)\s*\(\s*['"`]([^'"`]+)['"`]/gm;
+const EXPRESS_USE_RE = /(?:^|[\s;(,])(?:app|router|server|api|fastify|r)\.use\s*\(\s*['"`]([^'"`]+)['"`]/gm;
 
 // NestJS decorator-based:
 //   @Controller('prefix')  →  class methods with @Get / @Post etc.
@@ -958,7 +963,9 @@ function detectTsFramework(source: string, filePath: string): string {
   if (/app\/.*\/route\.[jt]sx?$/.test(filePath.replace(/\\/g, '/'))) return 'nextjs-app';
   if (/pages\/api\//.test(filePath.replace(/\\/g, '/'))) return 'nextjs-pages';
   if (/from\s+['"]hono['"]/.test(source) || /new\s+Hono\s*[(<]/.test(source)) return 'hono';
-  if (/from\s+['"]fastify['"]/.test(source) || /fastify\s*\(/.test(source)) return 'fastify';
+  // Match bare `fastify` AND scoped `@fastify/*` imports (e.g. @fastify/type-provider-typebox):
+  // Fastify route plugins routinely import only the scoped helpers, not the bare package.
+  if (/from\s+['"](?:fastify|@fastify\/[^'"]+)['"]/.test(source) || /require\s*\(\s*['"](?:fastify|@fastify\/[^'"]+)['"]\s*\)/.test(source) || /fastify\s*\(/.test(source)) return 'fastify';
   if (/from\s+['"]express['"]/.test(source) || /require\s*\(\s*['"]express['"]\s*\)/.test(source)) return 'express';
   if (/from\s+['"]koa['"]/.test(source)) return 'koa';
   if (/from\s+['"]elysia['"]/.test(source)) return 'elysia';
@@ -1144,6 +1151,10 @@ export async function buildRouteInventory(
 
   await Promise.all(
     filePaths.map(async fp => {
+      // Routes declared inside test files (e.g. a `fastify.get('/error')` set up by a
+      // test harness) are fixtures, not the app's real API surface — exclude them so the
+      // inventory doesn't report phantom endpoints.
+      if (isTestFile(fp)) return;
       const ext = extname(fp).toLowerCase();
       if (['.py', '.pyw'].includes(ext)) {
         allRoutes.push(...await extractRouteDefinitions(fp));

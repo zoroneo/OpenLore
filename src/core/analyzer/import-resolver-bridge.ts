@@ -9,11 +9,57 @@
  * Go, Rust, Ruby, Java get lightweight regex parsers here.
  */
 
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, posix } from 'node:path';
 import type { FileAnalysis } from './import-parser.js';
+import { parseJSImports, parsePythonImports } from './import-parser.js';
 
 /** filePath → Map<localName, resolvedSourceFilePath> */
 export type ImportMap = Map<string, Map<string, string>>;
+
+/**
+ * Build an ImportMap from in-memory file sources, for base-class resolution inside
+ * CallGraphBuilder.build() (Pass 7, buildClassNodes). When a class extends a base whose
+ * simple name is also declared elsewhere, the import the child actually wrote is the
+ * decisive evidence for which declaration is the real base — it must outrank the
+ * same-directory / global-unique fallbacks, otherwise a same-named class in the child's
+ * own directory is wired as a false base (a precision regression, since CHA's stated bias
+ * is false-negatives over false-positives).
+ *
+ * Unlike {@link buildImportMap} (which absolutizes the source via resolve() and so can
+ * never prefix-match the repo-relative filePaths the call graph keys on), this preserves
+ * the caller's path style with a posix join+normalize, yielding an extensionless,
+ * repo-relative target (e.g. `widgets/sphere.ts` importing `../shapes/base` → `shapes/base`)
+ * that prefix-matches the class node's `shapes/base.ts`.
+ *
+ * Scope: relative TS/JS/Python imports — the languages with a content-level import parser.
+ * Non-relative (package) imports and other languages are skipped; resolution then falls
+ * through to the same-directory / global-unique layers exactly as before (additive — this
+ * can only recover a correct base, never introduce a new wrong one).
+ */
+export function buildBaseImportMap(
+  files: Array<{ path: string; content: string; language: string }>,
+): ImportMap {
+  const map: ImportMap = new Map();
+  for (const f of files) {
+    let imports;
+    if (f.language === 'TypeScript' || f.language === 'JavaScript') {
+      imports = parseJSImports(f.content);
+    } else if (f.language === 'Python') {
+      imports = parsePythonImports(f.content);
+    } else {
+      continue;
+    }
+    const fileMap = new Map<string, string>();
+    const dir = posix.dirname(f.path);
+    for (const imp of imports) {
+      if (!imp.isRelative) continue;
+      const target = posix.normalize(posix.join(dir, imp.source));
+      for (const name of imp.importedNames) fileMap.set(name, target);
+    }
+    if (fileMap.size > 0) map.set(f.path, fileMap);
+  }
+  return map;
+}
 
 /** Build an ImportMap from TS/JS/Python FileAnalysis objects (from import-parser). */
 export function buildImportMap(analyses: FileAnalysis[]): ImportMap {

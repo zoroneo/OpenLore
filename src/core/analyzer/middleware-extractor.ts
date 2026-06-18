@@ -9,6 +9,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { extname, relative, basename } from 'node:path';
+import { isTestFile } from './test-file.js';
 
 // ============================================================================
 // TYPES
@@ -68,7 +69,8 @@ const EXPRESS_PATTERNS: Pattern[] = [
   // Validation
   { re: /app\.use\s*\([^)]*express\.json/,       type: 'validation',   name: 'express.json', framework: 'express' },
   { re: /app\.use\s*\([^)]*bodyParser/,          type: 'validation',   name: 'bodyParser',  framework: 'express' },
-  { re: /\.parse\s*\(/,                          type: 'validation',   name: 'zod',         framework: 'express' },
+  // NOTE: zod is detected separately (see extractFromSource), gated on a real zod import —
+  // a bare `.parse(` matches JSON.parse/Date.parse/etc. and produced phantom "zod" entries.
   { re: /\bcelebrate\s*\(/,                      type: 'validation',   name: 'celebrate',   framework: 'express' },
 ];
 
@@ -188,6 +190,23 @@ function extractFromSource(
     }
   }
 
+  // ── zod validation (framework-agnostic, gated on a real zod import) ────────
+  // `.parse(`/`.safeParse(` only indicate zod when the file actually imports zod;
+  // otherwise they match JSON.parse, Date.parse, Number.parse, test assertions, etc.
+  if (/from\s+['"]zod['"]|require\s*\(\s*['"]zod['"]\s*\)/.test(source)) {
+    const zodRe = /\.(?:safeParse|parse)\s*\(/gm;
+    let m: RegExpExecArray | null;
+    while ((m = zodRe.exec(source)) !== null) {
+      entries.push({
+        type: 'validation',
+        framework: framework === 'unknown' ? 'express' : framework,
+        file: rel,
+        line: lineNumberOf(source, m.index),
+        name: 'zod',
+      });
+    }
+  }
+
   // ── Error handler (4-argument Express signature) ──────────────────────────
   for (const errorRe of [ERROR_HANDLER_RE, ERROR_HANDLER_ARROW_RE]) {
     const re = new RegExp(errorRe.source, 'gm');
@@ -235,6 +254,9 @@ export async function extractMiddleware(
 
   await Promise.all(
     filePaths.map(async fp => {
+      // Middleware/validation declared in test files are fixtures/assertions, not the
+      // app's real middleware surface — exclude them (they produced phantom entries).
+      if (isTestFile(fp)) return;
       const ext = extname(fp).toLowerCase();
       if (!['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].includes(ext)) return;
 

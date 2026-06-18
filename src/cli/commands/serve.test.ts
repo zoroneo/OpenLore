@@ -432,3 +432,49 @@ describe('openlore serve', () => {
     expect((await fetch(`${h1.baseUrl}/health`)).ok).toBe(true);
   });
 });
+
+describe('tool argument validation', () => {
+  // The daemon /tool transport is used directly by HTTP clients (e.g. the Pi extension),
+  // which don't enforce the MCP schema. A missing required arg must return a clear
+  // validation error, not a raw handler TypeError leaked from inside the tool.
+  it('returns 400 with a clear message when a required arg is missing', async () => {
+    const h = await boot();
+    const res = await fetch(`${h.baseUrl}/tool/analyze_impact`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ args: {} }),
+    });
+    expect(res.status).toBe(400);
+    const body = await jsonOf(res);
+    expect(String(body.error)).toContain('Invalid arguments');
+    expect(String(body.error)).toContain('symbol');
+    // Crucially, NOT a leaked internal error.
+    expect(String(body.error)).not.toContain('Cannot read properties');
+  });
+
+  it('dispatches normally when required args are present', async () => {
+    const h = await boot();
+    // No analysis in the throwaway root, so the handler returns a structured
+    // "not analyzed"/empty result — the point is it dispatches (200) past validation.
+    const res = await fetch(`${h.baseUrl}/tool/analyze_impact`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ args: { symbol: 'someFn' } }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('does not leak a TypeError when args is a non-object primitive', async () => {
+    const h = await boot();
+    const res = await fetch(`${h.baseUrl}/tool/get_route_inventory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ args: 'notanobject' }),
+    });
+    // args coerced to {} → clean dispatch (or clean validation error), never a 500
+    // "Cannot create property 'directory' on string" leak.
+    expect(res.status).not.toBe(500);
+    const body = await jsonOf(res);
+    expect(String(body.error ?? '')).not.toContain('Cannot create property');
+  });
+});

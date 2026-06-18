@@ -167,7 +167,7 @@ describe('CHA — virtual-dispatch edges', () => {
     expect(preciseEdges.length).toBeGreaterThan(0);
     expect(preciseEdges.every(e => e.synthesizedBy === 'cha-declared-type')).toBe(true);
     expect(looseEdges.length).toBeGreaterThan(0);
-    expect(looseEdges.every(e => e.synthesizedBy === 'cha-name-arity')).toBe(true);
+    expect(looseEdges.every(e => e.synthesizedBy === 'cha-name-only')).toBe(true);
   });
 
   it('Virtual-dispatch edges cost more than a directly-resolved path', async () => {
@@ -189,8 +189,8 @@ describe('CHA — virtual-dispatch edges', () => {
       ${classes}
       function dispatch(x) { return x.handle(); }
     `);
-    // > cap name+arity candidates → the whole call site is dropped.
-    expect(b.edges.some(e => e.callerId === fnId(b, 'dispatch') && e.synthesizedBy === 'cha-name-arity')).toBe(false);
+    // > cap name-only candidates → the whole call site is dropped.
+    expect(b.edges.some(e => e.callerId === fnId(b, 'dispatch') && e.synthesizedBy === 'cha-name-only')).toBe(false);
   });
 
   it('Unresolvable method emits nothing', async () => {
@@ -199,6 +199,29 @@ describe('CHA — virtual-dispatch edges', () => {
       function f(x) { return x.frobnicate(); }
     `);
     expect(b.edges.some(e => e.callerId === fnId(b, 'f') && e.synthesizedBy?.startsWith('cha-'))).toBe(false);
+  });
+
+  it('declared-type dispatch resolves a cross-directory same-name base via the caller import', async () => {
+    // Two `Shape` hierarchies in different directories. The caller takes a `Shape` it
+    // imports from its OWN dir, so polymorphic `s.area()` must dispatch only into THAT
+    // Shape's subtree (a/Circle) — not the same-named decoy hierarchy in b/ (b/Square).
+    // Without import disambiguation the declared-type path unioned every same-named type's
+    // subtree under the precise `cha-declared-type` label (the NestJS dogfood finding:
+    // false-positive precise edges to wrong-directory same-named classes).
+    const b = await new CallGraphBuilder().build([
+      { path: 'a/shape.ts', content: `export class Shape { area() { return 0; } }`, language: 'TypeScript' },
+      { path: 'a/circle.ts', content: `import { Shape } from './shape'; export class Circle extends Shape { area() { return 1; } }`, language: 'TypeScript' },
+      { path: 'b/shape.ts', content: `export class Shape { area() { return 9; } }`, language: 'TypeScript' },
+      { path: 'b/square.ts', content: `import { Shape } from './shape'; export class Square extends Shape { area() { return 4; } }`, language: 'TypeScript' },
+      { path: 'a/compute.ts', content: `import { Shape } from './shape'; export function compute(s: Shape) { return s.area(); }`, language: 'TypeScript' },
+    ]);
+    const compute = 'a/compute.ts::compute';
+    // Precise dispatch into the imported Shape's subtree.
+    const toCircle = b.edges.find(e => e.callerId === compute && e.calleeId === 'a/circle.ts::Circle.area');
+    expect(toCircle?.synthesizedBy).toBe('cha-declared-type');
+    // No precise edge leaks into the wrong-directory same-named hierarchy.
+    expect(b.edges.some(e => e.callerId === compute && e.calleeId === 'b/square.ts::Square.area')).toBe(false);
+    expect(b.edges.some(e => e.callerId === compute && e.calleeId === 'b/shape.ts::Shape.area')).toBe(false);
   });
 
   it('Direct edges are unchanged by CHA synthesis (additive only)', async () => {
@@ -263,15 +286,50 @@ describe('CHA — ambiguous cross-file base names', () => {
     expect(b.edges.some(e => e.synthesizedBy === 'override' && e.callerId === bLog && e.calleeId === fileLog)).toBe(false);
   });
 
-  it('does not synthesize an override edge to an ambiguous cross-file base', async () => {
+  it('resolves an ambiguous base via the child\'s import, not a global guess', async () => {
+    // The child imports `Logger` from './a', so its base is unambiguous DESPITE the name
+    // also existing in b.ts: the import is decisive evidence. Resolution wires MyLogger to
+    // a.ts::Logger only — never b.ts::Logger.
     const b = await new CallGraphBuilder().build([
       { path: 'a.ts', content: `export class Logger { log() { return 1; } }`, language: 'TypeScript' },
       { path: 'b.ts', content: `export class Logger { log() { return 2; } }`, language: 'TypeScript' },
       { path: 'c.ts', content: `import { Logger } from './a'; class MyLogger extends Logger { log() { return 3; } }`, language: 'TypeScript' },
     ]);
-    // Neither same-named Logger.log is wired to MyLogger.log (ambiguous → skipped).
-    const myLog = [...b.nodes.values()].find(n => n.id === 'c.ts::MyLogger.log')?.id;
+    const myLog = 'c.ts::MyLogger.log';
+    expect(b.edges.some(e => e.synthesizedBy === 'override' && e.callerId === 'a.ts::Logger.log' && e.calleeId === myLog)).toBe(true);
+    expect(b.edges.some(e => e.synthesizedBy === 'override' && e.callerId === 'b.ts::Logger.log' && e.calleeId === myLog)).toBe(false);
+  });
+
+  it('still skips an ambiguous cross-file base when NO import disambiguates it', async () => {
+    // Same shape, but the child does NOT import the name (e.g. a global/ambient base). With
+    // no decisive evidence and the name ambiguous across directories, resolution skips
+    // rather than guess a first-match — false-negatives over false-positives.
+    const b = await new CallGraphBuilder().build([
+      { path: 'a.ts', content: `export class Logger { log() { return 1; } }`, language: 'TypeScript' },
+      { path: 'b.ts', content: `export class Logger { log() { return 2; } }`, language: 'TypeScript' },
+      { path: 'c.ts', content: `class MyLogger extends Logger { log() { return 3; } }`, language: 'TypeScript' },
+    ]);
+    const myLog = 'c.ts::MyLogger.log';
     expect(b.edges.some(e => e.synthesizedBy === 'override' && e.calleeId === myLog)).toBe(false);
+  });
+
+  it('an imported cross-directory base outranks a same-named class in the child\'s own dir', async () => {
+    // Regression for the dogfood finding: `widgets/sphere.ts` imports its base `Shape` from
+    // `../shapes/base`, but a DIFFERENT `Shape` is declared in its own `widgets/` directory.
+    // With import-based resolution dead, the same-directory layer wired Sphere to the LOCAL
+    // decoy (a false `extends` edge) and dropped the real `Shape.area -> Sphere.area`
+    // override. The import must win: Sphere resolves to shapes/base::Shape.
+    const b = await new CallGraphBuilder().build([
+      { path: 'shapes/base.ts', content: `export class Shape { area() { return 0; } }`, language: 'TypeScript' },
+      { path: 'widgets/base.ts', content: `export class Shape { volume() { return 0; } }`, language: 'TypeScript' },
+      { path: 'widgets/sphere.ts', content: `import { Shape } from '../shapes/base'; export class Sphere extends Shape { area() { return 12.56; } }`, language: 'TypeScript' },
+    ]);
+    const sphereArea = 'widgets/sphere.ts::Sphere.area';
+    // The real override edge is recovered…
+    expect(b.edges.some(e => e.synthesizedBy === 'override' && e.callerId === 'shapes/base.ts::Shape.area' && e.calleeId === sphereArea)).toBe(true);
+    // …and no false edge ties Sphere to the local decoy Shape (which only has volume()).
+    expect(b.inheritanceEdges.some(e => e.parentId === 'widgets/base.ts::Shape' && e.childId === 'widgets/sphere.ts::Sphere')).toBe(false);
+    expect(b.inheritanceEdges.some(e => e.parentId === 'shapes/base.ts::Shape' && e.childId === 'widgets/sphere.ts::Sphere')).toBe(true);
   });
 });
 
