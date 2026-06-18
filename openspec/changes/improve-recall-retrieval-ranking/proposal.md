@@ -133,14 +133,20 @@ What landed:
 
 Verification:
 
-- **Unit** `memory-ranking.test.ts` (13 tests): normalization, field-weight ordering, graded scoring,
-  exact-anchor boost, empty-query, and the cross-word-substring superset property.
-- **E2E (handler)** `memory.test.ts` (+4 tests): phrasing-miss closure, anchor-vs-prose ranking with
-  `anchorBoost`, transparent `match` reason, and a high-scoring *orphaned* memory still excluded from
+- **Unit** `memory-ranking.test.ts` (15 tests): normalization, field-weight ordering, graded scoring,
+  the occurrence cap (a spammed token cannot run away), exact-anchor boost (including that it
+  outweighs heavy content repetition), empty-query, and the cross-word-substring superset property.
+- **E2E (handler)** `memory.test.ts` (+6 tests): phrasing-miss closure, anchor-vs-prose ranking with
+  `anchorBoost`, decisions ranked through the same ranker, transparent `match` reason, the reason
+  omitted on a no-task staleness scan, and a high-scoring *orphaned* memory still excluded from
   authoritative.
+- **Surface audit:** `recall` is the only memory-ranking surface in the codebase — `orient` has no
+  memory/decision/anchor path, and `tool-dispatch` only forwards to `handleRecall`. The spec's
+  forward-looking "orient" mention is served by other (draft) proposals; nothing to wire today.
 - **Dogfood** against this repo's real call graph: `recall("validateDirectory")` ranks the memory
   anchored to `validateDirectory` first (★boost) above a prose-only mention; `recall("directory")`
   surfaces it via camelCase normalization; freshness intact (`graphAvailable=true`, all `fresh`).
-- Full `typecheck`, `eslint`, and the adjacent memory/freshness/orient suites pass.
+- **Full suite green:** `vitest run src` — 184 files, 3848 passed / 2 skipped / 0 failed. `typecheck`
+  and `eslint` clean.
 
 Deferred as designed: embedding-backed recall (out of scope; own proposal + decision if pursued).

@@ -115,4 +115,19 @@ describe('scoreMemory — superset guarantee & edge cases', () => {
     const fallbackOnly = scoreMemory(['parse'], emptyFields({ content: 'reparser internals' }));
     expect(tokenMatch.score).toBeGreaterThan(fallbackOnly.score);
   });
+
+  it('caps occurrence so a single token spammed in content cannot run away', () => {
+    const five = scoreMemory(['cache'], emptyFields({ content: Array(5).fill('cache').join(' ') }));
+    const fifty = scoreMemory(['cache'], emptyFields({ content: Array(50).fill('cache').join(' ') }));
+    // Both exceed the cap, so they score identically — no unbounded growth.
+    expect(fifty.score).toBe(five.score);
+  });
+
+  it('the exact-anchor boost outweighs heavy content repetition of the same term', () => {
+    const anchored = scoreMemory(queryTerms('parseConfig'), emptyFields({ anchorSymbols: ['parseConfig'] }));
+    const spammed = scoreMemory(queryTerms('parseConfig'),
+      emptyFields({ content: Array(20).fill('parseConfig').join(' ') }));
+    expect(anchored.score).toBeGreaterThan(spammed.score);
+    expect(anchored.anchorBoost).toBe(true);
+  });
 });

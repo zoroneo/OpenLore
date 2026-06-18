@@ -273,4 +273,21 @@ describe('handleRecall — deterministic ranking', () => {
     expect(r.authoritative).toHaveLength(0);
     expect(r.needsReanchoring[0].freshness).toBe('orphaned');
   });
+
+  it('ranks decisions through the same ranker (affected-file field contributes)', async () => {
+    await writeDecisions([{ id: 'd9', status: 'approved', title: 'keep foo pure', affectedFiles: ['src/foo.ts'] }]);
+    const r = (await handleRecall(root, 'foo')) as {
+      authoritative: Array<{ kind: string; match?: { fields: string[] } }>;
+    };
+    const dec = r.authoritative.find((m) => m.kind === 'decision');
+    expect(dec).toBeDefined();
+    // "foo" matches the affected file src/foo.ts → anchorFiles field.
+    expect(dec!.match?.fields).toContain('anchorFiles');
+  });
+
+  it('omits the ranking reason on a no-task staleness scan', async () => {
+    await handleRemember(root, 'foo must stay pure', [{ symbol: 'foo', file: 'src/foo.ts' }]);
+    const r = (await handleRecall(root)) as { authoritative: Array<{ match?: unknown }> };
+    expect(r.authoritative[0].match).toBeUndefined();
+  });
 });
