@@ -1,6 +1,6 @@
 {
   "name": "openlore",
-  "version": "2.0.19",
+  "version": "2.1.0",
   "description": "Persistent architectural memory and structural cognition for AI coding agents.",
   "type": "module",
   "main": "dist/api/index.js",
@@ -138,13 +138,17 @@
   },
   "overrides": {
     "tree-sitter-cli": "file:stubs/tree-sitter-cli-stub",
-    "@google/genai": { "protobufjs": "^7.6.4" },
+    "@google/genai": {
+      "protobufjs": "^7.6.4"
+    },
     "ws": "^8.21.0",
     "undici": "^8.5.0",
     "js-yaml": "^4.2.0",
     "hono": "^4.12.25",
     "@earendil-works/pi-coding-agent": {
-      "@google/genai": { "protobufjs": "^7.6.4" },
+      "@google/genai": {
+        "protobufjs": "^7.6.4"
+      },
       "ws": "^8.21.0",
       "undici": "^8.5.0"
     }
