@@ -207,3 +207,70 @@ describe('handleRecall — retrieval semantics & robustness', () => {
     expect(r.error).toBeDefined();
   });
 });
+
+// ── deterministic ranking (improve-recall-retrieval-ranking) ──────────────────
+
+function namedNode(name: string, filePath: string, src: string): FunctionNode {
+  return {
+    id: `${filePath}::${name}`,
+    name,
+    filePath,
+    isAsync: false,
+    language: 'typescript',
+    startIndex: 0,
+    endIndex: Buffer.byteLength(src, 'utf-8'),
+    fanIn: 0,
+    fanOut: 0,
+  };
+}
+
+describe('handleRecall — deterministic ranking', () => {
+  it('closes a phrasing miss: identifier normalization surfaces a memory the old substring ranker dropped', async () => {
+    // Old ranker: query "write" is NOT a substring of "writeThrough" tokenized to
+    // "writethrough"? It IS (includes), but a query "caching" would miss entirely.
+    // Here we prove camelCase normalization links "write" ↔ "writeThrough".
+    await handleRemember(root, 'the cache is writeThrough', [{ symbol: 'foo', file: 'src/foo.ts' }]);
+    const r = (await handleRecall(root, 'write strategy')) as {
+      total: number; authoritative: Array<{ text: string }>;
+    };
+    expect(r.total).toBe(1);
+    expect(r.authoritative[0].text).toContain('writeThrough');
+  });
+
+  it('ranks a memory anchored to the named symbol above a prose-only mention', async () => {
+    await writeFile(join(root, 'src', 'cfg.ts'), 'export function parseConfig() {\n  return {};\n}\n', 'utf-8');
+    await buildStore([
+      fooNode('src/foo.ts', FOO_SRC),
+      namedNode('parseConfig', 'src/cfg.ts', 'export function parseConfig() {\n  return {};\n}\n'),
+    ]);
+    // M1 is *about* parseConfig (anchored to it). M2 only mentions it in prose.
+    await handleRemember(root, 'tunables live here', [{ symbol: 'parseConfig', file: 'src/cfg.ts' }]);
+    await handleRemember(root, 'remember to call parseConfig early', [{ symbol: 'foo', file: 'src/foo.ts' }]);
+    const r = (await handleRecall(root, 'parseConfig')) as {
+      authoritative: Array<{ text: string; match?: { anchorBoost: boolean } }>;
+    };
+    expect(r.authoritative).toHaveLength(2);
+    expect(r.authoritative[0].text).toBe('tunables live here'); // anchored one ranks first
+    expect(r.authoritative[0].match?.anchorBoost).toBe(true);
+  });
+
+  it('exposes a transparent ranking reason (matched fields) when a task is given', async () => {
+    await handleRemember(root, 'a note about parsing', undefined, ['parser']);
+    const r = (await handleRecall(root, 'parser')) as {
+      authoritative: Array<{ match?: { fields: string[]; anchorBoost: boolean } }>;
+    };
+    expect(r.authoritative[0].match?.fields).toContain('tags');
+  });
+
+  it('a high-scoring orphaned memory is still excluded from authoritative (invariant holds before ranking matters)', async () => {
+    await handleRemember(root, 'parseConfig parseConfig parseConfig is critical', [
+      { symbol: 'parseConfig', file: 'src/cfg.ts' },
+    ]);
+    await buildStore([]); // symbol disappears ⇒ orphaned
+    const r = (await handleRecall(root, 'parseConfig')) as {
+      authoritative: unknown[]; needsReanchoring: Array<{ freshness: string }>;
+    };
+    expect(r.authoritative).toHaveLength(0);
+    expect(r.needsReanchoring[0].freshness).toBe('orphaned');
+  });
+});

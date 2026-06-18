@@ -19,6 +19,7 @@ import { loadDecisionStore, INACTIVE_STATUSES } from '../../decisions/store.js';
 import { loadMemoryStore, updateMemoryStore, makeMemoryId } from '../../decisions/memory-store.js';
 import { AnchorContext } from '../../decisions/anchor-adapter.js';
 import { memoryFreshness, decisionAnchors, type GraphFreshnessView } from '../../decisions/anchor.js';
+import { queryTerms, scoreMemory, type RankFields } from './memory-ranking.js';
 import type {
   AnchoredMemory,
   StructuralAnchor,
@@ -102,6 +103,8 @@ interface RecalledMemory {
   verify?: boolean;
   anchors: ReturnType<typeof summarizeVerdict>[];
   recordedAt?: string;
+  /** Why this memory ranked where it did (set only when a task was given). */
+  match?: { fields: string[]; anchorBoost: boolean };
   score: number;
 }
 
@@ -124,11 +127,18 @@ export async function handleRecall(
       : { nodeHash: () => undefined, fileExists: () => false, fileHash: () => undefined };
 
     try {
-      const queryTokens = tokenize(task ?? '');
+      const terms = queryTerms(task ?? '');
+      const hasQuery = terms.length > 0;
       const items: RecalledMemory[] = [];
 
       for (const m of memStore.memories) {
         const f = memoryFreshness(m.anchors, view);
+        const r = scoreMemory(terms, {
+          anchorSymbols: m.anchors.map((a) => a.symbolName).filter((s): s is string => !!s),
+          tags: m.tags ?? [],
+          anchorFiles: m.anchors.map((a) => a.filePath),
+          content: m.content,
+        });
         items.push({
           kind: 'note',
           id: m.id,
@@ -138,13 +148,15 @@ export async function handleRecall(
           verify: f.freshness === 'drifted' ? true : undefined,
           anchors: f.verdicts.map(summarizeVerdict),
           recordedAt: m.recordedAt,
-          score: relevance(queryTokens, `${m.content} ${(m.tags ?? []).join(' ')} ${anchorFiles(m.anchors)}`),
+          match: hasQuery ? { fields: r.matched, anchorBoost: r.anchorBoost } : undefined,
+          score: r.score,
         });
       }
 
       for (const d of activeDecisions(decisionStore.decisions)) {
         const anchors = decisionAnchors(d);
         const f = memoryFreshness(anchors, view);
+        const r = scoreMemory(terms, decisionFields(d, anchors));
         items.push({
           kind: 'decision',
           id: d.id,
@@ -154,11 +166,12 @@ export async function handleRecall(
           verify: f.freshness === 'drifted' ? true : undefined,
           anchors: f.verdicts.map(summarizeVerdict),
           recordedAt: d.recordedAt,
-          score: relevance(queryTokens, `${d.title} ${d.rationale} ${d.affectedFiles.join(' ')}`),
+          match: hasQuery ? { fields: r.matched, anchorBoost: r.anchorBoost } : undefined,
+          score: r.score,
         });
       }
 
-      const filtered = (queryTokens.length ? items.filter((i) => i.score > 0) : items)
+      const filtered = (hasQuery ? items.filter((i) => i.score > 0) : items)
         .sort((a, b) => b.score - a.score || (b.recordedAt ?? '').localeCompare(a.recordedAt ?? ''))
         .slice(0, Math.max(1, limit));
 
@@ -195,20 +208,14 @@ function activeDecisions(decisions: PendingDecision[]): PendingDecision[] {
   return decisions.filter((d) => !INACTIVE_STATUSES.has(d.status));
 }
 
-function tokenize(s: string): string[] {
-  return [...new Set((s.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? []))];
-}
-
-function relevance(queryTokens: string[], haystack: string): number {
-  if (!queryTokens.length) return 0;
-  const hay = haystack.toLowerCase();
-  let score = 0;
-  for (const t of queryTokens) if (hay.includes(t)) score++;
-  return score;
-}
-
-function anchorFiles(anchors: StructuralAnchor[]): string {
-  return anchors.map((a) => a.filePath).join(' ');
+/** Map a decision onto the ranker's weighted fields. */
+function decisionFields(d: PendingDecision, anchors: StructuralAnchor[]): RankFields {
+  return {
+    anchorSymbols: anchors.map((a) => a.symbolName).filter((s): s is string => !!s),
+    tags: d.affectedDomains ?? [],
+    anchorFiles: d.affectedFiles,
+    content: `${d.title} ${d.rationale}`,
+  };
 }
 
 function summarizeAnchor(a: StructuralAnchor): { symbol?: string; file: string; level: 'symbol' | 'file' } {
