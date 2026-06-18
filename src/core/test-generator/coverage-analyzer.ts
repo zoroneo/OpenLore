@@ -279,14 +279,32 @@ export async function analyzeTestCoverage(opts: {
   }
 
   // ── 5. Build final covered / uncovered sets ──────────────────────────────
-  const allCovered: CoveredScenario[] = [...tagCovered];
-  for (const [, entry] of semanticCovered) {
-    allCovered.push(entry);
-  }
-
-  const allCoveredKeys = new Set(
-    allCovered.map((c) => `${c.domain}::${c.requirement}::${c.scenarioName}`)
+  // Coverage is counted ONLY against scenarios that actually exist in the parsed
+  // specs. Two guards:
+  //   - drop tags whose scenario isn't a real parsed scenario (e.g. example/
+  //     fixture tags living inside the test suite itself, like the auth specs in
+  //     this analyzer's own tests) — otherwise they inflate the count and make
+  //     `covered + uncovered ≠ total`.
+  //   - dedupe by scenario key so several files tagging the same scenario, or a
+  //     repeated tag, count once.
+  const scenarioKeys = new Set(
+    allScenarios.map((s) => `${s.domain}::${s.requirement}::${s.scenarioName}`)
   );
+  const keyOf = (c: CoveredScenario): string =>
+    `${c.domain}::${c.requirement}::${c.scenarioName}`;
+
+  // tag entries first, then semantic — first write wins on dedupe, so a tagged
+  // scenario keeps its tag attribution.
+  const rawCovered: CoveredScenario[] = [...tagCovered, ...semanticCovered.values()];
+  const allCovered: CoveredScenario[] = [];
+  const allCoveredKeys = new Set<string>();
+  for (const c of rawCovered) {
+    const k = keyOf(c);
+    if (!scenarioKeys.has(k)) continue; // not a real scenario — ignore
+    if (allCoveredKeys.has(k)) continue; // already counted
+    allCoveredKeys.add(k);
+    allCovered.push(c);
+  }
 
   const uncovered: UncoveredScenario[] = allScenarios
     .filter((s) => !allCoveredKeys.has(`${s.domain}::${s.requirement}::${s.scenarioName}`))
@@ -328,10 +346,13 @@ export async function analyzeTestCoverage(opts: {
   }
 
   // ── 8. Totals ────────────────────────────────────────────────────────────
+  // All derived from the deduped, real-scenario-only `allCovered`, so the
+  // invariants hold: coveredScenarios = taggedScenarios + discoveredScenarios,
+  // and coveredScenarios + uncovered.length = totalScenarios.
   const totalScenarios = allScenarios.length;
-  const taggedScenarios = tagCovered.length;
-  const discoveredScenarios = semanticCovered.size;
   const coveredScenarios = allCovered.length;
+  const taggedScenarios = allCovered.filter((c) => c.discoveredBy === 'tag').length;
+  const discoveredScenarios = allCovered.filter((c) => c.discoveredBy === 'semantic').length;
   const coveragePercent =
     totalScenarios === 0
       ? 0

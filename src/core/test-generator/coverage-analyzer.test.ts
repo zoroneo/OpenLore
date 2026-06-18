@@ -162,6 +162,48 @@ describe("test 3") {}
     expect(report.byDomain['auth']?.hasDrift).toBe(true);
   });
 
+  it('ignores tags pointing at scenarios that do not exist in the parsed specs', async () => {
+    // Regression: example/fixture tags (e.g. a foreign "billing" domain) living
+    // in the test suite must NOT count as coverage, must not appear in `covered`,
+    // and must not inflate coveragePercent.
+    const testDir = join(tmpDir, 'spec-tests', 'auth');
+    await mkdir(testDir, { recursive: true });
+    await writeFile(
+      join(testDir, 'mixed.spec.ts'),
+      [
+        // real
+        '// openlore: {"domain":"auth","requirement":"UserLogin","scenario":"SuccessfulLogin"}',
+        // bogus — domain/requirement/scenario not in AUTH_SPEC
+        '// openlore: {"domain":"billing","requirement":"Invoice","scenario":"Paid"}',
+        '// openlore: {"domain":"auth","requirement":"UserLogin","scenario":"DoesNotExist"}',
+      ].join('\n')
+    );
+
+    const report = await analyzeTestCoverage({ rootPath: tmpDir, testDirs: ['spec-tests'] });
+
+    expect(report.coveredScenarios).toBe(1); // only the real one
+    expect(report.coveragePercent).toBe(33.3); // 1 / 3, not 3/3
+    expect(report.covered.map((c) => c.scenarioName)).toEqual(['SuccessfulLogin']);
+    expect(report.covered.some((c) => c.domain === 'billing')).toBe(false);
+    // invariant: covered + uncovered = total
+    expect(report.coveredScenarios + report.uncovered.length).toBe(report.totalScenarios);
+  });
+
+  it('dedupes a scenario tagged by multiple files', async () => {
+    const testDir = join(tmpDir, 'spec-tests', 'auth');
+    await mkdir(testDir, { recursive: true });
+    const tag = '// openlore: {"domain":"auth","requirement":"UserLogin","scenario":"SuccessfulLogin"}';
+    await writeFile(join(testDir, 'a.spec.ts'), tag + '\ndescribe("a") {}');
+    await writeFile(join(testDir, 'b.spec.ts'), tag + '\ndescribe("b") {}');
+
+    const report = await analyzeTestCoverage({ rootPath: tmpDir, testDirs: ['spec-tests'] });
+
+    expect(report.coveredScenarios).toBe(1);
+    expect(report.taggedScenarios).toBe(1);
+    expect(report.covered).toHaveLength(1);
+    expect(report.byDomain['auth'].covered).toBe(1);
+  });
+
   it('supports Python # openlore: tags', async () => {
     const testDir = join(tmpDir, 'spec-tests', 'auth');
     await mkdir(testDir, { recursive: true });
