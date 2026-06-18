@@ -20,10 +20,12 @@
       known-unknowable crossing, and the answer is marked `complete: false`.
 
 ## 3. Staleness boundary
-- [x] When the index fingerprint lags the working tree, attach "computed against the index built at
-      commit X; N file(s) changed since." Reuses `computeProjectFingerprint` + git-diff; the build
-      commit is captured into `fingerprint.json` at analyze time (degrades to commit-less when absent).
-- [x] Test: a stale index surfaces a staleness boundary; a current index does not.
+- [x] When graph-relevant source changed since the index's build commit, attach "computed against the
+      index built at commit X; N source file(s) changed since." Git-diff based against the build commit
+      captured into `fingerprint.json` at analyze time; stays silent (no false positive) for a non-git
+      repo or an index with no captured commit.
+- [x] Test: `buildStalenessMarker` emits only when a commit + a positive source-change count are known;
+      a current index (0 changed) and the non-git / no-commit cases stay silent.
 
 ## 4. No-false-completeness contract + docs
 - [x] Guard: `confidenceBoundary.complete` is `false` whenever the answer leaned on a synthesized

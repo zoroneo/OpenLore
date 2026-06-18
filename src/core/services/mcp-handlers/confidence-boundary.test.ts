@@ -15,11 +15,11 @@ import {
   edgeBasisForChains,
   crossingsFromBasis,
   assembleBoundary,
+  buildStalenessMarker,
   computeStaleness,
   __resetStalenessMemo,
   type BoundaryEdge,
 } from './confidence-boundary.js';
-import { computeProjectFingerprint } from './utils.js';
 import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, ARTIFACT_FINGERPRINT } from '../../../constants.js';
 
 describe('edgeBasis', () => {
@@ -145,44 +145,53 @@ describe('assembleBoundary (no-false-completeness)', () => {
   });
 });
 
-describe('computeStaleness', () => {
+describe('buildStalenessMarker (pure decision)', () => {
+  it('stays silent when no build commit was captured', () => {
+    expect(buildStalenessMarker(null, 3)).toBeUndefined();
+  });
+
+  it('stays silent when the change count is unknown (not a git repo / git failed)', () => {
+    expect(buildStalenessMarker('abc1234', null)).toBeUndefined();
+  });
+
+  it('treats zero changed source files as a current index', () => {
+    expect(buildStalenessMarker('abc1234', 0)).toBeUndefined();
+  });
+
+  it('emits a marker naming the commit and count when source changed', () => {
+    const m = buildStalenessMarker('abc1234', 4);
+    expect(m).toEqual({
+      indexCommit: 'abc1234',
+      filesChangedSince: 4,
+      detail: expect.stringContaining('commit abc1234'),
+    });
+    expect(m!.detail).toContain('4 source file(s) changed');
+  });
+});
+
+describe('computeStaleness (integration)', () => {
   let dir: string;
   beforeEach(() => {
     __resetStalenessMemo();
     dir = mkdtempSync(join(tmpdir(), 'cb-stale-'));
-    writeFileSync(join(dir, 'a.ts'), 'export const x = 1;\n');
     mkdirSync(join(dir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR), { recursive: true });
   });
 
   const writeFingerprint = (obj: object) =>
     writeFileSync(join(dir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, ARTIFACT_FINGERPRINT), JSON.stringify(obj));
 
-  it('returns undefined when the stored fingerprint matches the working tree', async () => {
-    const hash = await computeProjectFingerprint(dir);
-    writeFingerprint({ hash });
+  it('stays silent when no fingerprint artifact exists', async () => {
     expect(await computeStaleness(dir)).toBeUndefined();
   });
 
-  it('returns undefined when no fingerprint artifact exists', async () => {
+  it('stays silent when the fingerprint has no build commit (older index)', async () => {
+    writeFingerprint({ hash: 'abc' });
     expect(await computeStaleness(dir)).toBeUndefined();
   });
 
-  it('returns a commit-less marker when the fingerprint lags and no commit was stored', async () => {
-    writeFingerprint({ hash: 'deadbeef-not-the-real-hash' });
-    const s = await computeStaleness(dir);
-    expect(s).toBeDefined();
-    expect(s!.indexCommit).toBeNull();
-    expect(s!.filesChangedSince).toBeNull();
-    expect(s!.detail).toContain('working tree has changed');
-  });
-
-  it('names the build commit in the marker when one was stored (non-git → null count)', async () => {
-    writeFingerprint({ hash: 'stale-hash', commit: 'abc1234' });
-    const s = await computeStaleness(dir);
-    expect(s!.indexCommit).toBe('abc1234');
-    // Temp dir is not a git repo → file count is uncountable.
-    expect(s!.filesChangedSince).toBeNull();
-    expect(s!.detail).toContain('abc1234');
+  it('stays silent in a non-git directory even with a stored commit (count unknowable)', async () => {
+    writeFingerprint({ hash: 'abc', commit: 'abc1234' });
+    expect(await computeStaleness(dir)).toBeUndefined();
   });
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));

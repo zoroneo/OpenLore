@@ -6144,3 +6144,23 @@ Implements add-trust-calibrated-context-economy on the recall path (the only mem
 Every conclusion tool (analyze_impact, find_path, find_dead_code, get_subgraph, select_tests, trace_execution_path, recall) carries a deterministic `confidenceBoundary` computed from data already present: edge `confidence`/`synthesizedBy` provenance for the basis, synthesized-edge reliance for known-unknowable crossings, and the project fingerprint + git diff for staleness. The shape is categorical labels and counts (directEdges, synthesizedEdges, synthesizedByRule, knownUnknowable[], staleness, complete) — never a blended confidence number and never an LLM call, preserving the north-star (c6d1ad07). It is additive metadata: a caller that ignores it sees today's answer unchanged.
 
 **Consequences:** A new shared module src/core/services/mcp-handlers/confidence-boundary.ts owns the type and computation; seven conclusion handlers each spread a `confidenceBoundary` field into their response. analyze.ts's fingerprint.json gains an optional `commit` field (captured via git rev-parse at analyze time) so the staleness marker can name the build commit; staleness degrades gracefully (no commit / non-git repo → fingerprint-mismatch boolean without a commit name). `complete` is false whenever the computation leaned on a synthesized edge, crossed a known-unknowable boundary, or ran against a stale index — the answer-level NoFalseCompleteness contract.
+
+### Confidence-boundary staleness uses git-diff against the build commit, not a fingerprint-hash recompute
+
+**Status:** Approved
+**Date:** 2026-06-18
+**ID:** e4c0a61a
+
+Refines decision 08e71184 (boundary response shape stays as recorded). Dogfooding showed that comparing the analyze-time project fingerprint (whole-tree mtime+size hash) against a query-time recompute is unreliable across the analyze→query boundary: OpenLore's own .openlore-live-cache fixture dir plus mtime drift make the hashes mismatch even when the user's source is unchanged, so the staleness marker fired on every answer (crying wolf, which trains agents to ignore it). Replaced with a deterministic git signal: staleness fires iff `git diff --name-only <buildCommit>` reports a positive count of graph-relevant source files changed since the commit the index was built at.
+
+**Consequences:** computeStaleness no longer calls computeProjectFingerprint; it reads the build commit from fingerprint.json and shells `git diff` (memoized 5s per dir). A pure buildStalenessMarker(commit, changedCount) holds the emit/silent logic and is unit-tested. Non-git repos and indexes with no captured commit get NO staleness marker (silent rather than false-positive) — a deliberate honesty tradeoff. The pre-existing fingerprint-includes-.openlore-live-cache bug that affects isCacheFresh is left untouched and flagged separately.
+
+### Confidence-boundary staleness uses git-diff against the build commit, not a fingerprint-hash recompute
+
+**Status:** Approved
+**Date:** 2026-06-18
+**ID:** f0b7f99f
+
+Comparing the analyze-time project fingerprint (whole-tree mtime+size hash) against a query-time recompute is unreliable: fixture dirs and mtime drift cause false-positive staleness on every answer, training agents to ignore the marker. Replaced with a deterministic git signal: staleness fires iff `git diff --name-only <buildCommit>` reports graph-relevant source files changed since the index was built. Non-git repos and indexes with no captured commit get NO staleness marker (silent rather than false-positive) — a deliberate honesty tradeoff.
+
+**Consequences:** computeStaleness no longer calls computeProjectFingerprint; it reads the build commit from fingerprint.json and shells `git diff` (memoized 5s per dir). A pure buildStalenessMarker(commit, changedCount) holds the emit/silent logic and is unit-tested. The pre-existing fingerprint-includes-.openlore-live-cache bug that affects isCacheFresh is left untouched and flagged separately.

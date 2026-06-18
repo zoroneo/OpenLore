@@ -254,11 +254,12 @@ edge `confidence`/`synthesizedBy` provenance already present (decision `08e71184
 
 ### Requirement: StalenessBoundary
 
-When the index fingerprint lags the working tree, every conclusion SHALL carry a staleness marker
-naming the index's build commit and the count of files changed since, reusing the project fingerprint
-and git-diff machinery. A current index SHALL produce no staleness marker. The build commit is
-captured best-effort at analyze time; when it is absent (non-git directory) the marker SHALL degrade
-to a commit-less "the working tree has changed since the index was built" with a null change count.
+When graph-relevant source files have changed since the index's build commit, every conclusion SHALL
+carry a staleness marker naming that build commit and the count of source files changed since it,
+derived deterministically from `git diff` against the commit captured at analyze time. A current index
+(zero source files changed) SHALL produce no staleness marker. When staleness cannot be assessed
+reliably — no build commit was captured, or the project is not a git repository — the system SHALL
+stay silent rather than emit a false-positive marker.
 
 #### Scenario: A stale index is disclosed
 
