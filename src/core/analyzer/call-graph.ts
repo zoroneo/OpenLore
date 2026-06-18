@@ -1013,6 +1013,15 @@ const TS_FN_QUERY = `
     (variable_declarator
       name: (identifier) @fn.name
       value: [(arrow_function) (function_expression)] @fn.value)) @fn.node
+
+  (variable_declaration
+    (variable_declarator
+      name: (identifier) @fn.name
+      value: [(arrow_function) (function_expression)] @fn.value)) @fn.node
+
+  (assignment_expression
+    left: [(identifier) (member_expression)] @fn.name
+    right: [(arrow_function) (function_expression)] @fn.value) @fn.node
 `;
 
 const TS_CALL_QUERY = `
@@ -1045,7 +1054,13 @@ async function extractTSGraph(
     const nodeCapture = match.captures.find(c => c.name === 'fn.node');
     if (!nameCapture || !nodeCapture) continue;
 
-    const name = nameCapture.node.text;
+    // For member-assigned functions (`app.use = …`, `Foo.prototype.bar = …`) the
+    // name capture is the whole `member_expression`; its text is the dotted path.
+    // Collapse any incidental whitespace (a LHS split across lines) so the derived
+    // name — and therefore the node id and stableId — stay stable and readable.
+    const name = nameCapture.node.type === 'member_expression'
+      ? nameCapture.node.text.replace(/\s+/g, '')
+      : nameCapture.node.text;
     const fnNode = nodeCapture.node;
 
     // Find enclosing class (walk up — skip class_body, its children are methods not the name)

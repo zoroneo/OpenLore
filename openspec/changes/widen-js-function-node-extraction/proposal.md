@@ -1,10 +1,20 @@
 # Widen JS/TS function-node extraction to member-assigned and `var`-bound functions
 
-> Status: DRAFT — filed from the `add-synthesized-dynamic-dispatch-edges` real-corpus dogfood
-> (PR #155, 2026-06-17). No code yet. Scope/risk notes below; needs its own adversarial review.
+> Status: IMPLEMENTED (2026-06-18). Decision `d8b81a9b`. Two `TS_FN_QUERY` clauses
+> (`assignment_expression`, `variable_declaration`) + whitespace-safe member naming in
+> `src/core/analyzer/call-graph.ts`; tests in `call-graph.test.ts`; spec delta in
+> `specs/analyzer/spec.md`. Real-corpus dogfood in `../DOGFOOD-widen-js.md`. See `tasks.md`.
+> Originally filed from the `add-synthesized-dynamic-dispatch-edges` real-corpus dogfood (PR #155,
+> 2026-06-17).
 > One sentence: **index `obj.prop = function(){}`, `exports.x = function(){}`,
 > `X.prototype.y = function(){}`, and `var f = function(){}` as function nodes so the call graph
 > stops going blind on idiomatic pre-class / CommonJS JavaScript.**
+>
+> **Outcome (measured):** Express 5.2.1 `lib/application.js` went from ~2 to **18** indexed nodes
+> (`app.use`, `app.handle`, `app.set`, `app.listen`, …); `lib/response.js` to **29** (`res.send`,
+> `res.json`, `res.cookie`, …). Calls out of those methods (e.g. `app.render → tryRender`,
+> `res.sendFile → sendfile`) now resolve. `exports.x = require(...)` re-exports stay correctly
+> excluded. The Django-admin `$.fn.djangoAdminSelect2 = function(){}` plugin handler is now indexed.
 
 ## Why
 

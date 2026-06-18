@@ -2034,6 +2034,44 @@ The system SHALL validate FunctionNode according to these rules:
 - **WHEN** isCrossCuttingHub is called
 - **THEN** Returns true
 
+### Requirement: TypeScriptFunctionNodeExtractionShapes
+
+The TypeScript/JavaScript extractor SHALL index a function node for each of the following source
+shapes, in addition to `function_declaration`, exported `function_declaration`, and ES6
+`method_definition`: a `const`/`let` binding (`lexical_declaration`) to an arrow or function
+expression; a `var` binding (`variable_declaration`) to an arrow or function expression; and an
+`assignment_expression` whose left-hand side is an identifier or a member expression and whose
+right-hand side is an arrow or function expression (`app.use = function(){}`,
+`exports.handler = function(){}`, `Foo.prototype.bar = function(){}`, `f = function(){}`). A
+member-assigned node SHALL be named by the full dotted member path (`app.use`, `Foo.prototype.bar`),
+with incidental whitespace collapsed so the derived name, node id, and `stableId` are stable. The
+extractor SHALL NOT index an assignment whose right-hand side is not a function/arrow (a `require(...)`
+call, a member access, an identifier, a number, or an object literal), a computed-member assignment
+(`obj[key] = function(){}`), or an augmented assignment (`obj.x ||= function(){}`). When the same
+member is assigned more than once in a file, the analyzer SHALL collapse it to a single node (the
+existing id-keyed last-wins de-duplication), never emitting duplicate nodes.
+
+#### Scenario: Member-assigned method is indexed
+
+- **GIVEN** a JavaScript file containing `app.use = function use(fn) { app.lazyrouter(); }` and
+  `app.lazyrouter = function lazyrouter() {}`
+- **WHEN** the call graph is built
+- **THEN** both `app.use` and `app.lazyrouter` are function nodes and the edge `app.use → app.lazyrouter`
+  is resolved internally
+
+#### Scenario: Non-function assignment is not indexed
+
+- **GIVEN** a JavaScript file containing `exports.router = require('./router')`, `exports.VERSION = 42`,
+  and `exports.config = { a: 1 }`
+- **WHEN** the call graph is built
+- **THEN** none of those assignments produce a function node
+
+#### Scenario: Re-assigned member collapses to one node
+
+- **GIVEN** a file that assigns `obj.fn = function(){}` twice
+- **WHEN** the call graph is built
+- **THEN** exactly one node named `obj.fn` exists
+
 ### Requirement: RefactorEntryValidation
 
 The system SHALL validate RefactorEntry according to these rules:
@@ -5591,6 +5629,12 @@ The system SHALL rank recalled memories using a deterministic field-weighted sco
 
 > Decision recorded: 08005eb9
 > Date: 2026-06-18
+### Requirement: WidenTsjsFunctionnodeExtractionToMemberassignedAndVarboundFunctions
+
+The system SHALL extract member-assigned functions (obj.prop = function, exports.x = function, X.prototype.y = function) and var-bound functions as first-class call-graph nodes in JS/TS analysis.
+
+> Decision recorded: d8b81a9b
+> Date: 2026-06-18
 
 ## Technical Notes
 
@@ -6128,3 +6172,13 @@ recall previously ranked memories by binary substring token-overlap, which silen
 Implements add-trust-calibrated-context-economy on the recall path (the only memory surface; orient has none yet). A fresh recalled fact now carries a GroundingCertificate {symbol?, filePath, lineSpan?, contentHash} per anchor and a verifiedCurrent marker, so the agent can cite the proven-unchanged span instead of re-reading. The certificate reuses the same span the freshness check hashes; lineSpan is computed from the node's byte offsets against the live file (the edge store persists offsets, not line numbers), so no schema change and no new extraction. recall gains an optional tokenBudget that returns the highest grounding-density facts first (verified-current core) and reports the withheld count — never a silent cap. Deliberate deviation from the proposal: budget ordering uses grounding density (verified-current first) rather than pulling the hub/chokepoint/volatile salience classifiers into the memory path, keeping the change deterministic and self-contained; salience-label ordering is noted as a future refinement.
 
 **Consequences:** New GroundingCertificate type. recall response gains optional verifiedCurrent/certificates per item and a budget {tokenBudget, returned, withheld} block with a no-silent-cap note; all additive (callers ignoring them are unaffected). Certificates only attach to fresh, anchored facts when the graph is available; drifted/orphaned never carry them, preserving the authoritative-recall invariant. The full MCP tool manifest is near its spec-28 char budget, so the recall tool description was kept minimal (the certificate is self-documenting via response fields) — reinforces add-lean-default-tool-surface.
+
+### Widen TS/JS function-node extraction to member-assigned and var-bound functions
+
+**Status:** Approved
+**Date:** 2026-06-18
+**ID:** d8b81a9b
+
+The TS/JS extractor's TS_FN_QUERY matched only function_declaration, exported function_declaration, ES6 method_definition, and lexical_declaration (const/let). It missed dominant pre-class/CommonJS/ES5 idioms — obj.prop = function(){}, exports.x = function(){}, X.prototype.y = function(){}, and var f = function(){}. Two tree-sitter clauses are added: an assignment_expression with identifier|member_expression LHS and arrow|function_expression RHS, and a variable_declaration arm mirroring the existing lexical_declaration one. RHS is constrained to function/arrow so exports.x = require('y') and obj.prop = 42 never match. Member nodes are named by full LHS text (app.use, Foo.prototype.bar); de-dup is the existing last-wins allNodes.set(id).
+
+**Consequences:** Node set widens for JS/TS: fanIn/fanOut, hub/god/entry-point classification, dead-code candidates, and duplicate detection all see the new nodes. Known limitations: arity/signatureShape may be empty for function-expression assignments whose inner name differs from the assigned member; async detection follows existing fnNode.text heuristic; this.x = fn inside a class body associates with the enclosing class name.
