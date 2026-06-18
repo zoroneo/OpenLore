@@ -364,3 +364,41 @@ app.use(cors());
     expect(corsEntry!.line).toBeGreaterThan(0);
   });
 });
+
+describe('extractMiddleware — zod gating + test-file exclusion', () => {
+  let tmpDir: string;
+  beforeEach(async () => { tmpDir = await createTempDir(); });
+  afterEach(async () => { await rm(tmpDir, { recursive: true, force: true }); });
+
+  it('does NOT flag zod for a bare .parse() without a zod import', async () => {
+    const fp = await createFile(tmpDir, 'util.ts', `
+const data = JSON.parse(raw);
+const when = Date.parse(str);
+`);
+    const entries = await extractMiddleware([fp], tmpDir);
+    expect(entries.some(e => e.name === 'zod')).toBe(false);
+  });
+
+  it('flags zod when the file actually imports zod', async () => {
+    const fp = await createFile(tmpDir, 'schema.ts', `
+import { z } from 'zod';
+const Schema = z.object({ id: z.string() });
+export const validate = (x: unknown) => Schema.parse(x);
+`);
+    const entries = await extractMiddleware([fp], tmpDir);
+    const zod = entries.find(e => e.name === 'zod');
+    expect(zod).toBeDefined();
+    expect(zod!.type).toBe('validation');
+  });
+
+  it('excludes middleware declared in test files', async () => {
+    const fp = await createFile(tmpDir, 'app.test.ts', `
+import express from 'express';
+import cors from 'cors';
+const app = express();
+app.use(cors());
+`);
+    const entries = await extractMiddleware([fp], tmpDir);
+    expect(entries).toHaveLength(0); // a route/middleware in a test file is a fixture
+  });
+});

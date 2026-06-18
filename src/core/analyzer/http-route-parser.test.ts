@@ -22,8 +22,10 @@ import {
   normalizeUrl,
   extractHttpCalls,
   extractRouteDefinitions,
+  extractTsRouteDefinitions,
   extractJavaRouteDefinitions,
   buildHttpEdges,
+  buildRouteInventory,
   extractAllHttpEdges,
   type HttpCall,
   type RouteDefinition,
@@ -1240,5 +1242,47 @@ public class UserController {
     const edgeMethods = result.edges.map(e => e.method).sort();
     expect(edgeMethods).toContain('GET');
     expect(edgeMethods).toContain('POST');
+  });
+});
+
+describe('Fastify routes + test-file exclusion', () => {
+  let tmpDir: string;
+  beforeEach(async () => { tmpDir = await createTempDir(); });
+  afterEach(async () => { await rm(tmpDir, { recursive: true, force: true }); });
+
+  it('extracts fastify.<method>() routes (plugin idiom, @fastify/* import)', async () => {
+    const fp = await createFile(tmpDir, 'src/routes/tasks/index.ts', `
+import { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
+  fastify.get('/', async () => ({ ok: true }));
+  fastify.post('/login', async () => ({ token: 'x' }));
+};
+export default plugin;
+`);
+    const routes = await extractTsRouteDefinitions(fp);
+    const sigs = routes.map(r => `${r.method} ${r.path}`);
+    expect(sigs).toContain('GET /');
+    expect(sigs).toContain('POST /login');
+    expect(routes.every(r => r.framework === 'fastify')).toBe(true);
+  });
+
+  it('buildRouteInventory excludes routes declared in test files', async () => {
+    await createFile(tmpDir, 'src/routes/real.ts', `
+import Fastify from 'fastify';
+const fastify = Fastify();
+fastify.get('/real', async () => ({}));
+`);
+    const testFp = await createFile(tmpDir, 'test/error-handler.test.ts', `
+import Fastify from 'fastify';
+const fastify = Fastify();
+fastify.get('/error', async () => { throw new Error('x'); });
+`);
+    const inv = await buildRouteInventory(
+      [join(tmpDir, 'src/routes/real.ts'), testFp],
+      tmpDir,
+    );
+    const paths = inv.routes.map(r => r.path);
+    expect(paths).toContain('/real');
+    expect(paths).not.toContain('/error'); // phantom from the test file is excluded
   });
 });
