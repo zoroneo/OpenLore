@@ -1,0 +1,240 @@
+/**
+ * Durable, concurrency-safe persistence primitives for the JSON stores.
+ * (change: harden-memory-integrity-invariant)
+ *
+ * OpenLore's promise — *never serve an unverified or stale fact as
+ * authoritative* — is only as strong as the durability of the files behind it.
+ * Both stores (`.openlore/memory/notes.json`, `.openlore/decisions/pending.json`)
+ * are single JSON files rewritten in full. Without these primitives:
+ *
+ *   - a crash mid-write leaves a torn file that loads as a silent empty store
+ *     (memory vanishes, nothing says so), and
+ *   - two concurrent writers race: last-writer-wins silently drops the other.
+ *
+ * This module supplies three stdlib-only primitives (no new dependency, no LLM):
+ *
+ *   1. {@link atomicWriteFile} — write to a temp file, fsync, then POSIX-rename
+ *      into place. A crash before the rename leaves the prior store intact.
+ *   2. {@link casUpdate} — optimistic compare-and-swap on a monotonic `sequence`:
+ *      load → mutate → commit only if the on-disk sequence is unchanged; on a
+ *      conflict, re-read and re-apply the (append/supersede) merge rather than
+ *      clobber. No concurrent write is lost.
+ *   3. {@link quarantineCorrupt} — move a store that fails validation aside to
+ *      `*.corrupt-<n>` and signal it, instead of silently substituting empty.
+ */
+
+import { open, rename, stat, unlink, mkdir, access, readFile, link } from 'node:fs/promises';
+import { dirname, basename, join } from 'node:path';
+import { logger } from '../../utils/logger.js';
+
+/** Any persisted store that carries the monotonic CAS counter. */
+export interface SequencedStore {
+  sequence?: number;
+}
+
+// Monotonic per-process counter so two concurrent writers to the SAME path never
+// share a temp filename (which would let one truncate the other's temp before its
+// rename). Combined with the pid it is unique per in-flight write.
+let tmpCounter = 0;
+
+/**
+ * Write `data` to `path` atomically. The data goes to a sibling temp file, is
+ * flushed to disk (`fsync`), and is moved into place with a single atomic
+ * `rename`. A crash or interruption before the rename leaves the previously
+ * committed file untouched — never a partially written (torn) file.
+ */
+export async function atomicWriteFile(path: string, data: string): Promise<void> {
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true });
+  // Unique temp name per in-flight write (pid + monotonic counter): concurrent
+  // writers to the same path — even outside the commit lock — never collide on a
+  // shared temp file.
+  const tmp = join(dir, `.${basename(path)}.tmp-${process.pid}-${tmpCounter++}`);
+  let renamed = false;
+  try {
+    const fh = await open(tmp, 'w');
+    try {
+      await fh.writeFile(data, 'utf-8');
+      await fh.sync(); // durability barrier: bytes are on disk before the rename
+    } finally {
+      await fh.close();
+    }
+    await rename(tmp, path); // atomic replace
+    renamed = true;
+  } finally {
+    // If we never renamed (write/sync threw), remove the orphaned temp so a failed
+    // write does not litter the store directory.
+    if (!renamed) await unlink(tmp).catch(() => {});
+  }
+  // Best-effort: fsync the directory so the rename (a metadata op) is durable
+  // across a crash. POSIX allows fsync on a directory fd; platforms that reject it
+  // (e.g. Windows) simply skip — the data fsync above already bounds the loss.
+  try {
+    const dh = await open(dir, 'r');
+    try { await dh.sync(); } finally { await dh.close(); }
+  } catch { /* directory fsync unsupported — skip */ }
+}
+
+// ── advisory lock for the tiny compare-and-write commit section ───────────────
+
+// STALE < MAX_WAIT by design: a crashed holder's lock always becomes stealable
+// (10s) well before a waiter gives up (30s), so a wait timeout means genuine
+// sustained contention — implausible for these tiny critical sections — never a
+// dead holder. On timeout we fail loud rather than write unlocked: for a store
+// whose promise is "no write is lost," a rare surfaced error the caller can retry
+// beats a rare silent lost update.
+const LOCK_STALE_MS = 10_000; // steal a lock older than this (crashed holder)
+const LOCK_POLL_MS = 25;
+const LOCK_MAX_WAIT_MS = 30_000;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// Globally-unique-among-live-holders lock token: pid is unique across concurrent
+// processes, the counter across concurrent in-process acquires.
+let lockSeq = 0;
+
+/**
+ * Run `fn` while holding a per-file advisory lock (exclusive-create lockfile,
+ * polled, with stale-steal for a crashed holder). The lock guards only the brief
+ * compare-and-write commit, so contention is minimal. On a wait timeout it throws
+ * rather than proceed unlocked. The lock carries an ownership token and is released
+ * only if it is still ours — so if our hold was stolen as stale (e.g. a long GC
+ * pause) and recreated by another writer, we never delete a lock someone else holds.
+ */
+async function withCommitLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
+  await mkdir(dirname(lockPath), { recursive: true });
+  const token = `${process.pid}-${lockSeq++}`;
+  const start = Date.now();
+  for (;;) {
+    try {
+      const fh = await open(lockPath, 'wx'); // exclusive create — fails if held
+      await fh.writeFile(token);
+      await fh.close();
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      try {
+        const s = await stat(lockPath);
+        if (Date.now() - s.mtimeMs > LOCK_STALE_MS) {
+          await unlink(lockPath).catch(() => {});
+          continue;
+        }
+      } catch {
+        continue; // lock vanished between open and stat — retry
+      }
+      if (Date.now() - start > LOCK_MAX_WAIT_MS) {
+        throw new Error(
+          `store lock: timed out after ${LOCK_MAX_WAIT_MS}ms waiting for ${lockPath} ` +
+            `(sustained write contention) — retry the operation`,
+        );
+      }
+      await sleep(LOCK_POLL_MS);
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    // Release only if the on-disk lock is still ours. A token mismatch means our
+    // hold was stolen as stale and another writer now owns it — leave theirs alone.
+    try {
+      if ((await readFile(lockPath, 'utf-8')) === token) await unlink(lockPath).catch(() => {});
+    } catch { /* lock already gone — nothing to release */ }
+  }
+}
+
+/**
+ * Atomically read-modify-write a sequenced JSON store. The load → mutate →
+ * write happens entirely inside the per-store advisory lock, so the lock — not an
+ * optimistic sequence guard — is the real serialization point: `mutate` always
+ * runs against the freshest on-disk store, and a competing write cannot interleave
+ * between the read and the write. The monotonic `sequence` is still bumped (it
+ * orders writes, names quarantine files, and lets external readers detect change),
+ * but correctness no longer depends on every writer honoring it.
+ *
+ * `mutate` MUST be a pure merge over the loaded store (append / id-keyed
+ * upsert / supersede) so that applying it to the latest store is always correct.
+ * ALL writers of a given store MUST go through this function (or a wrapper of it)
+ * — a raw, lock-free write to the same path defeats the serialization.
+ */
+export async function casUpdate<T extends SequencedStore>(opts: {
+  storePath: string;
+  load: () => Promise<T>;
+  mutate: (current: T) => T;
+  serialize: (next: T) => string;
+}): Promise<T> {
+  const lockPath = `${opts.storePath}.lock`;
+  return withCommitLock(lockPath, async () => {
+    const current = await opts.load(); // fresh read inside the lock
+    const next = { ...opts.mutate(current), sequence: (current.sequence ?? 0) + 1 } as T;
+    await atomicWriteFile(opts.storePath, opts.serialize(next));
+    return next;
+  });
+}
+
+// ── corrupt-store quarantine ──────────────────────────────────────────────────
+
+async function exists(p: string): Promise<boolean> {
+  try { await access(p); return true; } catch { return false; }
+}
+
+/**
+ * Move a store that failed validation aside to a deterministic quarantine path
+ * `${path}.corrupt-<n>` and emit a recoverable signal, instead of silently
+ * substituting an empty store (which would present absence as current fact).
+ *
+ * The suffix is the first free non-negative integer — derived from what is already
+ * on disk, never wall-clock time — so recovery is reproducible. The claim is atomic
+ * (a hard link that fails if the destination exists), so two concurrent loaders can
+ * never overwrite each other's quarantine file and lose preserved bytes. Returns the
+ * quarantine path, or `null` when the move was unnecessary or impossible (caller
+ * still degrades to empty, but loudly).
+ */
+export async function quarantineCorrupt(path: string, reason: string): Promise<string | null> {
+  try {
+    for (let n = 0; ; n++) {
+      const dest = `${path}.corrupt-${n}`;
+      try {
+        // Atomic claim: link succeeds only if `dest` does not yet exist, so a
+        // racing loader that took this `n` is never overwritten.
+        await link(path, dest);
+        await unlink(path); // link + unlink = move-without-clobber
+        logger.warning(
+          `store quarantine: ${path} failed validation (${reason}) — moved to ${dest}. ` +
+            `Persisted data was NOT silently dropped; inspect or restore the quarantined file.`,
+        );
+        return dest;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'EEXIST') continue; // a prior quarantine took this n — try the next
+        if (code === 'ENOENT') {
+          // `path` is already gone — a concurrent loader quarantined it first, so the
+          // bytes are preserved under its own suffix. Not a loss.
+          logger.warning(
+            `store quarantine: ${path} was already moved aside by a concurrent loader (${reason}).`,
+          );
+          return null;
+        }
+        if (code === 'EPERM' || code === 'ENOSYS' || code === 'EXDEV' || code === 'EMLINK') {
+          // Hard links unsupported on this filesystem — fall back to a plain rename
+          // to the first free suffix (loses the atomic-claim guarantee, but such
+          // filesystems are rare and concurrent corrupt-loads rarer still).
+          let m = 0;
+          while (await exists(`${path}.corrupt-${m}`)) m++;
+          const dest2 = `${path}.corrupt-${m}`;
+          await rename(path, dest2);
+          logger.warning(
+            `store quarantine: ${path} failed validation (${reason}) — moved to ${dest2}. ` +
+              `Persisted data was NOT silently dropped; inspect or restore the quarantined file.`,
+          );
+          return dest2;
+        }
+        throw err;
+      }
+    }
+  } catch (err) {
+    logger.warning(
+      `store quarantine: ${path} failed validation (${reason}) and could not be moved aside ` +
+        `(${(err as Error).message}). Starting from an empty store.`,
+    );
+    return null;
+  }
+}

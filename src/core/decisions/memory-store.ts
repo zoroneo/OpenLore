@@ -8,48 +8,89 @@
  * handlers and the memory-staleness drift detector.
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { logger } from '../../utils/logger.js';
 import { fileExists } from '../../utils/command-helpers.js';
 import {
   OPENLORE_DIR,
   OPENLORE_MEMORY_SUBDIR,
   MEMORY_NOTES_FILE,
 } from '../../constants.js';
+import { atomicWriteFile, casUpdate, quarantineCorrupt } from './atomic-store.js';
 import type { MemoryStore } from '../../types/index.js';
 
 export function memoryDir(rootPath: string): string {
   return join(rootPath, OPENLORE_DIR, OPENLORE_MEMORY_SUBDIR);
 }
 
+function memoryPath(rootPath: string): string {
+  return join(memoryDir(rootPath), MEMORY_NOTES_FILE);
+}
+
 function emptyStore(): MemoryStore {
-  return { version: '1', updatedAt: '', memories: [] };
+  return { version: '1', updatedAt: '', sequence: 0, memories: [] };
 }
 
 export async function loadMemoryStore(rootPath: string): Promise<MemoryStore> {
-  const path = join(memoryDir(rootPath), MEMORY_NOTES_FILE);
+  const path = memoryPath(rootPath);
   if (!(await fileExists(path))) return emptyStore();
+  let raw: string;
   try {
-    const parsed = JSON.parse(await readFile(path, 'utf-8')) as Partial<MemoryStore>;
-    // Defend against a hand-edited / truncated store: a malformed file must not
-    // crash recall or drift — fall back to empty, like the decision store does.
-    if (!parsed || !Array.isArray(parsed.memories)) return emptyStore();
-    return { version: '1', updatedAt: parsed.updatedAt ?? '', memories: parsed.memories };
+    raw = await readFile(path, 'utf-8');
   } catch (err) {
-    logger.warning(
-      `memory store: failed to read ${path} (${(err as Error).message}) — starting fresh`,
-    );
+    // A read error that is not "missing file" is an I/O fault, not corruption —
+    // do not quarantine (the bytes may be fine); degrade to empty loudly.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return emptyStore();
+    await quarantineCorrupt(path, `read failed: ${(err as Error).message}`);
     return emptyStore();
   }
+  let parsed: Partial<MemoryStore> | null;
+  try {
+    parsed = JSON.parse(raw) as Partial<MemoryStore>;
+  } catch (err) {
+    // Torn / hand-corrupted JSON: quarantine, never silently empty (a torn store
+    // presented as empty is absence-as-current-fact). (harden-memory-integrity-invariant)
+    await quarantineCorrupt(path, `invalid JSON: ${(err as Error).message}`);
+    return emptyStore();
+  }
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.memories)) {
+    await quarantineCorrupt(path, 'invalid shape (missing memories array)');
+    return emptyStore();
+  }
+  return {
+    version: '1',
+    updatedAt: parsed.updatedAt ?? '',
+    sequence: typeof parsed.sequence === 'number' ? parsed.sequence : 0,
+    memories: parsed.memories,
+  };
 }
 
 export async function saveMemoryStore(rootPath: string, store: MemoryStore): Promise<void> {
-  const dir = memoryDir(rootPath);
-  await mkdir(dir, { recursive: true });
-  const updated: MemoryStore = { ...store, updatedAt: new Date().toISOString() };
-  await writeFile(join(dir, MEMORY_NOTES_FILE), JSON.stringify(updated, null, 2) + '\n', 'utf-8');
+  const updated: MemoryStore = {
+    ...store,
+    updatedAt: new Date().toISOString(),
+    sequence: (store.sequence ?? 0) + 1,
+  };
+  await atomicWriteFile(memoryPath(rootPath), JSON.stringify(updated, null, 2) + '\n');
+}
+
+/**
+ * Concurrency-safe read-modify-write of the memory store. Loads, applies
+ * `mutate` (a pure id-keyed merge), and commits under compare-and-swap so that
+ * two concurrent `remember` calls never lose a write — on a conflict the mutate
+ * is re-applied to the newer store. (harden-memory-integrity-invariant)
+ */
+export async function updateMemoryStore(
+  rootPath: string,
+  mutate: (store: MemoryStore) => MemoryStore,
+): Promise<MemoryStore> {
+  return casUpdate<MemoryStore>({
+    storePath: memoryPath(rootPath),
+    load: () => loadMemoryStore(rootPath),
+    mutate: (current) => ({ ...mutate(current), updatedAt: new Date().toISOString() }),
+    serialize: (next) => JSON.stringify(next, null, 2) + '\n',
+  });
 }
 
 /** Stable 8-char id derived from recordedAt + content. */

@@ -62,6 +62,7 @@ import {
 import { validateDirectory } from './utils.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { syncApprovedDecisions } from '../../decisions/syncer.js';
+import { updateDecisionStore } from '../../decisions/store.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -323,6 +324,34 @@ describe('handleApproveDecision', () => {
     expect(result.error).toMatch(/already synced/);
     const store = await readStore(tmpDir);
     expect(store.decisions[0].status).toBe('synced');
+  });
+
+  it('reports honestly (no false success) when the decision is removed during approval', async () => {
+    // C9: the decision passes the pre-check, then a concurrent writer removes it
+    // before the CAS commit. The handler must NOT claim success for a no-op patch.
+    const decision = makeDecision({ id: 'abc12345', status: 'draft', title: 'Race me' });
+    await writeStore(tmpDir, makeStore({ decisions: [decision] }));
+
+    // The wipe goes straight to a CAS write while approve still has loadDecisionStore
+    // ahead of its own CAS, so the wipe wins the lock and the decision is gone at
+    // approve's commit.
+    const [result] = await Promise.all([
+      handleApproveDecision(tmpDir, 'abc12345'),
+      updateDecisionStore(tmpDir, (s) => ({ ...s, decisions: [] })),
+    ]);
+
+    // Honesty invariant: either a clean approval (the decision was present at the
+    // approve commit) or the explicit concurrent-removal error — never a false
+    // 'approved' for a decision that is not actually approved on disk.
+    const r = result as { status?: string; error?: string };
+    const store = await readStore(tmpDir);
+    const onDisk = store.decisions.find((d) => d.id === 'abc12345');
+    if (r.status === 'approved') {
+      expect(onDisk?.status).toBe('approved');
+    } else {
+      expect(r.error).toMatch(/concurrently/);
+      expect(onDisk).toBeUndefined();
+    }
   });
 });
 

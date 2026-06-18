@@ -462,6 +462,12 @@ export interface DecisionStore {
   /** Cleared when a new session starts (new commit cycle) */
   sessionId: string;
   updatedAt: string;
+  /**
+   * Monotonic write counter for atomic compare-and-swap on save
+   * (change: harden-memory-integrity-invariant). Additive — defaults to 0 for
+   * legacy stores written before this field existed.
+   */
+  sequence?: number;
   /** Set after consolidation runs — gate uses this to skip no_decisions_recorded warning */
   lastConsolidatedAt?: string;
   decisions: PendingDecision[];
@@ -536,5 +542,11 @@ export interface AnchoredMemory {
 export interface MemoryStore {
   version: '1';
   updatedAt: string;
+  /**
+   * Monotonic write counter for atomic compare-and-swap on save
+   * (change: harden-memory-integrity-invariant). Additive — defaults to 0 for
+   * legacy stores written before this field existed.
+   */
+  sequence?: number;
   memories: AnchoredMemory[];
 }

@@ -20,7 +20,7 @@ import { createLLMService } from '../core/services/llm-service.js';
 import { isGitRepository, getChangedFiles, getFileDiff, getCommitMessages, resolveBaseRef, buildSpecMap } from '../core/drift/index.js';
 import {
   loadDecisionStore,
-  saveDecisionStore,
+  updateDecisionStore,
   upsertDecisions,
   patchDecision,
   makeDecisionId,
@@ -102,10 +102,15 @@ export async function openloreRecordDecision(options: RecordDecisionOptions): Pr
     syncedToSpecs: [],
   };
 
-  const updated = upsertDecisions(store, [decision]);
-  await saveDecisionStore(rootPath, updated);
+  // CAS upsert so concurrent writers never lose a draft; derive the id from the
+  // committed store's sessionId so repeated records in a session dedupe correctly.
+  let recordedId = id;
+  await updateDecisionStore(rootPath, (s) => {
+    recordedId = makeDecisionId(s.sessionId, domain, options.title);
+    return upsertDecisions(s, [{ ...decision, id: recordedId, sessionId: s.sessionId }]);
+  });
 
-  return { id };
+  return { id: recordedId };
 }
 
 // ============================================================================
@@ -182,12 +187,12 @@ export async function openloreConsolidateDecisions(
     : { verified: consolidated.map((d) => ({ ...d, status: 'verified' as const, confidence: 'medium' as const })), phantom: [], missing: [] };
   progress(onProgress, 'Verifying decisions', 'complete', `${verified.length} verified`);
 
-  let updatedStore = { ...store };
-  for (const id of supersededIds) {
-    updatedStore = patchDecision(updatedStore, id, { status: 'rejected' });
-  }
-  updatedStore = upsertDecisions(updatedStore, [...verified, ...phantom]);
-  await saveDecisionStore(rootPath, updatedStore);
+  // CAS persist onto the freshest store so a concurrently-recorded draft is kept.
+  const updatedStore = await updateDecisionStore(rootPath, (s) => {
+    let next = s;
+    for (const id of supersededIds) next = patchDecision(next, id, { status: 'rejected' });
+    return upsertDecisions(next, [...verified, ...phantom]);
+  });
 
   return { verified, phantom, missing, store: updatedStore };
 }

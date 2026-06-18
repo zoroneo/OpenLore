@@ -2977,3 +2977,17 @@ The API SHALL support `CLI Command openlore drift` to [partial spec — file too
 - **GIVEN** A git repository with a pre-commit hook installed
 - **WHEN** openlore drift --uninstall-hook is executed
 - **THEN** The pre-commit hook is removed
+
+### Requirement: DecisionApiWritesUseAtomicCompareAndSwap
+
+The decision-writing API functions (`openloreRecordDecision`, `openloreConsolidateDecisions`,
+`openloreSyncDecisions`) SHALL persist through the shared atomic compare-and-swap store path
+(`updateDecisionStore`), so a write committed concurrently by another path (e.g. the MCP
+`record_decision` handler or a background consolidation) is never silently clobbered.
+`openloreRecordDecision` SHALL derive the decision id from the committed store's `sessionId`
+so repeated records within a session deduplicate correctly.
+
+#### Scenario: Concurrent API record and MCP record lose no decision
+- **GIVEN** an `openloreRecordDecision` call and a concurrent `record_decision` against the same store
+- **WHEN** both complete
+- **THEN** the persisted store contains both decisions — neither write is lost

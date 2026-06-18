@@ -338,17 +338,22 @@ describe('loadDecisionStore', () => {
     expect(loaded.decisions[0].id).toBe('aaaabbbb');
   });
 
-  it('warns and returns empty store on JSON parse error', async () => {
+  it('quarantines (never silently empties) a corrupt store on JSON parse error', async () => {
+    // harden-memory-integrity-invariant: a torn store must not be silently
+    // substituted with empty — it is moved aside to *.corrupt-<n> and signaled.
     const { logger } = await import('../../utils/logger.js');
     const dir = decisionsDir(tmpDir);
     await mkdir(dir, { recursive: true });
-    const { writeFile } = await import('node:fs/promises');
+    const { writeFile, readdir } = await import('node:fs/promises');
     await writeFile(join(dir, 'pending.json'), 'not valid json', 'utf-8');
     const store = await loadDecisionStore(tmpDir);
-    expect(store.decisions).toHaveLength(0);
+    expect(store.decisions).toHaveLength(0); // degrades to empty (no crash)
     expect(vi.mocked(logger.warning)).toHaveBeenCalledWith(
-      expect.stringContaining('decisions store: failed to read'),
+      expect.stringContaining('store quarantine'),
     );
+    // The corrupt bytes are preserved on disk, not dropped.
+    const entries = await readdir(dir);
+    expect(entries.some((e) => e.startsWith('pending.json.corrupt-'))).toBe(true);
   });
 });
 

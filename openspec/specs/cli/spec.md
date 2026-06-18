@@ -286,6 +286,49 @@ The system SHALL serialize concurrent decision consolidation processes using a c
 
 > Decision recorded: 412817d2
 > Date: 2026-06-01
+
+### Requirement: GateReasonMachineIsAPureTotalClassifier
+
+The pre-commit gate's block-reason decision SHALL be computed by a pure, total
+classifier (`classifyGateState`, `src/core/decisions/gate-state.ts`) that maps the
+decision-store state (approved / verified / draft counts, consolidation recency,
+active count, git-repo + staged-source flags) to exactly one outcome: pass, or
+block with one of the canonical reasons (`verified`, `approved_not_synced`,
+`drafts_pending_consolidation`, `no_decisions_recorded`). The CLI gate command
+SHALL delegate the reason decision to this classifier and only build the
+user-facing payload around it. The classifier SHALL be **total** (every state maps
+to exactly one outcome), **deterministic / idempotent** (same state ⇒ same
+outcome), and **deadlock-free** (a blocking outcome always carries an actionable
+reason; a passing outcome never carries one), enforced by property tests
+(`gate-state.test.ts`).
+
+#### Scenario: Every gate state yields exactly one outcome
+
+- **GIVEN** any combination of decision-store counts, consolidation recency, and
+  git staged-source state
+- **WHEN** the gate reason is classified
+- **THEN** the result is either a clean pass or a block with exactly one canonical
+  reason — never blocked-without-reason and never passing-with-reason
+
+### Requirement: AllDecisionStoreWritersUseAtomicCompareAndSwap
+
+Every writer of the decision store (`pending.json`) — `record_decision`,
+`approve`/`reject`, consolidation, sync, and the HTTP API equivalents — SHALL
+persist through the single atomic compare-and-swap path
+(`updateDecisionStore` / `casUpdate`), so a write committed by one path is never
+silently clobbered by a stale snapshot from another. A raw, lock-free overwrite of
+the store by any production writer is prohibited.
+
+#### Scenario: Rapid record_decision under background consolidation loses no draft
+
+- **GIVEN** several `record_decision` calls in quick succession, each spawning a
+  background consolidation that also writes the store
+- **WHEN** all writes complete
+- **THEN** the persisted store contains every recorded decision — no write is lost
+  to a competing path on a different lock
+
+> Decision recorded: 412817d2
+> Date: 2026-06-01
 ### Requirement: AddSelecttestsMcpToolForCallgraphbasedTestImpactSelection
 
 The system SHALL expose a select_tests MCP tool that walks the call graph backward from changed symbols or a git diff ref to identify transitively reachable test files, returning reaching paths and confidence metadata.

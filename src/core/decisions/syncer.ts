@@ -12,7 +12,7 @@ import { fileExists } from '../../utils/command-helpers.js';
 import { logger } from '../../utils/logger.js';
 import { parseSpecHeader } from '../drift/spec-mapper.js';
 import type { PendingDecision, DecisionStore, SpecMap, DecisionScope } from '../../types/index.js';
-import { patchDecision, purgeInactiveDecisions, saveDecisionStore } from './store.js';
+import { patchDecision, purgeInactiveDecisions, updateDecisionStore } from './store.js';
 
 /**
  * ADRs are durable architectural memory, not a log of every implementation choice.
@@ -70,7 +70,22 @@ export async function syncApprovedDecisions(
     // Invariant: store and ADR files agree — a decision is removed from store only after
     // status='synced', which is set only after spec + ADR writes succeed (or are skipped).
     // Partial failure leaves the decision in store at status='approved', safe to retry.
-    await saveDecisionStore(options.rootPath, purgeInactiveDecisions(updatedStore));
+    //
+    // CAS persist: the synced snapshot (`updatedStore`) is authoritative for the
+    // decisions being synced, but we graft in any decision present on disk yet
+    // absent from the snapshot — a draft recorded concurrently — so a competing
+    // write is preserved rather than clobbered.
+    const snapshot = updatedStore;
+    const snapshotIds = new Set(snapshot.decisions.map((d) => d.id));
+    updatedStore = await updateDecisionStore(options.rootPath, (disk) => {
+      const extras = disk.decisions.filter((d) => !snapshotIds.has(d.id));
+      return purgeInactiveDecisions({
+        ...snapshot,
+        sessionId: disk.sessionId,
+        lastConsolidatedAt: disk.lastConsolidatedAt ?? snapshot.lastConsolidatedAt,
+        decisions: [...snapshot.decisions, ...extras],
+      });
+    });
   }
 
   return {

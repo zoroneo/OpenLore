@@ -22,13 +22,14 @@ import { createLLMService } from '../../core/services/llm-service.js';
 import { isGitRepository, getChangedFiles, getFileDiff, getCommitMessages, resolveBaseRef, buildSpecMap } from '../../core/drift/index.js';
 import {
   loadDecisionStore,
-  saveDecisionStore,
+  updateDecisionStore,
   replaceDecisions,
   patchDecision,
   getDecisionsByStatus,
   INACTIVE_STATUSES,
 } from '../../core/decisions/store.js';
 import { consolidateDrafts } from '../../core/decisions/consolidator.js';
+import { classifyGateState } from '../../core/decisions/gate-state.js';
 import { acquireDecisionsLock } from '../../core/decisions/lock.js';
 import { extractFromDiff } from '../../core/decisions/extractor.js';
 import { verifyDecisions } from '../../core/decisions/verifier.js';
@@ -487,12 +488,13 @@ Examples:
         process.exitCode = 1;
         return;
       }
-      const updated = patchDecision(store, id, {
-        status: 'approved',
+      const approvePatch = {
+        status: 'approved' as const,
         reviewedAt: new Date().toISOString(),
         reviewNote: options.note ?? options.reason,
-      });
-      await saveDecisionStore(rootPath, updated);
+      };
+      // CAS so the write can't clobber a concurrent record/consolidate write.
+      const updated = await updateDecisionStore(rootPath, (s) => patchDecision(s, id, approvePatch));
       emit(rootPath, 'decisions', { event: 'decision_approved', id, title: decision.title, transport: 'cli' });
       logger.success(`Decision ${id} approved.`);
       if (!options.json) displayDecision({ ...decision, status: 'approved' }, true);
@@ -529,12 +531,11 @@ Examples:
         process.exitCode = 1;
         return;
       }
-      const updated = patchDecision(store, id, {
+      await updateDecisionStore(rootPath, (s) => patchDecision(s, id, {
         status: 'rejected',
         reviewedAt: new Date().toISOString(),
         reviewNote: options.note ?? options.reason,
-      });
-      await saveDecisionStore(rootPath, updated);
+      }));
       emit(rootPath, 'decisions', { event: 'decision_rejected', id, title: decision.title, transport: 'cli' });
       logger.success(`Decision ${id} rejected.`);
 
@@ -634,14 +635,10 @@ Examples:
         : { verified: consolidated.map((d) => ({ ...d, status: 'verified' as const, confidence: 'medium' as const })), phantom: [], missing: [] };
 
       // Step 4 — Persist
-      let updatedStore = { ...store };
       // Reject all original drafts — they've been replaced by consolidated decisions.
       // Also reject any explicitly superseded IDs from prior sessions.
       const originalDraftIds = new Set(drafts.map((d) => d.id));
       const originalById = new Map(store.decisions.map((d) => [d.id, d]));
-      for (const id of [...originalDraftIds, ...supersededIds]) {
-        updatedStore = patchDecision(updatedStore, id, { status: 'rejected' });
-      }
       // Preserve recordedAt provenance:
       // - Direct match: consolidated decision ID matches original draft → use its recordedAt.
       // - Merged decision (new ID, no match): use earliest recordedAt across all superseded
@@ -657,11 +654,18 @@ Examples:
         if (earliestSupersededAt) return { ...d, recordedAt: earliestSupersededAt };
         return d;
       });
-      // replaceDecisions (not upsertDecisions) — consolidated decisions share IDs
-      // with their original drafts; upsert would silently no-op after the reject above.
-      updatedStore = replaceDecisions(updatedStore, withProvenance);
-      updatedStore = { ...updatedStore, lastConsolidatedAt: new Date().toISOString() };
-      await saveDecisionStore(rootPath, updatedStore);
+      // CAS persist: apply the consolidation result to the FRESHEST store, so a
+      // record_decision/approve committed concurrently (different lock) is preserved
+      // rather than clobbered by this stale snapshot. replaceDecisions (not upsert)
+      // because consolidated decisions share IDs with their original drafts.
+      const updatedStore = await updateDecisionStore(rootPath, (s) => {
+        let next = s;
+        for (const id of [...originalDraftIds, ...supersededIds]) {
+          next = patchDecision(next, id, { status: 'rejected' });
+        }
+        next = replaceDecisions(next, withProvenance);
+        return { ...next, lastConsolidatedAt: new Date().toISOString() };
+      });
 
       if (options.json) {
         process.stdout.write(JSON.stringify({ verified, phantom, missing }, null, 2) + '\n');
@@ -673,18 +677,17 @@ Examples:
       if (options.gate && process.stdin.isTTY && process.stdout.isTTY && verified.length > 0) {
         const results = await runTuiApproval(verified);
 
-        let gateStore = updatedStore;
+        const reviewedAt = new Date().toISOString();
+        const tuiPatches: Array<{ id: string; status: 'approved' | 'rejected' }> = [];
         for (const [id, decision] of results) {
           if (decision === 'approved' || decision === 'rejected') {
-            gateStore = patchDecision(gateStore, id, {
-              status: decision,
-              reviewedAt: new Date().toISOString(),
-            });
+            tuiPatches.push({ id, status: decision });
             const d = updatedStore.decisions.find((x) => x.id === id);
             emit(rootPath, 'decisions', { event: `decision_${decision}`, id, title: d?.title, transport: 'cli-tui' });
           }
         }
-        await saveDecisionStore(rootPath, gateStore);
+        await updateDecisionStore(rootPath, (s) =>
+          tuiPatches.reduce((acc, p) => patchDecision(acc, p.id, { status: p.status, reviewedAt }), s));
 
         const stillPending = verified.filter(
           (d) => !results.has(d.id) || results.get(d.id) === 'skipped',
@@ -769,9 +772,49 @@ Examples:
 
     // ── Gate only (no consolidation — consolidation happens on record_decision) ──
     if (options.gate && !options.consolidate) {
-      // Block if approved decisions haven't been synced to spec files yet.
       const approved = getDecisionsByStatus(store, 'approved');
-      if (approved.length > 0) {
+      const verified = getDecisionsByStatus(store, 'verified');
+      const drafts = getDecisionsByStatus(store, 'draft');
+      const missing: Array<{ file: string; description: string }> = [];
+
+      // Phantom decisions ("recorded but no code evidence") are excluded — stale
+      // phantoms from previous sessions would otherwise silently bypass the gate.
+      const activeCount = store.decisions.filter((d) => !INACTIVE_STATUSES.has(d.status)).length;
+      const consolidatedRecently = !!store.lastConsolidatedAt
+        && (Date.now() - new Date(store.lastConsolidatedAt).getTime()) < CONSOLIDATION_GRACE_PERIOD_MS;
+
+      // The staged-source check is the only input requiring git; resolve it lazily,
+      // only in the state where it can change the outcome (nothing else gates).
+      let isGitRepo = false;
+      let hasStagedSourceChanges = false;
+      if (approved.length === 0 && verified.length === 0 && drafts.length === 0
+          && !consolidatedRecently && activeCount === 0) {
+        isGitRepo = await isGitRepository(rootPath);
+        if (isGitRepo) {
+          try {
+            const { stdout } = await execFileAsync(
+              'git', ['diff', '--cached', '--name-only', '--diff-filter=ACDMR'],
+              { cwd: rootPath },
+            );
+            const stagedFiles = stdout.trim().split('\n').filter(Boolean);
+            const SOURCE_EXTS = /\.(ts|js|tsx|jsx|py|go|rs|rb|java|cpp|cc|swift)$/;
+            hasStagedSourceChanges = stagedFiles.some((f) => SOURCE_EXTS.test(f));
+          } catch { /* git unavailable — skip */ }
+        }
+      }
+
+      // The pure reason machine is the single arbiter of which reason applies.
+      const outcome = classifyGateState({
+        approvedCount: approved.length,
+        verifiedCount: verified.length,
+        draftCount: drafts.length,
+        consolidatedRecently,
+        activeCount,
+        isGitRepo,
+        hasStagedSourceChanges,
+      });
+
+      if (outcome.reason === GATE_REASONS.APPROVED_NOT_SYNCED) {
         const payload = {
           gated: true,
           reason: GATE_REASONS.APPROVED_NOT_SYNCED,
@@ -784,87 +827,60 @@ Examples:
         return;
       }
 
-      const verified = getDecisionsByStatus(store, 'verified');
-      const missing: Array<{ file: string; description: string }> = [];
+      if (outcome.reason === GATE_REASONS.DRAFTS_PENDING_CONSOLIDATION) {
+        // Drafts recorded but consolidation never completed.
+        // Output structured JSON so the agent can relay to the user and act on the answer.
+        const payload = {
+          gated: true,
+          reason: GATE_REASONS.DRAFTS_PENDING_CONSOLIDATION,
+          message: `${drafts.length} draft decision(s) were recorded but never consolidated.`,
+          drafts: drafts.map((d) => ({ id: d.id, title: d.title, recordedAt: d.recordedAt })),
+          actions: {
+            consolidate: 'openlore decisions --consolidate',
+            consolidateAndGate: 'openlore decisions --consolidate --gate',
+            skip: 'git commit --no-verify',
+          },
+        };
+        process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+        process.exitCode = 1;
+        return;
+      }
 
-      if (verified.length === 0) {
-        const drafts = getDecisionsByStatus(store, 'draft');
-        if (drafts.length > 0) {
-          // Drafts recorded but consolidation never completed.
-          // Output structured JSON so the agent can relay to the user and act on the answer.
-          const payload = {
-            gated: true,
-            reason: GATE_REASONS.DRAFTS_PENDING_CONSOLIDATION,
-            message: `${drafts.length} draft decision(s) were recorded but never consolidated.`,
-            drafts: drafts.map((d) => ({ id: d.id, title: d.title, recordedAt: d.recordedAt })),
-            actions: {
-              consolidate: 'openlore decisions --consolidate',
-              consolidateAndGate: 'openlore decisions --consolidate --gate',
-              skip: 'git commit --no-verify',
-            },
-          };
-          process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
-          process.exitCode = 1;
-          return;
-        }
+      if (outcome.reason === GATE_REASONS.NO_DECISIONS_RECORDED) {
+        // Source files staged but nothing recorded — output JSON for agent to relay.
+        const payload = {
+          gated: true,
+          reason: GATE_REASONS.NO_DECISIONS_RECORDED,
+          message: 'Source files are staged but no architectural decisions were recorded.',
+          actions: {
+            consolidateAndGate: 'openlore decisions --consolidate --gate',
+            skip: 'git commit --no-verify',
+          },
+        };
+        process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+        process.exitCode = 1;
+        return;
+      }
 
-        // If consolidation already ran recently, trust it found nothing — skip the warning.
-        const consolidatedRecently = store.lastConsolidatedAt
-          && (Date.now() - new Date(store.lastConsolidatedAt).getTime()) < CONSOLIDATION_GRACE_PERIOD_MS;
-        if (consolidatedRecently) {
-          process.exitCode = 0;
-          return;
-        }
-
-        // If source files are staged but nothing was recorded, offer to run the fallback extractor.
-        // Phantom decisions ("recorded but no code evidence") are excluded — stale phantoms from
-        // previous sessions would otherwise silently bypass the gate for all future commits.
-        const activeDecisions = store.decisions.filter(
-          (d) => !INACTIVE_STATUSES.has(d.status),
-        );
-        if (activeDecisions.length === 0 && await isGitRepository(rootPath)) {
-          try {
-            const { stdout } = await execFileAsync(
-              'git', ['diff', '--cached', '--name-only', '--diff-filter=ACDMR'],
-              { cwd: rootPath },
-            );
-            const stagedFiles = stdout.trim().split('\n').filter(Boolean);
-            const SOURCE_EXTS = /\.(ts|js|tsx|jsx|py|go|rs|rb|java|cpp|cc|swift)$/;
-            const hasSourceChanges = stagedFiles.some((f) => SOURCE_EXTS.test(f));
-            if (hasSourceChanges) {
-              // Source files staged but nothing recorded — output JSON for agent to relay.
-              const payload = {
-                gated: true,
-                reason: GATE_REASONS.NO_DECISIONS_RECORDED,
-                message: 'Source files are staged but no architectural decisions were recorded.',
-                actions: {
-                  consolidateAndGate: 'openlore decisions --consolidate --gate',
-                  skip: 'git commit --no-verify',
-                },
-              };
-              process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
-              process.exitCode = 1;
-              return;
-            }
-          } catch { /* git unavailable — skip */ }
-        }
+      if (!outcome.gated) {
+        // Clean commit — nothing to review.
         process.exitCode = 0;
         return;
       }
 
+      // outcome.reason === GATE_REASONS.VERIFIED — verified decisions await review.
       // TTY: interactive TUI
       if (process.stdin.isTTY && process.stdout.isTTY && verified.length > 0) {
         const results = await runTuiApproval(verified);
-        let gateStore = store;
+        const reviewedAt = new Date().toISOString();
+        const tuiPatches: Array<{ id: string; status: 'approved' | 'rejected' }> = [];
         for (const [id, decision] of results) {
           if (decision === 'approved' || decision === 'rejected') {
-            gateStore = patchDecision(gateStore, id, {
-              status: decision,
-              reviewedAt: new Date().toISOString(),
-            });
+            tuiPatches.push({ id, status: decision });
           }
         }
-        await saveDecisionStore(rootPath, gateStore);
+        await updateDecisionStore(rootPath, (s) =>
+          tuiPatches.reduce((acc, p) => patchDecision(acc, p.id, { status: p.status, reviewedAt }), s));
         const stillPending = verified.filter(
           (d) => !results.has(d.id) || results.get(d.id) === 'skipped',
         );

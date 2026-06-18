@@ -16,7 +16,7 @@
 
 import { validateDirectory, sanitizeMcpError } from './utils.js';
 import { loadDecisionStore, INACTIVE_STATUSES } from '../../decisions/store.js';
-import { loadMemoryStore, saveMemoryStore, makeMemoryId } from '../../decisions/memory-store.js';
+import { loadMemoryStore, updateMemoryStore, makeMemoryId } from '../../decisions/memory-store.js';
 import { AnchorContext } from '../../decisions/anchor-adapter.js';
 import { memoryFreshness, decisionAnchors, type GraphFreshnessView } from '../../decisions/anchor.js';
 import type {
@@ -70,9 +70,12 @@ export async function handleRemember(
       tags: tags?.length ? tags : undefined,
     };
 
-    const store = await loadMemoryStore(rootPath);
-    store.memories = [...store.memories.filter((m) => m.id !== memory.id), memory];
-    await saveMemoryStore(rootPath, store);
+    // CAS update so concurrent remember calls never lose a write: the id-keyed
+    // upsert is re-applied to the latest store on a write conflict.
+    await updateMemoryStore(rootPath, (store) => ({
+      ...store,
+      memories: [...store.memories.filter((m) => m.id !== memory.id), memory],
+    }));
 
     return {
       id: memory.id,
