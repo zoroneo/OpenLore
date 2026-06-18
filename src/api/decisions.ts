@@ -22,7 +22,7 @@ import {
   loadDecisionStore,
   updateDecisionStore,
   upsertDecisions,
-  patchDecision,
+  applyConsolidationResult,
   makeDecisionId,
 } from '../core/decisions/store.js';
 import { consolidateDrafts } from '../core/decisions/consolidator.js';
@@ -188,11 +188,12 @@ export async function openloreConsolidateDecisions(
   progress(onProgress, 'Verifying decisions', 'complete', `${verified.length} verified`);
 
   // CAS persist onto the freshest store so a concurrently-recorded draft is kept.
-  const updatedStore = await updateDecisionStore(rootPath, (s) => {
-    let next = s;
-    for (const id of supersededIds) next = patchDecision(next, id, { status: 'rejected' });
-    return upsertDecisions(next, [...verified, ...phantom]);
-  });
+  // replaceDecisions (via applyConsolidationResult), NOT upsert: consolidated decisions
+  // reuse their drafts' deterministic ids, so an upsert would silently drop the verified
+  // status. Matches the CLI consolidation path.
+  const updatedStore = await updateDecisionStore(rootPath, (s) =>
+    applyConsolidationResult(s, { verified, phantom, supersededIds }),
+  );
 
   return { verified, phantom, missing, store: updatedStore };
 }

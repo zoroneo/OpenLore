@@ -124,6 +124,25 @@ export function patchDecision(
   };
 }
 
+/**
+ * Apply a consolidation result to the store: mark each superseded draft `rejected`,
+ * then merge the verified + phantom decisions with {@link replaceDecisions} (NOT
+ * upsert). Consolidated decisions reuse their source drafts' deterministic ids, so an
+ * upsert would treat the id as already-present and silently no-op — the draft would
+ * never transition to its verified/phantom status. Pure; the caller persists the result
+ * through the CAS path. (The CLI consolidation path performs the equivalent merge inline.)
+ */
+export function applyConsolidationResult(
+  store: DecisionStore,
+  result: { verified: PendingDecision[]; phantom: PendingDecision[]; supersededIds: string[] }
+): DecisionStore {
+  let next = store;
+  for (const id of result.supersededIds) {
+    next = patchDecision(next, id, { status: 'rejected' });
+  }
+  return replaceDecisions(next, [...result.verified, ...result.phantom]);
+}
+
 export function getDecisionsByStatus(
   store: DecisionStore,
   status: DecisionStatus
