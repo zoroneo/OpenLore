@@ -14,7 +14,7 @@
   <br>
   <img src="https://img.shields.io/badge/MCP-ready-7c3aed?logo=anthropic&logoColor=white" alt="MCP ready">
   <img src="https://img.shields.io/badge/languages-18-f97316" alt="18 languages">
-  <img src="https://img.shields.io/badge/tests-2900%2B-success" alt="2900+ tests">
+  <img src="https://img.shields.io/badge/tests-3900%2B-success" alt="3900+ tests">
   <img src="https://img.shields.io/badge/API_key-not_required-0ea5e9" alt="No API key required">
   <a href="https://github.com/clay-good/OpenLore/stargazers"><img src="https://img.shields.io/github/stars/clay-good/OpenLore?style=social" alt="GitHub stars"></a>
 </p>

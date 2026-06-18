@@ -55,3 +55,10 @@
 - `this.x = fn` inside a class body associates with the enclosing class name.
 - Object-literal `pair` values (`{ prop: function(){} }`) remain out of scope; only assignment and
   `var`/`const`/`let` bindings are added.
+- Class-field arrows (`class C { handler = () => {} }`, a `public_field_definition`) remain out of
+  scope; only `method_definition` members are indexed inside a class body. This is the one common
+  modern idiom the widening does not reach — a follow-up can add a `public_field_definition` arm.
+- Distinct functions in one file that derive the same `filePath::name` id (e.g. a reassigned bare
+  `f = function(){}` in two scopes) collapse to one node under the existing id-keyed last-wins de-dup,
+  and their out-edges merge onto the survivor. This is a pre-existing property of the id scheme (two
+  nested `function helper(){}` collapse the same way) — not introduced here, not widened in severity.
