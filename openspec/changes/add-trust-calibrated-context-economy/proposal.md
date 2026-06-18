@@ -1,6 +1,6 @@
 # Trust-calibrated context economy: cut mistakes and tokens together
 
-> Status: IMPLEMENTED (recall path) — shipped on branch `feat/recall-deterministic-ranking` (PR #161).
+> Status: IMPLEMENTED (recall path) — shipped on branch `feat/recall-deterministic-ranking` (PR #161). Ships in **v2.1.0**.
 > Grounding certificates + verified-current + budget-aware recall are live and tested. Two scoped
 > deviations from the original draft are recorded under "Implementation status" below.
 > Change 3 of the memory-integrity set (`harden-memory-integrity-invariant`,

@@ -1,7 +1,7 @@
 # Deterministic recall ranking: stop losing memories to phrasing
 
-> Status: IMPLEMENTED — shipped on branch `feat/recall-deterministic-ranking`. See the
-> "Implementation status" section at the foot of this file for what landed, file refs, and tests.
+> Status: IMPLEMENTED — shipped on branch `feat/recall-deterministic-ranking` (PR #161). Ships in **v2.1.0**.
+> See the "Implementation status" section at the foot of this file for what landed, file refs, and tests.
 > Memory-quality change. Complements `add-trust-calibrated-context-economy` (which governs *ordering
 > under budget and trust evidence*, explicitly **not** which memories are relevant — this change fills
 > exactly that gap) and `add-bitemporal-typed-memory-operations` (a `type` filter composes with this).

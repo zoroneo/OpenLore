@@ -1,6 +1,6 @@
 # One-command, idempotent agent onboarding (`openlore connect`)
 
-> Status: IMPLEMENTED — shipped on branch `feat/recall-deterministic-ranking` (PR #161).
+> Status: IMPLEMENTED — shipped on branch `feat/recall-deterministic-ranking` (PR #161). Ships in **v2.1.0**.
 > Delivered by **enhancing the existing `openlore install` engine and adding a thin `connect`
 > front-end**, not by building a parallel system. See "Implementation status" at the foot of this file.
 
