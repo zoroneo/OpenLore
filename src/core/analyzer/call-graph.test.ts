@@ -167,6 +167,372 @@ describe('CallGraphBuilder — JavaScript', () => {
 });
 
 // ---------------------------------------------------------------------------
+// JavaScript — member-assigned & var-bound functions (CommonJS / pre-class idioms)
+// (change: widen-js-function-node-extraction)
+// ---------------------------------------------------------------------------
+
+describe('CallGraphBuilder — member-assigned & var-bound functions', () => {
+  it('indexes `exports.x = function(){}` as a node named exports.x', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/handler.js',
+      language: 'JavaScript',
+      content: `
+        exports.handler = function handler() { helper(); };
+        function helper() {}
+      `,
+    }]);
+
+    expect(nodeNames(result)).toContain('exports.handler');
+    expect(result.nodes.has('lib/handler.js::exports.handler')).toBe(true);
+    expect(edgePairs(result)).toContain('exports.handler→helper');
+    expect(fanIn(result, 'helper')).toBe(1);
+  });
+
+  it('indexes `obj.method = function(){}` (Express-style) and resolves its calls', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/application.js',
+      language: 'JavaScript',
+      content: `
+        var app = {};
+        app.use = function use(fn) { return app.lazyrouter(); };
+        app.lazyrouter = function lazyrouter() {};
+      `,
+    }]);
+
+    expect(nodeNames(result)).toEqual(expect.arrayContaining(['app.use', 'app.lazyrouter']));
+    expect(edgePairs(result)).toContain('app.use→app.lazyrouter');
+  });
+
+  it('indexes `X.prototype.y = function(){}`', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/view.js',
+      language: 'JavaScript',
+      content: `
+        function View() {}
+        View.prototype.render = function render() {};
+      `,
+    }]);
+
+    expect(nodeNames(result)).toContain('View.prototype.render');
+    expect(result.nodes.has('lib/view.js::View.prototype.render')).toBe(true);
+  });
+
+  it('indexes a bare identifier assignment `f = function(){}`', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/late.js',
+      language: 'JavaScript',
+      content: `
+        let f;
+        f = function f() {};
+      `,
+    }]);
+
+    expect(nodeNames(result)).toContain('f');
+  });
+
+  it('indexes a `var`-bound function/arrow', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/old.js',
+      language: 'JavaScript',
+      content: `
+        var parse = function parse() {};
+        var format = () => {};
+      `,
+    }]);
+
+    expect(nodeNames(result)).toEqual(expect.arrayContaining(['parse', 'format']));
+  });
+
+  it('indexes a member-assigned arrow', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/router.js',
+      language: 'JavaScript',
+      content: `
+        var router = {};
+        router.handle = (req, res) => {};
+      `,
+    }]);
+
+    expect(nodeNames(result)).toContain('router.handle');
+  });
+
+  it('does NOT index member assignments whose RHS is not a function', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/reexport.js',
+      language: 'JavaScript',
+      content: `
+        exports.router = require('./router');
+        exports.VERSION = 42;
+        exports.config = { a: 1 };
+        function real() {}
+      `,
+    }]);
+
+    // Only the genuine function is a node; the re-export, the number and the
+    // object literal must extract nothing.
+    expect(nodeNames(result)).toEqual(['real']);
+  });
+
+  it('collapses a re-assigned member to a single node (no duplicate explosion)', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/reassign.js',
+      language: 'JavaScript',
+      content: `
+        obj.fn = function () {};
+        obj.fn = function () {};
+      `,
+    }]);
+
+    const fnNodes = Array.from(result.nodes.values()).filter(n => n.name === 'obj.fn');
+    expect(fnNodes.length).toBe(1);
+  });
+
+  it('assigns member-named nodes a distinct, escaped stableId', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/app.js',
+      language: 'JavaScript',
+      content: `app.use = function use(fn) {};`,
+    }]);
+
+    const node = Array.from(result.nodes.values()).find(n => n.name === 'app.use');
+    expect(node).toBeDefined();
+    // Dotted member names are backtick-escaped by stableSymbolId.
+    expect(node?.stableId).toBeDefined();
+    expect(node?.stableId).toContain('app.use');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JavaScript/TypeScript — class-field arrow/function members
+// (change: widen-js-function-node-extraction — public_field_definition arm)
+// ---------------------------------------------------------------------------
+
+describe('CallGraphBuilder — class-field arrow/function members', () => {
+  it('indexes `class C { handler = () => {} }` as C.handler with the enclosing className', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'src/widget.ts',
+      language: 'TypeScript',
+      content: `
+        class Widget {
+          handler = () => {};
+        }
+      `,
+    }]);
+
+    expect(nodeNames(result)).toContain('handler');
+    expect(result.nodes.get('src/widget.ts::Widget.handler')?.className).toBe('Widget');
+  });
+
+  it('resolves calls out of a class-field arrow', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'src/comp.ts',
+      language: 'TypeScript',
+      content: `
+        function recompute(msg) {}
+        class Comp {
+          onClick = () => { recompute('clicked'); };
+        }
+      `,
+    }]);
+
+    expect(edgePairs(result)).toContain('onClick→recompute');
+    expect(fanIn(result, 'recompute')).toBe(1);
+  });
+
+  it('indexes a class-field function expression and a type-annotated field arrow', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'src/svc.ts',
+      language: 'TypeScript',
+      content: `
+        class Svc {
+          legacy = function legacy() {};
+          typed: () => void = () => {};
+        }
+      `,
+    }]);
+
+    expect(nodeNames(result)).toEqual(expect.arrayContaining(['legacy', 'typed']));
+    expect(result.nodes.get('src/svc.ts::Svc.legacy')?.className).toBe('Svc');
+    expect(result.nodes.get('src/svc.ts::Svc.typed')?.className).toBe('Svc');
+  });
+
+  it('does NOT index non-function class fields', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'src/state.ts',
+      language: 'TypeScript',
+      content: `
+        class State {
+          count = 0;
+          data = {};
+          label = 'x';
+          real = () => {};
+        }
+      `,
+    }]);
+
+    // Only the arrow field is a node; the number, object and string fields extract nothing.
+    expect(nodeNames(result)).toEqual(['real']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JavaScript/TypeScript — widen-js extraction: adversarial boundaries
+// (change: widen-js-function-node-extraction — exclusion shapes the PR body
+//  claims "by construction" but the first cut left untested, plus the async-
+//  metadata correctness that the captured RHS value node now drives.)
+// ---------------------------------------------------------------------------
+
+describe('CallGraphBuilder — widen-js exclusion boundaries', () => {
+  it('does NOT index a computed-member assignment `obj[key] = function(){}`', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/dyn.js',
+      language: 'JavaScript',
+      content: `obj[key] = function(){}; function real(){}`,
+    }]);
+    // subscript_expression LHS is not a member_expression — excluded by construction.
+    expect(nodeNames(result)).toEqual(['real']);
+  });
+
+  it('does NOT index an augmented assignment `obj.x ||= function(){}`', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/aug.js',
+      language: 'JavaScript',
+      content: `obj.x ||= function(){}; obj.y = function(){}; function real(){}`,
+    }]);
+    // augmented_assignment_expression is a distinct node type — only the plain `=` matches.
+    expect(nodeNames(result)).toEqual(['obj.y', 'real']);
+  });
+
+  it('indexes only the inner binding of a chained `exports.a = exports.b = function(){}`', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/chain.js',
+      language: 'JavaScript',
+      content: `exports.a = exports.b = function(){};`,
+    }]);
+    // The outer assignment's RHS is another assignment_expression, not a function — only inner matches.
+    expect(nodeNames(result)).toEqual(['exports.b']);
+  });
+
+  it('does NOT index a private class field `#handler = () => {}`', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'src/priv.ts',
+      language: 'TypeScript',
+      content: `class C { #secret = () => {}; pub = () => {}; }`,
+    }]);
+    // #-prefixed fields are private_property_identifier, not property_identifier.
+    expect(nodeNames(result)).toEqual(['pub']);
+  });
+
+  it('collapses a member LHS split across lines to a stable dotted name', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/wrap.js',
+      language: 'JavaScript',
+      content: `app\n  .use = function(){};`,
+    }]);
+    expect(nodeNames(result)).toContain('app.use');
+  });
+
+  it('resolves an inbound call to a member-assigned method', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/inbound.js',
+      language: 'JavaScript',
+      content: `
+        app.render = function render(){};
+        app.boot = function boot(){ app.render(); };
+      `,
+    }]);
+    expect(edgePairs(result)).toContain('app.boot→app.render');
+    expect(fanIn(result, 'app.render')).toBe(1);
+    // The edge must land on the real internal node, not a synthetic external leaf.
+    const renderId = 'lib/inbound.js::app.render';
+    expect(result.edges.some(e => e.calleeId === renderId)).toBe(true);
+    expect(result.nodes.has('external::app.render')).toBe(false);
+  });
+
+  it('does NOT fabricate a member edge when no dotted node matches', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/nomatch.js',
+      language: 'JavaScript',
+      content: `
+        app.boot = function boot(){ redisClient.get('k'); };
+        app.use = function use(){};
+      `,
+    }]);
+    // redisClient.get has no internal dotted node — must stay an external leaf,
+    // and must not spuriously resolve onto an unrelated member node.
+    expect(fanIn(result, 'app.use')).toBe(0);
+    expect(result.nodes.has('external::redisClient.get')).toBe(true);
+  });
+});
+
+describe('CallGraphBuilder — widen-js async metadata (RHS value node)', () => {
+  it('marks an async member-assigned function isAsync', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/h.js',
+      language: 'JavaScript',
+      content: `exports.handler = async function(){};`,
+    }]);
+    expect(Array.from(result.nodes.values()).find(n => n.name === 'exports.handler')?.isAsync).toBe(true);
+  });
+
+  it('marks an async class-field arrow isAsync', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'src/c.ts',
+      language: 'TypeScript',
+      content: `class C { run = async () => {}; idle = () => {}; }`,
+    }]);
+    expect(Array.from(result.nodes.values()).find(n => n.name === 'run')?.isAsync).toBe(true);
+    // a non-async sibling field stays false — async must come from the RHS, not the class.
+    expect(Array.from(result.nodes.values()).find(n => n.name === 'idle')?.isAsync).toBe(false);
+  });
+
+  it('marks an async var-bound arrow isAsync and leaves a sync one false', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'lib/v.js',
+      language: 'JavaScript',
+      content: `var load = async () => {}; var parse = () => {};`,
+    }]);
+    expect(Array.from(result.nodes.values()).find(n => n.name === 'load')?.isAsync).toBe(true);
+    expect(Array.from(result.nodes.values()).find(n => n.name === 'parse')?.isAsync).toBe(false);
+  });
+
+  it('still marks a plain `async function` declaration and `async` method isAsync', async () => {
+    const builder = new CallGraphBuilder();
+    const result = await builder.build([{
+      path: 'src/keep.ts',
+      language: 'TypeScript',
+      content: `async function fetchIt(){} class C { async load(){} sync(){} }`,
+    }]);
+    expect(Array.from(result.nodes.values()).find(n => n.name === 'fetchIt')?.isAsync).toBe(true);
+    expect(Array.from(result.nodes.values()).find(n => n.name === 'load')?.isAsync).toBe(true);
+    expect(Array.from(result.nodes.values()).find(n => n.name === 'sync')?.isAsync).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Python
 // ---------------------------------------------------------------------------
 

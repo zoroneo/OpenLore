@@ -1,14 +1,51 @@
-# OpenLore
+<h1 align="center">OpenLore</h1>
 
-**Deterministic, persistent memory that empowers AI coding agents to accurately map their knowledge boundaries — and eliminate guesswork — across massive code repositories.**
+<p align="center">
+  <strong>A local-first, deterministic intelligence graph that eliminates repetitive file reads for AI coding agents</strong><br>
+  tracks context freshness, and unifies code, infrastructure, and architectural decisions<br>
+  into a single, safety-gated governance runtime.
+</p>
 
-OpenLore runs a one-time static analysis of your codebase and keeps a navigable knowledge graph — call structure, types, tests, decisions, and spec drift — incrementally fresh as you edit. Agents query it through MCP tools (or the CLI) to start every task already oriented, instead of re-deriving the system from dozens of file reads. It's deterministic and local-first — no LLM in the hot path — so the same question returns the same grounded answer, and an agent is told when a fact has gone stale rather than served a confident guess.
+<p align="center">
+  <a href="https://www.npmjs.com/package/openlore"><img src="https://img.shields.io/npm/v/openlore?color=2563eb&label=npm&logo=npm&logoColor=white" alt="npm version"></a>
+  <a href="https://github.com/clay-good/OpenLore/actions/workflows/ci.yml"><img src="https://github.com/clay-good/OpenLore/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/npm/l/openlore?color=22c55e" alt="MIT License"></a>
+  <img src="https://img.shields.io/node/v/openlore?color=339933&logo=node.js&logoColor=white" alt="Node >=22.5">
+  <br>
+  <img src="https://img.shields.io/badge/MCP-ready-7c3aed?logo=anthropic&logoColor=white" alt="MCP ready">
+  <img src="https://img.shields.io/badge/languages-18-f97316" alt="18 languages">
+  <img src="https://img.shields.io/badge/tests-3900%2B-success" alt="3900+ tests">
+  <img src="https://img.shields.io/badge/API_key-not_required-0ea5e9" alt="No API key required">
+  <a href="https://github.com/clay-good/OpenLore/stargazers"><img src="https://img.shields.io/github/stars/clay-good/OpenLore?style=social" alt="GitHub stars"></a>
+</p>
 
 <p align="center">
   <img src="docs/openlore-demo.gif" alt="OpenLore on Django (7,066 files): onboard once, then one deterministic orient() call replaces grepping and reading 75 files to find a function's 160-caller blast radius" width="100%">
 </p>
 
 <p align="center"><em>Onboard a 7,066-file repo once, then replace "grep 75 files and hope" with one deterministic call that returns the exact blast radius.</em></p>
+
+---
+
+AI coding agents are powerful but amnesiac: every task starts by re-reading the same files to rediscover structure, and every long session quietly drifts toward confident-but-stale assumptions. OpenLore runs a **one-time static analysis** of your codebase and keeps a navigable knowledge graph — call structure, types, tests, decisions, and spec drift — incrementally fresh as you edit. Agents query it through **MCP tools** (or the CLI) to start every task already oriented. It is **deterministic and local-first** — no LLM in the hot path — so the same question returns the same grounded answer, and an agent is *told when a fact has gone stale* rather than served a confident guess.
+
+### What you get
+
+- 🧠 **Persistent architectural memory** — `orient()` once; agents stop re-deriving the system from dozens of file reads, across sessions.
+- ⚡ **Deterministic & local-first** — pure static analysis, no API key, no network, same answer every time. `orient()` runs in **~430µs p50** on a 15k-node graph.
+- 🔭 **One-call orientation** — `orient(task)` returns the relevant functions, their callers, matching spec sections, and insertion-point candidates in a single call.
+- 🕸️ **One unified graph** — application code, **Infrastructure-as-Code**, and **architectural decisions** all project onto the same node/edge primitives, so a single traversal answers questions that span all three.
+- 🧪 **Test-impact selection** — "I changed `parseConfig()` — which tests should I run?" answered by backward call-graph reachability.
+- ☠️ **Dead-code & reachability** — cross-language mark-and-sweep over **18 languages**, confidence-tagged, never deletion authority.
+- 🧭 **Context-freshness tracking (Epistemic Lease)** — every response carries a factual freshness note when your cached context ages or the repo moves.
+- 🛡️ **Safety-gated governance** — architectural decisions recorded, gated at commit, and synced into living specs; spec/code **drift detected in milliseconds**, no API key.
+- 📊 **Benchmarked & honest** — **−26% agent round-trips** on deep traces in large repos; we publish the losses next to the wins and every claim traces to a command you can run.
+
+<p align="center">
+  <strong><a href="#5-minute-quickstart">Quickstart</a> · <a href="#value-scorecard--does-it-pay-for-itself">Benchmarks</a> · <a href="#how-it-works">How it works</a> · <a href="#core-features">Features</a> · <a href="#openlore-vs-alternatives">vs. Alternatives</a> · <a href="#documentation">Docs</a></strong>
+</p>
+
+> **New here?** `npm install -g openlore && openlore install` — one command detects your agent, wires it up, and builds the index. No API key. Jump to the [5-Minute Quickstart](#5-minute-quickstart).
 
 > Migrating from `spec-gen`? The package is now [`openlore`](https://www.npmjs.com/package/openlore) and the command is `openlore` — see [docs/RENAME-TO-OPENLORE.md](docs/RENAME-TO-OPENLORE.md) for the short checklist (rename `.spec-gen/` → `.openlore/`, reinstall).
 
@@ -47,7 +84,7 @@ Deep-trace detail — the win scales with codebase size (cost Δ; round-trips WI
 
 ## Why It Exists
 
-AI agents are powerful but amnesiac. On every new task:
+The amnesia is structural, not incidental. On every new task:
 
 - They re-read the same source files to understand structure
 - They forget architectural decisions made two sessions ago
@@ -538,6 +575,23 @@ npm run build
 npm test          # 2900+ unit tests
 npm run typecheck
 ```
+
+---
+
+## Star History & Community
+
+If OpenLore saves your agents from re-reading the same files, **star the repo** — it's the signal that tells us to keep building, and it helps other engineers find it.
+
+<p align="center">
+  <a href="https://star-history.com/#clay-good/OpenLore&Date">
+    <img src="https://api.star-history.com/svg?repos=clay-good/OpenLore&type=Date" alt="OpenLore star history" width="70%">
+  </a>
+</p>
+
+- ⭐ **Star** to follow along: [github.com/clay-good/OpenLore](https://github.com/clay-good/OpenLore)
+- 🐛 **Found a bug or have an idea?** Open an [issue](https://github.com/clay-good/OpenLore/issues).
+- 🤝 **Want to contribute?** Start with [CONTRIBUTING.md](CONTRIBUTING.md) — the test suite, decision gate, and dogfooding loop are all documented.
+- 📦 Install in one line: `npm install -g openlore && openlore install`
 
 ---
 

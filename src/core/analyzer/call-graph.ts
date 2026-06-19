@@ -1013,6 +1013,19 @@ const TS_FN_QUERY = `
     (variable_declarator
       name: (identifier) @fn.name
       value: [(arrow_function) (function_expression)] @fn.value)) @fn.node
+
+  (variable_declaration
+    (variable_declarator
+      name: (identifier) @fn.name
+      value: [(arrow_function) (function_expression)] @fn.value)) @fn.node
+
+  (assignment_expression
+    left: [(identifier) (member_expression)] @fn.name
+    right: [(arrow_function) (function_expression)] @fn.value) @fn.node
+
+  (public_field_definition
+    name: (property_identifier) @fn.name
+    value: [(arrow_function) (function_expression)] @fn.value) @fn.node
 `;
 
 const TS_CALL_QUERY = `
@@ -1045,8 +1058,19 @@ async function extractTSGraph(
     const nodeCapture = match.captures.find(c => c.name === 'fn.node');
     if (!nameCapture || !nodeCapture) continue;
 
-    const name = nameCapture.node.text;
+    // For member-assigned functions (`app.use = …`, `Foo.prototype.bar = …`) the
+    // name capture is the whole `member_expression`; its text is the dotted path.
+    // Collapse any incidental whitespace (a LHS split across lines) so the derived
+    // name — and therefore the node id and stableId — stay stable and readable.
+    const name = nameCapture.node.type === 'member_expression'
+      ? nameCapture.node.text.replace(/\s+/g, '')
+      : nameCapture.node.text;
     const fnNode = nodeCapture.node;
+    // The arrow/function-expression RHS for binding/assignment/field shapes
+    // (`const f = async …`, `exports.h = async function …`, `x = async () => …`).
+    // For function_declaration / method_definition arms there is no value capture
+    // and async lives on fnNode itself.
+    const valueNode = match.captures.find(c => c.name === 'fn.value')?.node;
 
     // Find enclosing class (walk up — skip class_body, its children are methods not the name)
     let className: string | undefined;
@@ -1060,9 +1084,15 @@ async function extractTSGraph(
       cursor = cursor.parent;
     }
 
-    // Detect async (method_definition has 'async' as first named child keyword)
-    const isAsync = fnNode.children.some(c => c.type === 'async') ||
-      fnNode.text.startsWith('async ');
+    // Detect async. For binding/assignment/field shapes the keyword is on the
+    // captured RHS (`async () => {}`, `async function () {}`), NOT on the
+    // enclosing declaration/assignment whose text starts with `const`/`var`/
+    // `exports.…`. Prefer the value node when present; otherwise fall back to
+    // fnNode (function_declaration / method_definition, which carry `async` directly).
+    const asyncNode = valueNode ?? fnNode;
+    const isAsync = asyncNode.children.some(c => c.type === 'async') ||
+      asyncNode.text.startsWith('async ') ||
+      asyncNode.text.startsWith('async(');
 
     const id = className
       ? `${filePath}::${className}.${name}`
@@ -4448,6 +4478,23 @@ export class CallGraphBuilder {
           const candidates = trie.findByQualifiedName(raw.calleeObject, raw.calleeName);
           if (candidates.length > 0) { calleeNode = candidates[0]; confidence = 'type_name'; }
         }
+      }
+
+      // Strategy 1c — same-file member-assigned function (JS/TS dotted-name nodes).
+      // The widen-js extraction indexes `app.render = function(){}` as the node
+      // `${filePath}::app.render`. A call `app.render()` (receiver `app`, name
+      // `render`) must resolve to that exact internal node — otherwise it falls
+      // through to an `external::app.render` leaf and the real node sits at fanIn 0,
+      // indexed but unreachable inbound. Direct id lookup is exact and same-file,
+      // so there is no heuristic false-positive risk. (JS nodes are tagged
+      // 'TypeScript' by the extractor; accept both spellings.)
+      if (
+        !calleeNode && raw.calleeObject &&
+        (callerNode.language === 'TypeScript' || callerNode.language === 'JavaScript')
+      ) {
+        const dottedId = `${callerNode.filePath}::${raw.calleeObject}.${raw.calleeName}`;
+        const internal = allNodes.get(dottedId);
+        if (internal && !internal.isExternal) { calleeNode = internal; confidence = 'same_file'; }
       }
 
       // Strategy 2 — type inference on receiver variable

@@ -2034,6 +2034,55 @@ The system SHALL validate FunctionNode according to these rules:
 - **WHEN** isCrossCuttingHub is called
 - **THEN** Returns true
 
+### Requirement: TypeScriptFunctionNodeExtractionShapes
+
+The TypeScript/JavaScript extractor SHALL index a function node for each of the following source
+shapes, in addition to `function_declaration`, exported `function_declaration`, and ES6
+`method_definition`: a `const`/`let` binding (`lexical_declaration`) to an arrow or function
+expression; a `var` binding (`variable_declaration`) to an arrow or function expression; and an
+`assignment_expression` whose left-hand side is an identifier or a member expression and whose
+right-hand side is an arrow or function expression (`app.use = function(){}`,
+`exports.handler = function(){}`, `Foo.prototype.bar = function(){}`, `f = function(){}`); and a
+class-field definition (`public_field_definition`) whose value is an arrow or function expression
+(`class C { handler = () => {} }`). A member-assigned node SHALL be named by the full dotted member
+path (`app.use`, `Foo.prototype.bar`), with incidental whitespace collapsed so the derived name, node
+id, and `stableId` are stable. A class-field function node SHALL be named by its bare property
+identifier (`handler`) and associated with its enclosing class (id `File::Class.handler`), exactly as
+a `method_definition` is. The extractor SHALL NOT index an assignment whose right-hand side is not a
+function/arrow (a `require(...)` call, a member access, an identifier, a number, or an object literal),
+a non-function class-field value (a number, object, or string), a computed-member assignment
+(`obj[key] = function(){}`), or an augmented assignment (`obj.x ||= function(){}`). When the same
+member is assigned more than once in a file, the analyzer SHALL collapse it to a single node (the
+existing id-keyed last-wins de-duplication), never emitting duplicate nodes.
+
+#### Scenario: Member-assigned method is indexed
+
+- **GIVEN** a JavaScript file containing `app.use = function use(fn) { app.lazyrouter(); }` and
+  `app.lazyrouter = function lazyrouter() {}`
+- **WHEN** the call graph is built
+- **THEN** both `app.use` and `app.lazyrouter` are function nodes and the edge `app.use → app.lazyrouter`
+  is resolved internally
+
+#### Scenario: Class-field arrow/function members are indexed
+
+- **GIVEN** a TypeScript/JavaScript file containing `class Comp { onClick = () => { recompute(); } }`
+- **WHEN** the call graph is built
+- **THEN** `onClick` is a function node with className `Comp` (id `…::Comp.onClick`) and the edge
+  `onClick → recompute` is resolved
+
+#### Scenario: Non-function assignment is not indexed
+
+- **GIVEN** a JavaScript file containing `exports.router = require('./router')`, `exports.VERSION = 42`,
+  and `exports.config = { a: 1 }`
+- **WHEN** the call graph is built
+- **THEN** none of those assignments produce a function node
+
+#### Scenario: Re-assigned member collapses to one node
+
+- **GIVEN** a file that assigns `obj.fn = function(){}` twice
+- **WHEN** the call graph is built
+- **THEN** exactly one node named `obj.fn` exists
+
 ### Requirement: RefactorEntryValidation
 
 The system SHALL validate RefactorEntry according to these rules:
@@ -5591,6 +5640,30 @@ The system SHALL rank recalled memories using a deterministic field-weighted sco
 
 > Decision recorded: 08005eb9
 > Date: 2026-06-18
+### Requirement: WidenTsjsFunctionnodeExtractionToMemberassignedAndVarboundFunctions
+
+The system SHALL extract member-assigned functions (obj.prop = function, exports.x = function, X.prototype.y = function) and var-bound functions as first-class call-graph nodes in JS/TS analysis.
+
+> Decision recorded: d8b81a9b
+> Date: 2026-06-18
+### Requirement: IndexClassfieldArrowfunctionMembersViaAPublicfielddefinitionQueryArm
+
+The system SHALL index class fields bound to arrow or function expressions as named functions in the call graph, using the same naming convention as method definitions.
+
+> Decision recorded: efcd981c
+> Date: 2026-06-19
+### Requirement: ResolveSamefileMembermethodCallsToTheirDottednameNodesViaExactIdLookup
+
+The system SHALL resolve same-file member-method calls to their dotted-name call-graph nodes via exact id lookup before falling back to type inference or external resolution.
+
+> Decision recorded: 527e0f1f
+> Date: 2026-06-19
+### Requirement: DetectAsyncFromTheCapturedRhsValueNodeForBindingassignmentfieldFunctions
+
+The system SHALL detect the async keyword from the RHS value node of binding, assignment, and class-field function expressions rather than from the enclosing statement node.
+
+> Decision recorded: 1a926c8a
+> Date: 2026-06-19
 
 ## Technical Notes
 
@@ -6128,3 +6201,43 @@ recall previously ranked memories by binary substring token-overlap, which silen
 Implements add-trust-calibrated-context-economy on the recall path (the only memory surface; orient has none yet). A fresh recalled fact now carries a GroundingCertificate {symbol?, filePath, lineSpan?, contentHash} per anchor and a verifiedCurrent marker, so the agent can cite the proven-unchanged span instead of re-reading. The certificate reuses the same span the freshness check hashes; lineSpan is computed from the node's byte offsets against the live file (the edge store persists offsets, not line numbers), so no schema change and no new extraction. recall gains an optional tokenBudget that returns the highest grounding-density facts first (verified-current core) and reports the withheld count — never a silent cap. Deliberate deviation from the proposal: budget ordering uses grounding density (verified-current first) rather than pulling the hub/chokepoint/volatile salience classifiers into the memory path, keeping the change deterministic and self-contained; salience-label ordering is noted as a future refinement.
 
 **Consequences:** New GroundingCertificate type. recall response gains optional verifiedCurrent/certificates per item and a budget {tokenBudget, returned, withheld} block with a no-silent-cap note; all additive (callers ignoring them are unaffected). Certificates only attach to fresh, anchored facts when the graph is available; drifted/orphaned never carry them, preserving the authoritative-recall invariant. The full MCP tool manifest is near its spec-28 char budget, so the recall tool description was kept minimal (the certificate is self-documenting via response fields) — reinforces add-lean-default-tool-surface.
+
+### Widen TS/JS function-node extraction to member-assigned and var-bound functions
+
+**Status:** Approved
+**Date:** 2026-06-18
+**ID:** d8b81a9b
+
+The TS/JS extractor's TS_FN_QUERY matched only function_declaration, exported function_declaration, ES6 method_definition, and lexical_declaration (const/let). It missed dominant pre-class/CommonJS/ES5 idioms — obj.prop = function(){}, exports.x = function(){}, X.prototype.y = function(){}, and var f = function(){}. Two tree-sitter clauses are added: an assignment_expression with identifier|member_expression LHS and arrow|function_expression RHS, and a variable_declaration arm mirroring the existing lexical_declaration one. RHS is constrained to function/arrow so exports.x = require('y') and obj.prop = 42 never match. Member nodes are named by full LHS text (app.use, Foo.prototype.bar); de-dup is the existing last-wins allNodes.set(id).
+
+**Consequences:** Node set widens for JS/TS: fanIn/fanOut, hub/god/entry-point classification, dead-code candidates, and duplicate detection all see the new nodes. Known limitations: arity/signatureShape may be empty for function-expression assignments whose inner name differs from the assigned member; async detection follows existing fnNode.text heuristic; this.x = fn inside a class body associates with the enclosing class name.
+
+### Index class-field arrow/function members via a public_field_definition query arm
+
+**Status:** Approved
+**Date:** 2026-06-19
+**ID:** efcd981c
+
+Class fields bound to an arrow or function expression (`class C { handler = () => {} }`) are the dominant modern handler idiom, but the widen-js-function-node-extraction change (decision d8b81a9b) covered only assignment_expression and var/const/let bindings — leaving this common shape invisible to the call graph. Adding a public_field_definition arm to TS_FN_QUERY closes the one common idiom the original widening did not reach.
+
+**Consequences:** One additional TS_FN_QUERY arm. The field is named by its bare property identifier (`handler`) and associated with the enclosing class via the existing className walk, exactly mirroring method_definition (id `File::Class.handler`). Private (`#`) fields stay unindexed, consistent with method_definition which also matches only property_identifier. Non-function field values are excluded because the value is constrained to arrow/function. Extends d8b81a9b; does not supersede it.
+
+### Resolve same-file member-method calls to their dotted-name nodes via exact id lookup
+
+**Status:** Approved
+**Date:** 2026-06-19
+**ID:** 527e0f1f
+
+The widen-js change indexes member-assigned functions (e.g. `app.render = function(){}`) as dotted-name nodes (`filePath::app.render`), but the edge resolver had no strategy to match calls like `app.render()` to these nodes — they fell through to synthetic `external::app.render` leaves, leaving the real internal nodes unreachable at fanIn 0. A new deterministic strategy performs exact id lookup (`${filePath}::${object}.${name}`) in the same file before falling back to type inference or external resolution. Direct id lookup is exact and local with no heuristic false positives; cross-file and instance-receiver cases are intentionally left to existing strategies.
+
+**Consequences:** Same-file member methods now accrue real inbound edges and fanIn, so reachability, impact analysis, and dead-code detection see them. Cross-file member calls and instance-receiver prototype calls (e.g. `view.render` → `View.prototype.render`) remain out of scope.
+
+### Detect async from the captured RHS value node for binding/assignment/field functions
+
+**Status:** Approved
+**Date:** 2026-06-19
+**ID:** 1a926c8a
+
+The widen-js node shapes (member assignment, var/const/let binding, class field) set the FunctionNode whose text starts with `exports.`/`var`/`const`/the field name, so the prior async heuristic (`fnNode.children async` || `fnNode.text.startsWith('async ')`) returned false for every async member/binding/field. The extraction already captures the arrow/function-expression RHS as `@fn.value`; async detection now reads that value node when present, falling back to fnNode only for `function_declaration`/`method_definition` arms that carry `async` directly.
+
+**Consequences:** isAsync is now correct for async member-assigned, var-bound, const/let-bound, and class-field arrow/function nodes. No behavior change for plain function/method declarations. The analyzer spec's known-limitation on async for these shapes is superseded.
