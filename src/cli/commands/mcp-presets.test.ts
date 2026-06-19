@@ -51,6 +51,16 @@ describe('MCP tool presets', () => {
     }
   });
 
+  // Guard: the `--preset` help text says "instead of all N" where N is the full
+  // surface; it drifted to a stale "58"/"45" while TOOL_DEFINITIONS grew. Tie the
+  // help integer to the live count so a new tool forces the string to move (the
+  // doc-count guard covers README/docs but not this CLI help string).
+  it('the --preset help text states the live full-surface tool count', () => {
+    const opt = mcpCommand.options.find(o => o.long === '--preset');
+    expect(opt, 'the --preset option is registered').toBeTruthy();
+    expect(opt!.description, 'help states the live full-surface count').toContain(`all ${TOOL_DEFINITIONS.length}`);
+  });
+
   it('no selector exposes the full tool set', () => {
     expect(selectActiveTools(TOOL_DEFINITIONS, {})).toHaveLength(TOOL_DEFINITIONS.length);
     expect(TOOL_DEFINITIONS.length).toBeGreaterThan(NAV.length); // full surface really is larger
