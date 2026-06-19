@@ -23,11 +23,11 @@ import {
   anchorFreshness,
   type GraphFreshnessView,
 } from './anchor.js';
-import { makeFreshnessView } from './anchor-adapter.js';
+import { makeFreshnessView, AnchorContext } from './anchor-adapter.js';
 import { EdgeStore } from '../services/edge-store.js';
 import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR } from '../../constants.js';
 import type { StructuralAnchor } from '../../types/index.js';
-import type { FunctionNode } from '../analyzer/call-graph.js';
+import { CallGraphBuilder, type FunctionNode } from '../analyzer/call-graph.js';
 
 // ── deterministic PRNG (no new dependency; replayable across runs) ────────────
 // mulberry32: a tiny seeded generator so the property cases are reproducible.
@@ -148,51 +148,81 @@ describe('FreshnessFailsSafeTowardDistrust — whitespace / comment-only edits d
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// 3. Multibyte / UTF-8 span boundaries — byte-correct slicing end to end
+// 3. Multibyte / UTF-8 span boundaries — span slicing aligned end to end
 // ════════════════════════════════════════════════════════════════════════════
+// tree-sitter node offsets (startIndex/endIndex) are UTF-16 code-unit indices,
+// NOT byte offsets. The anchor adapter must slice the source string by those
+// code units — slicing a Buffer by them drifts in any file with multibyte chars
+// before the span, citing a misaligned hash + line range. These tests derive the
+// node from the REAL parser (ground truth on the offset unit) rather than
+// hand-computed offsets, so they fail if the slicing unit ever regresses.
 describe('FreshnessFailsSafeTowardDistrust — multibyte span boundaries', () => {
   let root: string;
+  let fooNode: FunctionNode;
   const ANALYSIS = () => join(root, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
-  // Source whose function body contains multibyte chars so the span's end byte
-  // offset lands after a multibyte sequence, not inside an ASCII run.
+  // Source whose lines BEFORE the function contain multibyte chars, so a node
+  // offset interpreted as a byte index would land mid-span. `foo`'s body also
+  // carries a multibyte literal so an end-offset slip corrupts the span too.
   const SRC = 'const banner = "préface 日本語 🚀";\nexport function foo() {\n  return "café";\n}\n';
 
-  function fooNode(): FunctionNode {
-    const start = Buffer.byteLength('const banner = "préface 日本語 🚀";\n', 'utf-8');
-    const end = Buffer.byteLength(SRC, 'utf-8') - 1; // through the function, drop trailing newline
-    return { id: 'src/foo.ts::foo', name: 'foo', filePath: 'src/foo.ts', isAsync: false, language: 'typescript', startIndex: start, endIndex: end, fanIn: 0, fanOut: 0 };
-  }
+  // The exact source a correct citation must reconstruct (the function_declaration
+  // node, which begins at `function` — the `export` modifier is its parent).
+  const FOO_SRC = SRC.slice(SRC.indexOf('function foo'), SRC.indexOf('}') + 1);
 
-  async function buildStore(): Promise<void> {
+  async function buildStore(): Promise<FunctionNode> {
+    const result = await new CallGraphBuilder().build([
+      { path: 'src/foo.ts', content: SRC, language: 'TypeScript' },
+    ]);
+    const node = [...result.nodes.values()].find(n => n.name === 'foo');
+    if (!node) throw new Error('parser did not produce a node for foo');
     await mkdir(ANALYSIS(), { recursive: true });
     const store = EdgeStore.open(EdgeStore.dbPath(ANALYSIS()));
     store.clearAll();
-    store.insertNodes([fooNode()]);
+    store.insertNodes([node]);
     store.close();
+    return node;
   }
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'openlore-mb-'));
     await mkdir(join(root, 'src'), { recursive: true });
     await writeFile(join(root, 'src', 'foo.ts'), SRC, 'utf-8');
-    await buildStore();
+    fooNode = await buildStore();
   });
   afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
+  // Reconstruct the span exactly as the adapter does: slice the string by the
+  // real (code-unit) offsets. Byte-slicing here would drift past the leading
+  // multibyte line and never reproduce FOO_SRC.
   function spanHashOfCurrent(): string {
-    const buf = Buffer.from(SRC, 'utf-8');
-    const n = fooNode();
-    return hashSpan(buf.subarray(n.startIndex, n.endIndex).toString('utf-8'));
+    return hashSpan(SRC.slice(fooNode.startIndex, fooNode.endIndex));
   }
 
-  it('the freshness view hashes a multibyte-bounded span byte-correctly (fresh only when bytes unchanged)', () => {
+  it('node offsets are code units, and the cited span reconstructs the exact function source', () => {
+    expect(SRC.slice(fooNode.startIndex, fooNode.endIndex)).toBe(FOO_SRC);
+  });
+
+  it('the certificate cites the right line range + a hash of the real span (not byte-misaligned)', () => {
+    const ctx = AnchorContext.open(root)!;
+    try {
+      const cert = ctx.certificateForAnchor({ nodeId: fooNode.id, filePath: 'src/foo.ts', symbolName: 'foo' });
+      expect(cert).toBeDefined();
+      // foo's declaration is on line 2; its closing brace on line 4.
+      expect(cert!.lineSpan).toEqual({ start: 2, end: 4 });
+      expect(cert!.contentHash).toBe(hashSpan(FOO_SRC));
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it('the freshness view hashes the span correctly (fresh only when the span is unchanged)', () => {
     const store = EdgeStore.open(EdgeStore.dbPath(ANALYSIS()));
     try {
       const view = makeFreshnessView(store, root);
-      const anchor: StructuralAnchor = { nodeId: 'src/foo.ts::foo', filePath: 'src/foo.ts', contentHash: spanHashOfCurrent() };
-      // Unchanged bytes → fresh, proving the byte-offset slice reconstructs the
-      // exact same span across a multibyte boundary (no off-by-one corruption).
+      const anchor: StructuralAnchor = { nodeId: fooNode.id, filePath: 'src/foo.ts', contentHash: spanHashOfCurrent() };
+      // Unchanged source → fresh, proving the code-unit slice reconstructs the
+      // exact span across a multibyte boundary (no off-by-one corruption).
       expect(anchorFreshness(anchor, view).freshness).toBe('fresh');
     } finally {
       store.close();
@@ -206,7 +236,7 @@ describe('FreshnessFailsSafeTowardDistrust — multibyte span boundaries', () =>
     const store = EdgeStore.open(EdgeStore.dbPath(ANALYSIS()));
     try {
       const view = makeFreshnessView(store, root);
-      const anchor: StructuralAnchor = { nodeId: 'src/foo.ts::foo', filePath: 'src/foo.ts', contentHash: recorded };
+      const anchor: StructuralAnchor = { nodeId: fooNode.id, filePath: 'src/foo.ts', contentHash: recorded };
       expect(anchorFreshness(anchor, view).freshness).toBe('drifted');
     } finally {
       store.close();
