@@ -13,9 +13,10 @@
 - [~] Test: orienting on a file with a recorded constraint surfaces it — `orient-memory-freshness.test.ts`.
 
 ## 2. Reversal / supersession awareness (headline)
-- [x] Surface superseded/reverted decisions and memories as "Do not re-attempt X; reverted at commit Y
+- [x] Surface superseded/reverted decisions and memories as "Do not re-attempt X; retired as of commit Y
       — reason," reading the bitemporal supersession record. Implemented as orient's additive
-      `reversals` field (`orient.ts`, ADR-0017).
+      `reversals` field (`orient.ts`, ADR-0017). A superseded decision is excluded from the authoritative
+      set by the same supersession predicate that surfaces it (never double-served), even pre-consolidation.
 - [x] Test: a memory reverted at commit Y is briefed as a do-not-repeat warning naming the commit, not
       hidden — `orient-reversal-awareness.test.ts` (unit) + `DOGFOOD-reversal-awareness.md` (real-git e2e,
       real reverting-commit SHA in the warning).

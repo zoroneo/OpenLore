@@ -61,6 +61,18 @@ describe('MCP tool presets', () => {
     expect(opt!.description, 'help states the live full-surface count').toContain(`all ${TOOL_DEFINITIONS.length}`);
   });
 
+  // Guard: the `--preset` help enumerates the navigation preset by name; it drifted to
+  // listing only 7 of the 10 members (missing get_landmarks/get_map/find_path) while the
+  // preset itself grew. Tie the enumeration to the live preset so a new member forces the
+  // help string to move (the count guard above did not cover the enumeration).
+  it('the --preset help names every navigation-preset member', () => {
+    const opt = mcpCommand.options.find(o => o.long === '--preset');
+    const help = opt!.description;
+    for (const t of TOOL_PRESETS.navigation) {
+      expect(help, `--preset help names the navigation tool "${t}"`).toContain(t);
+    }
+  });
+
   it('no selector exposes the full tool set', () => {
     expect(selectActiveTools(TOOL_DEFINITIONS, {})).toHaveLength(TOOL_DEFINITIONS.length);
     expect(TOOL_DEFINITIONS.length).toBeGreaterThan(NAV.length); // full surface really is larger

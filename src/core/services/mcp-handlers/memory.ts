@@ -30,7 +30,7 @@ import { queryTerms, scoreMemory, type RankFields } from './memory-ranking.js';
 import { assembleBoundary, computeStaleness } from './confidence-boundary.js';
 import { resolveFederationScope } from '../../federation/resolver.js';
 import { findFleetMemory } from '../../federation/fleet-memory.js';
-import { collectReversals } from './reversals.js';
+import { collectReversals, supersededDecisionIds } from './reversals.js';
 import {
   MEMORY_TYPES,
   type AnchoredMemory,
@@ -303,7 +303,12 @@ export async function handleRecall(
       // Decisions are outside the bitemporal model — skip them when a temporal filter
       // or a type filter is active (they are untyped and lifecycle-governed).
       if (!temporal && !wantType) {
+        // A decision superseded by another (pre-consolidation, still draft/approved/
+        // verified) must not be served as authoritative — it surfaces only under
+        // `reversals`. Same predicate as collectReversals so the two never disagree.
+        const supersededIds = supersededDecisionIds(decisionStore.decisions);
         for (const d of activeDecisions(decisionStore.decisions)) {
+          if (supersededIds.has(d.id)) continue;
           const anchors = decisionAnchors(d);
           const f = memoryFreshness(anchors, view);
           const r = scoreMemory(terms, decisionFields(d, anchors));

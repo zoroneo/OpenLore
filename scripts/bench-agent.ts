@@ -393,7 +393,7 @@ function renderReport(
   L.push('');
   L.push('> Spec 13 kill-signal: if the relational-task reduction is small or negative, that is the earliest signal to re-weight toward the governance layer (specs 15+). Report losses honestly; do not bury this number.');
   L.push('');
-  for (const line of rereadSection(perTask)) L.push(line);
+  for (const line of rereadSection(perTask, opts.dryRun)) L.push(line);
   return L.join('\n');
 }
 
@@ -402,9 +402,9 @@ function renderReport(
  * re-derivation openlore removes, reported SEPARATELY per arena because the answer
  * differs — the small/familiar tier is openlore's honest worst case (the +43% rent).
  */
-function rereadSection(perTask: Array<{ task: BenchTask; without: Cell; with: Cell }>): string[] {
+function rereadSection(perTask: Array<{ task: BenchTask; without: Cell; with: Cell }>, dryRun = false): string[] {
   const L: string[] = [];
-  L.push('### Re-read economy (trust-calibrated context economy)');
+  L.push(`### Re-read economy (trust-calibrated context economy)${dryRun ? ' — DRY RUN (synthetic numbers)' : ''}`);
   L.push('');
   L.push('A grounding certificate (`verifiedCurrent`) is the agent\'s permission to NOT re-read a span; the re-read tokens it removes are the rent openlore is supposed to subtract. Reported per arena because the answer differs — and the small/familiar case is openlore\'s honest worst case, tracked here rather than hidden.');
   L.push('');

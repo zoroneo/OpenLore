@@ -136,6 +136,7 @@ interface PartialDecision {
   id: string; status: string; title: string; rationale?: string;
   affectedFiles?: string[]; affectedDomains?: string[];
   anchors?: Array<Record<string, unknown>>;
+  supersedes?: string;
 }
 async function writeDecisions(decisions: PartialDecision[]): Promise<void> {
   const dir = join(root, OPENLORE_DIR, 'decisions');
@@ -396,5 +397,20 @@ describe('handleRecall — reversal-briefing (ReversalAwareness)', () => {
     await handleRemember(root, 'foo must stay pure', [{ symbol: 'foo', file: 'src/foo.ts' }]);
     const r = (await handleRecall(root, 'foo')) as RecallReversals;
     expect(r.reversals).toBeUndefined();
+  });
+
+  // Mirror of the orient never-authoritative regression: a decision superseded by an
+  // active decision (still `approved`, pre-consolidation) must not appear in recall's
+  // authoritative set — only under `reversals`.
+  it('excludes a superseded-but-still-active decision from authoritative, surfacing it only as a reversal', async () => {
+    await writeDecisions([
+      { id: 'recOld', status: 'approved', title: 'foo caches in a module global', rationale: 'speed', affectedFiles: ['src/foo.ts'] },
+      { id: 'recNew', status: 'approved', supersedes: 'recOld', title: 'keep foo pure', rationale: 'the global cache caused races', affectedFiles: ['src/foo.ts'] },
+    ]);
+    const r = (await handleRecall(root, 'foo')) as RecallReversals & { authoritative: Array<{ kind: string; id: string }> };
+    const authIds = r.authoritative.filter((m) => m.kind === 'decision').map((m) => m.id);
+    expect(authIds, 'superseded decision never authoritative').not.toContain('recOld');
+    expect(authIds, 'the superseding decision stays authoritative').toContain('recNew');
+    expect(r.reversals?.find((x) => x.id === 'recOld'), 'superseded decision shown as do-not-repeat').toBeDefined();
   });
 });

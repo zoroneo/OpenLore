@@ -27,12 +27,12 @@ in-scope intent, never a full history dump.
 ### Requirement: ReversalAwareness
 
 When a decision in scope was superseded or reverted, the intent briefing SHALL surface it as an
-explicit do-not-repeat warning naming the reverting commit and the recorded reason, reading the
+explicit do-not-repeat warning naming the commit it was retired as of and the recorded reason, reading the
 bitemporal supersession record. The system SHALL NOT silently omit reverted history, because the
 absence of a do-not-repeat signal is what lets an agent re-introduce a deliberately removed approach.
 
 #### Scenario: A reverted approach is surfaced as do-not-repeat
 
-- **GIVEN** an approach recorded and later reverted at commit Y with a reason
+- **GIVEN** an approach recorded and later retired as of commit Y with a reason
 - **WHEN** an agent orients on the code that approach touched
-- **THEN** the briefing warns "do not re-attempt; reverted at commit Y — reason," rather than omitting it
+- **THEN** the briefing warns "do not re-attempt; retired as of commit Y — reason," rather than omitting it

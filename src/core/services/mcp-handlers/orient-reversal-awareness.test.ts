@@ -141,6 +141,48 @@ describe('orient — ReversalAwareness (do-not-repeat)', () => {
     expect((r.pendingDecisions ?? []).map((d) => d.id)).not.toContain('oldA');
   });
 
+  // Regression for the never-authoritative break: a decision superseded by an ACTIVE
+  // decision stays `approved`/`draft`/`verified` until LLM consolidation flips it to
+  // `rejected` — which never runs without an API key. The earlier suite only used a
+  // pre-`rejected` target, so the status filter masked the bug. Here the superseded
+  // decision is itself `approved`, so only the supersession-aware exclusion can drop it.
+  it('excludes a superseded-but-still-active decision from pendingDecisions (pre-consolidation)', async () => {
+    await writeDecisions([
+      { id: 'liveOld', status: 'approved', title: 'cache fooHandler in a module global',
+        rationale: 'speed', affectedFiles: ['src/foo.ts'] },
+      { id: 'liveNew', status: 'approved', supersedes: 'liveOld', title: 'keep fooHandler pure',
+        rationale: 'the global cache caused double-charges', affectedFiles: ['src/foo.ts'] },
+    ]);
+    const r = (await handleOrient(root, 'work on fooHandler')) as OrientOut;
+    const ids = (r.pendingDecisions ?? []).map((d) => d.id);
+    expect(ids, 'superseded decision is never authoritative, even pre-consolidation').not.toContain('liveOld');
+    expect(ids, 'the superseding decision stays authoritative').toContain('liveNew');
+    expect(r.reversals?.find((x) => x.id === 'liveOld'), 'superseded decision shown as do-not-repeat').toBeDefined();
+  });
+
+  // A REJECTED supersession leaves the original standing: the target must remain
+  // authoritative and must NOT be warned as reverted (the two surfaces agree).
+  // Parity with the memory path's self-supersede guard: a decision naming its own id in
+  // `supersedes` retires nothing — it must stay authoritative and not warn against itself.
+  it('a self-superseding decision is not dropped and not warned', async () => {
+    await writeDecisions([
+      { id: 'selfsup', status: 'approved', supersedes: 'selfsup', title: 'fooHandler keeps its contract', rationale: 'x', affectedFiles: ['src/foo.ts'] },
+    ]);
+    const r = (await handleOrient(root, 'work on fooHandler')) as OrientOut;
+    expect((r.pendingDecisions ?? []).map((d) => d.id), 'self-supersede retires nothing').toContain('selfsup');
+    expect((r.reversals ?? []).map((x) => x.id), 'and does not warn against itself').not.toContain('selfsup');
+  });
+
+  it('a rejected superseder does not retire its target', async () => {
+    await writeDecisions([
+      { id: 'standOld', status: 'approved', title: 'fooHandler validates input', rationale: 'safety', affectedFiles: ['src/foo.ts'] },
+      { id: 'rejNew', status: 'rejected', supersedes: 'standOld', title: 'drop validation', rationale: 'declined', affectedFiles: ['src/foo.ts'] },
+    ]);
+    const r = (await handleOrient(root, 'work on fooHandler')) as OrientOut;
+    expect((r.pendingDecisions ?? []).map((d) => d.id), 'a declined supersession leaves the original standing').toContain('standOld');
+    expect((r.reversals ?? []).map((x) => x.id), 'and it is not warned as reverted').not.toContain('standOld');
+  });
+
   it('surfaces a superseded memory as do-not-repeat with the recorded reason', async () => {
     const m = (await handleRemember(root, 'fooHandler memoizes via a global mutable cache',
       [{ symbol: 'fooHandler', file: 'src/foo.ts' }])) as { id: string };
@@ -154,7 +196,7 @@ describe('orient — ReversalAwareness (do-not-repeat)', () => {
     expect(rev!.warning).toContain('Do not re-attempt');
   });
 
-  it('surfaces a memory retired by a commit (no superseding link) and names the reverting commit', async () => {
+  it('surfaces a memory retired by a commit (no superseding link) and names the retiring commit', async () => {
     await writeMemories([
       { id: 'retired1', content: 'fooHandler reads config from a global at import time',
         invalidatedAt: '2026-02-02T00:00:00Z', invalidatedByCommit: 'abc1234def5678901234567890abcdef12345678' },
@@ -164,7 +206,7 @@ describe('orient — ReversalAwareness (do-not-repeat)', () => {
     expect(rev, 'commit-retired memory surfaced even without a superseder').toBeDefined();
     expect(rev!.reason).toBeUndefined();                       // no superseding memory ⇒ no reason
     expect(rev!.revertedAtCommit).toBe('abc1234def5678901234567890abcdef12345678');
-    expect(rev!.warning).toContain('reverted at commit abc1234d'); // 8-char prefix
+    expect(rev!.warning).toContain('retired as of commit abc1234d'); // 8-char prefix
     expect(rev!.warning).not.toContain('recorded reason');
   });
 

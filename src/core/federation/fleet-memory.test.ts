@@ -142,6 +142,41 @@ describe('findFleetMemory', () => {
     expect(res.truncated).toBe(2);
   });
 
+  // Symbol-level freshness across the boundary: the prior cases all used file-level
+  // anchors (no contentHash ⇒ always `fresh`), so the nodeHash comparison branch — and
+  // `drifted` — went untested. Here a matching span hash verdicts `fresh`, a stale one
+  // `drifted`, both computed against the PRODUCER's graph.
+  it('verdicts a symbol-level producer memory fresh on a matching span hash and drifted on a stale one', async () => {
+    const { makeFreshnessView } = await import('../decisions/anchor-adapter.js');
+    const pstore = EdgeStore.open(EdgeStore.dbPath(join(producer, OPENLORE_ANALYSIS_REL_PATH)));
+    const liveHash = makeFreshnessView(pstore, producer).nodeHash('src/index.ts::greet');
+    pstore.close();
+    expect(liveHash, 'producer greet node hashes from its current source span').toBeTruthy();
+    writeProducerMemories(producer, [
+      { id: 'pmFreshSym', content: 'greet matches its current span', anchors: [{ nodeId: 'src/index.ts::greet', symbolName: 'greet', filePath: 'src/index.ts', contentHash: liveHash }] },
+      { id: 'pmDriftSym', content: 'greet body has since changed', anchors: [{ nodeId: 'src/index.ts::greet', symbolName: 'greet', filePath: 'src/index.ts', contentHash: 'deadbeefdeadbeef' }] },
+    ]);
+    addRepo(consumer, producer, { name: 'producer-a' });
+    const scope = resolveFederationScope(consumer, { federation: true });
+    const res = await findFleetMemory(consumer, scope);
+    expect(res.memories.find((m) => m.content.includes('current span'))?.freshness).toBe('fresh');
+    expect(res.memories.find((m) => m.content.includes('since changed'))?.freshness).toBe('drifted');
+  });
+
+  // Matching is by exact symbol NAME at the consumer's external call sites; arity/overload
+  // cannot be confirmed across the boundary, so a producer memory on any `greet` surfaces
+  // and that limitation is disclosed as a caveat (never silently presented as exact).
+  it('matches by symbol name only and discloses the unconfirmed-arity caveat', async () => {
+    writeProducerMemories(producer, [
+      { id: 'pmName', content: 'greet trims its argument', anchors: [{ symbolName: 'greet', filePath: 'src/index.ts' }] },
+    ]);
+    addRepo(consumer, producer, { name: 'producer-a' });
+    const scope = resolveFederationScope(consumer, { federation: true });
+    const res = await findFleetMemory(consumer, scope);
+    expect(res.memories).toHaveLength(1);                       // surfaced purely by name match
+    expect(res.coverage.caveats.some((c) => /arity\/overload is unconfirmed/.test(c))).toBe(true);
+  });
+
   // ── Decision side (ADR-0019 follow-up) ──────────────────────────────────────
   it('surfaces a fresh producer DECISION anchored to a consumed interface', async () => {
     writeProducerDecisions(producer, [

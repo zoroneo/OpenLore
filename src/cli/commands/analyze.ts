@@ -197,10 +197,11 @@ export async function runAnalysis(
     JSON.stringify(depGraph, null, 2)
   );
 
-  // Write content-hash fingerprint so future runs can skip re-analysis when
-  // source files are unchanged (replaces the 1-hour TTL on a warm cache). The
-  // build commit (when this is a git repo) lets the confidence-boundary staleness
-  // marker name "computed against the index at commit X" — best-effort, null otherwise.
+  // Write the metadata fingerprint (path + mtime + size per source file — not file
+  // bytes) so future runs can skip re-analysis when source files are unchanged
+  // (replaces the 1-hour TTL on a warm cache). The build commit (when this is a git
+  // repo) lets the confidence-boundary staleness marker name "computed against the
+  // index at commit X" — best-effort, null otherwise.
   const fingerprintHash = await computeProjectFingerprint(rootPath);
   const buildCommit = await captureBuildCommit(rootPath);
   await writeFile(

@@ -21,11 +21,13 @@ and the `supersedes` link between decisions.
 ## Decision
 
 `orient` SHALL emit an additive `reversals` field that, for the symbols and files in a task's scope,
-surfaces reverted/superseded intent as pre-rendered do-not-repeat warnings — naming the reverting
-commit (from a memory's `invalidatedByCommit`) and the recorded reason (the superseding item's
-content/rationale) — reading the existing supersession records with no LLM. A reverted **memory** is
-one with `invalidatedAt` set whose anchors fall in scope; a reverted **decision** is one targeted by
-another decision's `supersedes`. The field is bounded (capped with an omission note) and omitted
+surfaces reverted/superseded intent as pre-rendered do-not-repeat warnings — naming the commit the
+note was retired as of (from a memory's `invalidatedByCommit` = HEAD when superseded, not a verified
+reverting diff) and the recorded reason (the superseding item's content/rationale) — reading the
+existing supersession records with no LLM. A reverted **memory** is one with `invalidatedAt` set whose
+anchors fall in scope; a reverted **decision** is one targeted by another, non-`rejected`/`phantom`
+decision's `supersedes` (and is excluded from the authoritative set by that same predicate, so it is
+never both warned-against and served as current). The field is bounded (capped with an omission note) and omitted
 when empty, so a caller that ignores it sees today's output unchanged. Reverted items are NEVER
 re-surfaced as authoritative current intent — only as cautionary do-not-repeat history.
 

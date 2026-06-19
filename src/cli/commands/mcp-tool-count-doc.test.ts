@@ -21,7 +21,7 @@ import { TOOL_DEFINITIONS, toolAnnotations } from './mcp.js';
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 // Files whose every "<N> tools" mention is the live full surface. cli-reference.md
-// is included: its sole "<N> tools" mention ("all 58 tools on a fixed port") is the
+// is included: its sole "<N> tools" mention ("all <count> tools on a fixed port") is the
 // full `serve --preset all` surface, so the exact check holds there too.
 const GUARDED_DOCS = ['README.md', 'docs/mcp-tools.md', 'docs/cli-reference.md'];
 

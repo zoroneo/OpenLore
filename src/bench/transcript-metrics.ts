@@ -66,15 +66,26 @@ export function estimateTokens(text: string): number {
  *   a shell read like cat/sed/head/tail/less/grep/rg/awk) — what a certificate replaces.
  * - `openlore`: an openlore MCP tool (its conclusions are what the agent reads instead).
  * - `other`: writes, task tools, etc. — irrelevant to the re-read lever.
+ *
+ * The Bash classifier is a deliberate heuristic, not a shell parser. It catches a reader
+ * at line start (incl. indented / multi-line commands via the `m` flag) or after a
+ * pipe/and/semicolon/`do`/`xargs`, tolerating an env-var-assignment or `sudo` prefix.
+ * Two residual biases are accepted and roughly offset: (a) a reader fed by a pipe
+ * (`npm build | grep err`) consumes the prior command's stdout, not source, yet counts as
+ * a source-read (over-count); (b) `Read`/`Grep` are classified by tool name alone — the
+ * `file_path` is not inspected, so reading a non-source file (e.g. a `.md` or an openlore
+ * artifact) also counts. Both are small relative to the per-task read volume; the metric
+ * is a directional measurement, not an exact accounting.
  */
 export function classifyToolUse(name: string, input: Record<string, unknown>): 'source-read' | 'openlore' | 'other' {
   if (name.startsWith('mcp__openlore__')) return 'openlore';
   if (name === 'Read' || name === 'Grep') return 'source-read';
   if (name === 'Bash') {
     const cmd = typeof input.command === 'string' ? input.command : '';
-    // A shell read of source: the read command appears at the start of the line or
-    // after a pipe/and/semicolon separator (so `git log | cat` counts, `echo cat` does not).
-    if (/(^|[|&;]\s*)(cat|sed|head|tail|less|grep|rg|awk)\b/.test(cmd)) return 'source-read';
+    // A shell read of source: a reader at line start (m-flag → indented / later lines of a
+    // multi-line command), or after a pipe/and/semicolon/`do`/`xargs`, allowing an env-var
+    // assignment or `sudo` prefix. `echo cat` (reader inside a word/string) still does not match.
+    if (/(?:^|[|&;]|\bdo\b|\bxargs\b)\s*(?:\w+=\S+\s+)*(?:sudo\s+)?(?:cat|sed|head|tail|less|grep|rg|awk)\b/m.test(cmd)) return 'source-read';
   }
   return 'other';
 }

@@ -650,29 +650,34 @@ verify. (Realized by orient's `pendingDecisions` / `staleDecisions` / `unreconci
 ### Requirement: ReversalAwareness
 
 When intent in a task's scope was superseded or reverted, **`orient` and `recall`** SHALL surface it in
-an additive `reversals` field as an explicit do-not-repeat warning — naming the reverting commit (from a
-memory's `invalidatedByCommit`) and the recorded reason (the superseding record's content/rationale) —
-rather than silently omitting reverted history, because the absence of a do-not-repeat signal is what
-lets an agent re-introduce a deliberately removed approach. A reverted **memory** is one with
-`invalidatedAt` set; a reverted **decision** is one targeted by another decision's `supersedes`. The two
-surfaces differ only in scope: `orient` by the task's relevant files/domains, `recall` by task relevance
-(so a fully-reverted approach surfaces even with no current memory on its file). Reverted intent SHALL
-NOT be re-served as authoritative current context, only as cautionary history. Selection is
-deterministic retrieval over already-recorded supersession records; no LLM. The field SHALL be bounded
-with an explicit omission note (never a silent truncation of history) and omitted entirely when nothing
-in scope was reverted.
+an additive `reversals` field as an explicit do-not-repeat warning — naming the commit at which a memory
+was retired (its `invalidatedByCommit` = HEAD when the superseding memory was recorded, which is the
+commit the note was retired *as of*, not a verified "this commit reverted the code" claim) and the
+recorded reason (the superseding record's content/rationale) — rather than silently omitting reverted
+history, because the absence of a do-not-repeat signal is what lets an agent re-introduce a deliberately
+removed approach. A reverted **memory** is one with `invalidatedAt` set; a reverted **decision** is one
+targeted by another, non-`rejected`/`phantom` decision's `supersedes` (a *declined* supersession leaves
+the original standing). The two surfaces differ only in scope: `orient` by the task's relevant
+files/domains, `recall` by task relevance (so a fully-reverted approach surfaces even with no current
+memory on its file). Reverted intent SHALL NOT be re-served as authoritative current context, only as
+cautionary history; a superseded decision SHALL be excluded from the authoritative set by the same
+supersession predicate that surfaces it as a reversal, so the two surfaces can never disagree — including
+in the pre-consolidation window where the superseded decision's own status has not yet flipped to
+`rejected` (e.g. with no LLM configured). Selection is deterministic retrieval over already-recorded
+supersession records; no LLM. The field SHALL be bounded with an explicit omission note (never a silent
+truncation of history) and omitted entirely when nothing in scope was reverted.
 
 #### Scenario: A reverted approach is surfaced as do-not-repeat
 
-- **GIVEN** an approach recorded and later reverted at commit Y with a reason
+- **GIVEN** an approach recorded and later retired as of commit Y with a reason
 - **WHEN** an agent orients on the code that approach touched
-- **THEN** the briefing's `reversals` warns "Do not re-attempt … (reverted at commit Y) — recorded reason: …", rather than omitting it
+- **THEN** the briefing's `reversals` warns "Do not re-attempt … (retired as of commit Y) — recorded reason: …", rather than omitting it
 
 #### Scenario: Reverted intent is never served as authoritative
 
-- **GIVEN** a decision superseded by a later decision
-- **WHEN** `orient` runs for a task in that decision's scope
-- **THEN** the superseded decision appears only under `reversals`, never under `pendingDecisions`
+- **GIVEN** a decision superseded by a later decision whose own status is still `approved`/`draft`/`verified` (consolidation has not yet flipped it to `rejected`)
+- **WHEN** `orient` or `recall` runs for a task in that decision's scope
+- **THEN** the superseded decision appears only under `reversals`, never under `pendingDecisions` / the authoritative recall set
 
 ### Requirement: FleetLevelAnchoredMemory
 
@@ -688,7 +693,12 @@ producer SHALL be `orphaned` and withheld from the authoritative set, identicall
 record; a retired (invalidated) producer memory or an inactive (rejected/synced/phantom) producer
 decision SHALL likewise be excluded. The selection SHALL be deterministic (no LLM), bounded per kind with
 an explicit omission note, and SHALL name the repos consulted and skipped (a stale/unindexed producer is
-reported, never guessed).
+reported, never guessed). Note a deliberate consequence of the `synced` exclusion across the boundary: a
+producer decision that reaches its finalized `synced` state (its content folded into the producer's local
+ADRs / `spec.md`) is intentionally NOT federated, because that content lives in producer-local specs a
+consumer cannot read — so the decision side surfaces primarily transient `draft`/`approved`/`verified`
+producer decisions, and an empty `fleetMemory.decisions` does not imply the producer recorded no
+architectural constraints on the interface.
 
 #### Scenario: A producer-side memory surfaces in a consumer
 

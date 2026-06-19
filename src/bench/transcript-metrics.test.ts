@@ -35,6 +35,14 @@ describe('classifyToolUse', () => {
     expect(classifyToolUse('Bash', { command: 'echo cat' })).toBe('other');
     expect(classifyToolUse('Bash', { command: 'ls -la' })).toBe('other');
   });
+  it('catches indented / prefixed / multi-line / xargs shell reads (precision fix)', () => {
+    expect(classifyToolUse('Bash', { command: '  cat src/a.ts' })).toBe('source-read');           // leading whitespace
+    expect(classifyToolUse('Bash', { command: 'FOO=1 cat src/a.ts' })).toBe('source-read');       // env-var prefix
+    expect(classifyToolUse('Bash', { command: 'sudo cat /etc/hosts' })).toBe('source-read');      // sudo prefix
+    expect(classifyToolUse('Bash', { command: 'ls\ncat src/a.ts' })).toBe('source-read');         // reader on a later line
+    expect(classifyToolUse('Bash', { command: 'find . -name "*.ts" | xargs grep TODO' })).toBe('source-read'); // xargs
+    expect(classifyToolUse('Bash', { command: 'for f in *.ts; do cat $f; done' })).toBe('source-read');        // do-loop
+  });
   it('classifies openlore MCP tools as openlore (their conclusions replace the read)', () => {
     expect(classifyToolUse('mcp__openlore__orient', {})).toBe('openlore');
     expect(classifyToolUse('mcp__openlore__recall', {})).toBe('openlore');
