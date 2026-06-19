@@ -4,17 +4,17 @@
 
 ### Requirement: PreflightHookIsOptInAndAdvisory
 
-The CLI SHALL offer installation of an advisory pre-flight git hook that emits the structural blast-
-radius briefing, reusing the install pattern of the decisions pre-commit hook. Installation SHALL be an
-explicit opt-in choice, not silent during setup, and the installed hook SHALL be advisory (exit 0) by
-default. The hook SHALL honor `.openlore/config.json` to enable blocking for specific high-risk
-patterns only.
+The CLI SHALL provide explicit installation of an advisory pre-flight git hook that emits the structural
+blast-radius briefing, reusing the install pattern of the decisions pre-commit hook. Installation SHALL
+be an explicit opt-in command (`openlore blast-radius --install-hook`), never auto-installed by
+`openlore setup`, and the installed hook SHALL be advisory (exit 0) by default. The hook SHALL honor
+`.openlore/config.json` to enable blocking for specific high-risk patterns only.
 
-#### Scenario: The hook is offered, not imposed
+#### Scenario: The hook is installed explicitly, never silently
 
-- **GIVEN** an OpenLore setup
-- **WHEN** the user configures hooks
-- **THEN** the pre-flight hook is offered as an explicit choice and is not installed silently
+- **GIVEN** an OpenLore project
+- **WHEN** the user runs `openlore blast-radius --install-hook`
+- **THEN** the advisory pre-flight hook is installed, and it is never auto-installed by `openlore setup`
 
 #### Scenario: Configuration enables targeted blocking
 

@@ -5597,6 +5597,18 @@ The system SHALL provide a `blast_radius` tool (MCP) and `blast-radius` command 
 
 > Decision recorded: 987286eb
 > Date: 2026-06-18
+### Requirement: BlastradiusHookUsesCapabilityDetectionInsteadOfFileexistenceCheck
+
+The system SHALL The pre-commit hook SHALL verify that the openlore binary supports the blast-radius --hook flag before invoking it, falling back to exit 0 when it does not.
+
+> Decision recorded: 51c2603d
+> Date: 2026-06-19
+### Requirement: BlastradiusPipelineTreatsAllInternalErrorsAsAdvisoryNeverblockGuarantee
+
+The system SHALL The blast-radius pipeline SHALL catch exceptions from all composed handlers and degrade to advisory caveats, ensuring a zero exit code regardless of internal errors.
+
+> Decision recorded: 215092bc
+> Date: 2026-06-19
 
 ## Technical Notes
 
@@ -6144,3 +6156,23 @@ Implements add-trust-calibrated-context-economy on the recall path (the only mem
 The add-preflight-blast-radius-guard proposal is titled "pre-flight blast-radius guard," but `openlore preflight` already exists as an unrelated CI graph-staleness gate (src/cli/preflight/). Reusing the word "preflight" across both surfaces would conflate two different concerns. The new capability is named `blast_radius` everywhere to be collision-free and self-describing ("compute my diff's structural blast radius"). It is implemented as pure orchestration of existing deterministic analyses (analyze_impact, select_tests, check_spec_drift which already folds in anchored-memory + ADR drift, and getChangedFiles) composed into a single conclusion-shaped briefing — no new structural computation, no LLM. The MCP tool is classified `conclusion` and kept out of the `minimal` preset. The git hook is advisory-by-default (exit 0); opt-in blocking for named high-risk patterns reads `.openlore/config.json` `blastRadius.block`. The multi-repo-federation cross-repo-consumers input is scoped out (federation not yet shipped) and documented as a no-op with a note.
 
 **Consequences:** A new MCP tool `blast_radius` and CLI `openlore blast-radius` (with --install-hook, --hook, --json) ship; OpenLoreConfig gains an optional `blastRadius?: { block?: string[] }` field; a new advisory pre-commit hook block (marker `# openlore-blast-radius-hook`) installs alongside the decisions hook. Federation cross-repo consumers remain a documented gap until add-multi-repo-federation lands.
+
+### Blast-radius hook uses capability detection instead of file-existence check
+
+**Status:** Approved
+**Date:** 2026-06-19
+**ID:** 51c2603d
+
+A stale or incompatible openlore binary that lacks the --hook flag would fail at runtime and block the commit. Probing --help output ensures the hook only fires when the installed version actually supports it.
+
+**Consequences:** The hook is self-disabling against older openlore versions; users upgrading incrementally will silently skip blast-radius until the new binary is in place.
+
+### Blast-radius pipeline treats all internal errors as advisory (never-block guarantee)
+
+**Status:** Approved
+**Date:** 2026-06-19
+**ID:** 215092bc
+
+The blast-radius briefing composes multiple handlers (impact analysis, spec drift); any throw from a composed handler must degrade gracefully rather than blocking a commit, preserving the advisory-by-default contract.
+
+**Consequences:** Failures in individual symbols or drift checks are surfaced as caveats in the briefing but never produce a non-zero exit code; bugs in composed handlers become harder to notice without inspecting briefing output.

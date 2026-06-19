@@ -25,10 +25,10 @@ const HOOK_MARKER = '# openlore-blast-radius-hook';
 const HOOK_CONTENT = `${HOOK_MARKER}
 # Advisory pre-flight blast-radius briefing before each commit.
 # Advisory by default (exit 0); blocks only on a configured high-risk pattern.
-if [ -f "./node_modules/.bin/openlore" ]; then
+if [ -f "./node_modules/.bin/openlore" ] && ./node_modules/.bin/openlore blast-radius --help 2>/dev/null | grep -q -- '--hook'; then
   ./node_modules/.bin/openlore blast-radius --hook 2>&1
   BLAST_EXIT=$?
-elif [ -f "./dist/cli/index.js" ]; then
+elif [ -f "./dist/cli/index.js" ] && node ./dist/cli/index.js blast-radius --help 2>/dev/null | grep -q -- '--hook'; then
   node ./dist/cli/index.js blast-radius --hook 2>&1
   BLAST_EXIT=$?
 else
@@ -149,8 +149,17 @@ export async function runBlastRadiusCli(opts: BlastRadiusCliOptions): Promise<nu
   // Suppress the per-call "Successfully validated directory" chatter from the
   // composed handlers so the briefing (and --json) is the only thing on stdout.
   configureLogger({ quiet: true });
-  const result = await computeBlastRadius({ directory: cwd, baseRef: opts.base });
-  configureLogger({ quiet: false });
+  let result: Awaited<ReturnType<typeof computeBlastRadius>>;
+  try {
+    result = await computeBlastRadius({ directory: cwd, baseRef: opts.base });
+  } catch (err) {
+    // Final advisory safety net: a throw from a composed handler (e.g.
+    // validateDirectory on a bad path, corrupt config/JSON) must NEVER block a
+    // commit. Treat it exactly like an `{error}` return — surface and exit 0.
+    result = { error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    configureLogger({ quiet: false });
+  }
 
   if ('error' in result) {
     // Advisory: an infrastructure failure (no graph, not a repo) must NEVER block

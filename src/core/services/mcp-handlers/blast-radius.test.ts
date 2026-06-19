@@ -140,6 +140,58 @@ describe('computeBlastRadius', () => {
     const r = await computeBlastRadius({ directory: '/p' });
     expect(r).toEqual({ error: expect.stringMatching(/analyze_codebase/i) });
   });
+
+  it('resolves the analyze_impact match whose file matches the changed seed (name collision)', async () => {
+    vi.mocked(handleAnalyzeImpact).mockResolvedValueOnce({ matches: [
+      { symbol: 'validateDirectory', file: 'src/other.ts', metrics: { fanIn: 1, fanOut: 0, isHub: false }, blastRadius: { total: 1, upstream: 1, downstream: 0 }, riskLevel: 'low' },
+      { symbol: 'validateDirectory', file: 'src/utils.ts', metrics: { fanIn: 58, fanOut: 1, isHub: true }, blastRadius: { total: 60, upstream: 58, downstream: 2 }, riskLevel: 'critical' },
+    ] } as never);
+    const b = await computeBlastRadius({ directory: '/p' }) as BlastRadiusBriefing;
+    expect(b.impact.topSymbols[0].file).toBe('src/utils.ts');
+    expect(b.impact.maxAffectedCallers).toBe(58);
+  });
+
+  it('skips a symbol whose impact is an error/null shape (no crash, none counted)', async () => {
+    vi.mocked(handleAnalyzeImpact).mockResolvedValueOnce({ error: 'not found' } as never);
+    const b = await computeBlastRadius({ directory: '/p' }) as BlastRadiusBriefing;
+    expect(b.impact.topSymbols).toHaveLength(0);
+    expect(b.impact.highestRiskLevel).toBe('none');
+  });
+
+  it('reports impact truncation (no silent truncation) when more symbols change than maxSymbols', async () => {
+    const nodes = [
+      node({ id: 'src/utils.ts::a', fanIn: 5 }),
+      node({ id: 'src/utils.ts::b', fanIn: 3 }),
+      node({ id: 'src/utils.ts::c', fanIn: 1 }),
+    ];
+    vi.mocked(readCachedContext).mockResolvedValue({ callGraph: graph(nodes, []) } as never);
+    const b = await computeBlastRadius({ directory: '/p', maxSymbols: 1 }) as BlastRadiusBriefing;
+    expect(b.impact.analyzedSymbolCount).toBe(1);
+    expect(b.impact.truncated?.omitted).toBe(2);
+    expect(b.caveats.join(' ')).toMatch(/lower-risk symbols were not individually analyzed/i);
+  });
+
+  it('clamps depth (≤6) and maxSymbols (≥1) to safe ranges', async () => {
+    vi.mocked(handleAnalyzeImpact).mockClear();
+    await computeBlastRadius({ directory: '/p', depth: 99, maxSymbols: 0 });
+    const calls = vi.mocked(handleAnalyzeImpact).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);          // maxSymbols 0 clamped to ≥1
+    expect(calls.every(c => c[2] === 6)).toBe(true);  // depth 99 clamped to 6
+  });
+
+  it('does not abort the briefing when impact analysis throws for a symbol (advisory — never block)', async () => {
+    vi.mocked(handleAnalyzeImpact).mockRejectedValueOnce(new Error('boom'));
+    const b = await computeBlastRadius({ directory: '/p' }) as BlastRadiusBriefing;
+    expect(b.posture).toBe('advisory');
+    expect(b.impact.topSymbols).toHaveLength(0);       // the throwing symbol contributes nothing
+  });
+
+  it('degrades to drift-unavailable (caveat) when check_spec_drift throws (advisory — never block)', async () => {
+    vi.mocked(handleCheckSpecDrift).mockRejectedValueOnce(new Error('git exploded'));
+    const b = await computeBlastRadius({ directory: '/p' }) as BlastRadiusBriefing;
+    expect(b.specs.willGoStale).toBe(0);
+    expect(b.caveats.join(' ')).toMatch(/drift could not be evaluated.*git exploded/i);
+  });
 });
 
 describe('triggeredBlockPatterns (opt-in blocking fires only on its pattern)', () => {

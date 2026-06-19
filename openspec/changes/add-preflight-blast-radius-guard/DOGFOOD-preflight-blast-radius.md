@@ -65,7 +65,31 @@ advisory — matching the spec scenario "opt-in blocking fires only on its patte
 
 ## 4. Regression posture
 
-Full suite green after the change: **190 files, 3900 passed, 2 skipped** (`vitest run src examples`).
+Full suite green after the change: **191 files, 3917 passed, 2 skipped** (`vitest run src examples`).
 The conscious tool-surface budget was bumped 55_000 → 57_000 with a documented comment, per the
 established `mcp-presets` discipline. No other test required changes beyond registering the new tool in
 `tool-driver.ts` (the TOOL_REGISTRY ↔ TOOL_DEFINITIONS completeness check).
+
+## 5. Post-review hardening (2026-06-19)
+
+A review pass (impl / tests / docs) tightened the advisory-never-block guarantee and closed test gaps:
+
+- **Advisory safety net hardened.** `validateDirectory` and the composed handlers can *throw* (bad
+  path, corrupt JSON, a mid-pass git failure), not only return `{error}`. Those throws are now caught:
+  per-symbol `analyze_impact` failures are skipped (one bad symbol no longer aborts the briefing),
+  a `check_spec_drift` throw degrades to a drift-unavailable caveat, and `runBlastRadiusCli` wraps the
+  whole compute in a final try/catch → it can never turn an exception into a blocked commit. Re-verified
+  end-to-end: running from a non-analyzed directory and with a bad base ref both exit 0 in `--hook` mode.
+- **Hook version-skew can't hard-block.** The local-build branches of the installed hook now probe
+  `blast-radius --help | grep -- '--hook'` before invoking (matching the global branch), so a stale local
+  `openlore` that predates the feature degrades to advisory instead of erroring out and blocking.
+- **No-silent-truncation.** The `changed.symbolNames` cap (30) now emits a caveat when exceeded.
+- **Tests expanded 7 → 24** for the feature: hook install/uninstall (fresh, coexist+strip-`exit 0`,
+  idempotent, round-trip restore, not-a-repo), the full `runBlastRadiusCli` flow (advisory exit 0 on
+  error, `--json` `{status:"unavailable"}`, block exit 1 only on a configured fired pattern, stderr
+  routing), `impactResults` normalization (`{matches}` name-collision / error / null), truncation
+  caveat, and depth/maxSymbols clamping.
+- **Docs aligned.** The `cli/PreflightHookIsOptInAndAdvisory` scenario now matches reality (explicit
+  `--install-hook` command, never auto-installed by `openlore setup`); `blast_radius` rows added to the
+  README cheat-sheet and `docs/mcp-tools.md`; the stale "50 tools" surface figure corrected to the
+  measured 58.

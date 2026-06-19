@@ -210,7 +210,7 @@ One graph query replaces most exploratory file reads. The agent knows exactly wh
 
 ## Agent Cheat Sheet
 
-The full surface is 50 tools, but day-to-day work needs a handful. Reach for the right one by situation:
+The full surface is 58 tools, but day-to-day work needs a handful. Reach for the right one by situation:
 
 | Situation | Tool |
 |-----------|------|
@@ -224,6 +224,7 @@ The full surface is 50 tools, but day-to-day work needs a handful. Reach for the
 | "How does request X reach function Y?" | `trace_execution_path` |
 | "I changed X — which tests should I run?" | `select_tests` — backward reachability to the reaching tests + paths (Spec 19) |
 | "What's dead / what dies if I delete X?" | `find_dead_code` — cross-language reachability, confidence-tagged candidates (Spec 20) |
+| "What's the blast radius of my whole diff before I commit?" | `blast_radius` — one advisory briefing: callers/layers, tests to run, anchored memories/decisions that will drift, stale specs (CLI `openlore blast-radius`) |
 | "What changed structurally / whose callers are now stale?" | `structural_diff` — graph diff, stale callers, rename flags (Spec 21) |
 | "What changes together with this / what's volatile?" | `get_change_coupling` — co-change + churn from git history (Spec 22) |
 | "May I add this import here / what breaks the architecture?" | `check_architecture` — pre-edit verdict against declared rules (Spec 23) |

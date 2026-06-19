@@ -158,7 +158,12 @@ export async function computeBlastRadius(
   let maxAffectedCallers = 0;
 
   for (const seed of analyzed) {
-    const raw = await handleAnalyzeImpact(absDir, seed.name, depth);
+    // Per-symbol best-effort: one symbol whose impact analysis throws must not
+    // abort the whole briefing (advisory — never block; mcp-handlers/AdvisoryByDefault).
+    let raw: unknown;
+    try {
+      raw = await handleAnalyzeImpact(absDir, seed.name, depth);
+    } catch { continue; }
     const candidates = impactResults(raw);
     // Prefer the resolution whose file matches the changed seed (names can collide).
     const r = candidates.find(c => c.file === seed.filePath) ?? candidates[0];
@@ -205,7 +210,14 @@ export async function computeBlastRadius(
   const specItems: Array<{ kind: string; message: string; domain: string | null; specPath: string | null }> = [];
   const decisionItems: Array<{ kind: string; message: string; domain: string | null }> = [];
   let driftUnavailable: string | null = null;
-  const driftRaw = await handleCheckSpecDrift(absDir, baseRef, changedFiles, [], 'warning');
+  let driftRaw: unknown;
+  try {
+    driftRaw = await handleCheckSpecDrift(absDir, baseRef, changedFiles, [], 'warning');
+  } catch (err) {
+    // Drift is best-effort: a throw degrades to "unavailable" (reported as a
+    // caveat), it never aborts the briefing (advisory — never block).
+    driftRaw = { error: err instanceof Error ? err.message : String(err) };
+  }
   if (driftRaw && typeof driftRaw === 'object' && 'error' in driftRaw) {
     driftUnavailable = (driftRaw as { error: string }).error;
   } else {
@@ -226,6 +238,9 @@ export async function computeBlastRadius(
   ];
   if (seeds.length > analyzed.length) {
     caveats.push(`Impact analyzed the ${analyzed.length} highest-fan-in changed symbols; ${seeds.length - analyzed.length} lower-risk symbols were not individually analyzed.`);
+  }
+  if (seeds.length > 30) {
+    caveats.push(`changed.symbolNames lists the first 30 of ${seeds.length} changed symbols (count is in changed.symbols).`);
   }
   if (driftUnavailable) {
     caveats.push(`Spec/memory drift could not be evaluated: ${driftUnavailable}`);
