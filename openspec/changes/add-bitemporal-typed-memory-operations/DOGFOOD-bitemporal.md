@@ -80,9 +80,42 @@ Cross-cutting audit also confirmed (no change needed): `saveMemoryStore`/atomic-
 new optional fields; `tool-contract` classification for recall/remember unaffected; no CLI/API/view
 surface reads the raw memory store; vanished-commit anchors fail closed (excluded from temporal scope).
 
+## Adversarial dogfood + review pass (2026-06-19)
+
+A third, adversarial pass spawned parallel audits (logic, docs/spec, cross-cutting consumers) and
+re-dogfooded the **built** handlers against a fresh `/tmp/ol-dogfood163` repo with a real
+`openlore analyze --no-embed` call-graph DB. Findings and resolution:
+
+| Probe (real repo + real graph) | Result |
+|---|---|
+| `validFromCommit` = HEAD, typed write, anchored to real `stableId` | ✓ |
+| Contradiction on `getCache` keyed by `sid:getCache(key: string)` in both `recall` **and** `orient` | ✓ |
+| Supersede names retired id; contradiction clears; retired note leaves `authoritative` | ✓ |
+| `asOf` history (HEAD advanced before supersede) revives the retired note | ✓ |
+| `changedSince`, `type` filter, content+anchor dedup | ✓ |
+| **Arg-injection probe**: `asOf = "$(touch /tmp/PWNED163);HEAD"` | ✓ rejected with a "did not resolve" warning, no shell side-effect (`execFile` + `validateGitRef` + `--end-of-options`) |
+| Empty-window combined `asOf`/`changedSince` | ✓ warns |
+
+Two behaviors were **defensible-by-design but untested**; both are now locked with tests + spec text
+(no runtime change — changing either risks a worse failure mode):
+
+1. **Type-filter scopes contradiction surfacing.** Contradiction detection runs over the set the
+   query already selected (consistent with the existing task/score scoping), so a cross-type
+   contradiction is flagged under unfiltered `recall` but not under a `type` filter. Documented on
+   `DeterministicContradictionSurfacing`; test `contradiction surfacing reflects the active recall scope`.
+2. **Invalidated-without-`invalidatedByCommit` is fail-closed under `asOf`.** A retirement that cannot
+   be placed on the commit axis excludes the memory from every `asOf` window rather than revive it
+   into a result we cannot prove. Documented on `BitemporalMemoryValidity`; test
+   `an invalidated memory with no invalidatedByCommit is excluded from asOf history (fail-closed)`.
+
+Cross-cutting consumer audit (10 files touching the store/type) confirmed **zero breaking changes**:
+load/save/CAS pass fields through generically (no whitelist), and every reader uses optional-aware
+access (`m.type ?? 'note'`, `!m.invalidatedAt`). The `ChangedSinceRecall` spec wording was tightened
+("most-recent first" → recency-as-tiebreak after task relevance, exclusive boundary, fail-closed).
+
 ## Verification gates
 
-- `vitest run src examples` → **3,921 passed, 2 skipped** (incl. `bitemporal-memory.test.ts` 26 cases
+- `vitest run src examples` → **3,923 passed, 2 skipped** (incl. `bitemporal-memory.test.ts` 28 cases
   + the orient contradiction case).
 - `eslint src` → clean. `tsc --noEmit` → clean.
 - tools/list payload budget (spec-28): full surface < the bumped 57,000 B ceiling; default

@@ -37,7 +37,8 @@
 
 ## 6. `changedSince` recall
 - [x] Extend `recall` with optional `changedSince` (commit-ish); return memories recorded or
-      invalidated after that commit, most-recent first. Reuse bitemporal fields; no relevance model.
+      invalidated after that commit (most-recent first with no task; task relevance ranks first when
+      given, recency as tiebreak). Exclusive boundary. Reuse bitemporal fields; no relevance model.
 - [x] Test: M2 (after C1) returned, M1 (at/before C1) not, for `changedSince` = C1.
 
 ## 7. Content+anchor dedup and write hygiene

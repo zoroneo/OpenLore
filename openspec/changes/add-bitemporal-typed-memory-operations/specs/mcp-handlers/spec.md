@@ -12,7 +12,10 @@ learned/retired it — make memory history queryable without inference.
 
 The `recall` tool SHALL accept an optional `asOf` (commit-ish). With `asOf`, `recall` SHALL return the
 memories that were authoritative as of that commit — i.e. recorded at or before `asOf` and not
-invalidated at or before `asOf` — reusing the existing relevance selection unchanged.
+invalidated at or before `asOf` — reusing the existing relevance selection unchanged. Markers that
+cannot be placed on the commit axis are handled fail-closed: an absent `validFromCommit` reads as
+recorded-before-any-commit (legacy memories stay always-valid), while an invalidated memory with no
+`invalidatedByCommit` is treated as already-retired and excluded from every `asOf` window.
 
 #### Scenario: A memory records its valid-from commit
 
@@ -46,6 +49,9 @@ When two authoritative (`fresh`, non-invalidated) memories resolve to the same a
 `recall` and `orient` SHALL surface the pair as `unreconciled` — a conclusion-shaped signal that two
 grounded memories describe the same symbol and should be reconciled or one superseded. The system
 SHALL NOT silently present both as independent fact, and SHALL NOT use an LLM to choose between them.
+The detection reflects the recall's active scope (a `task`/`type` filter narrows the set considered;
+unfiltered `recall` is the store-wide guarantee), and `orient` surfaces it scoped to the task's
+relevant/decision-governed files and only when the call-graph view is available.
 
 #### Scenario: Two fresh memories on one symbol are flagged
 
@@ -89,8 +95,10 @@ restricts results to memories of that type. Legacy memories with no stored type 
 ### Requirement: ChangedSinceRecall
 
 The `recall` tool SHALL accept an optional `changedSince` (commit-ish) that returns the memories
-recorded or invalidated after that commit, ordered most-recent first, reusing the bitemporal fields
-with no new relevance model. This is the differential companion to `asOf`.
+recorded or invalidated after that commit (most-recent first with no task; task relevance ranks first
+when given, recency as tiebreak; exclusive boundary), reusing the bitemporal fields with no new
+relevance model. A memory whose markers cannot be placed on the commit axis is fail-closed out. This
+is the differential companion to `asOf`.
 
 #### Scenario: Differential recall returns only later changes
 

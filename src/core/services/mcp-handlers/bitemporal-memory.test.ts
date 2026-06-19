@@ -255,6 +255,26 @@ describe('unreconciled contradiction surfacing', () => {
     // file-level anchors are too coarse to count as a contradiction.
     expect(rec.unreconciled).toBeUndefined();
   });
+
+  it('contradiction surfacing reflects the active recall scope: a type filter narrows it', async () => {
+    // Two contradicting memories of DIFFERENT types on the same symbol. Unfiltered recall
+    // surfaces the contradiction; a `type` filter scopes recall to one type, so a cross-type
+    // contradiction is intentionally NOT flagged within that narrowed view (consistent with the
+    // task/score scoping the engine already applies). The unscoped no-filter recall is the
+    // store-wide guarantee. (add-bitemporal-typed-memory-operations)
+    await commitAll('c1');
+    const inv = (await handleRemember(root, 'foo never returns zero', fooAnchor, undefined, 'invariant')) as RememberResult;
+    const got = (await handleRemember(root, 'foo can return zero on a cold cache', fooAnchor, undefined, 'gotcha')) as RememberResult;
+
+    const unfiltered = (await handleRecall(root, 'foo')) as RecallResult;
+    const group = (unfiltered.unreconciled ?? []).find(
+      (g) => g.memberIds.includes(inv.id) && g.memberIds.includes(got.id),
+    );
+    expect(group).toBeDefined(); // store-wide: the cross-type contradiction surfaces
+
+    const filtered = (await handleRecall(root, 'foo', 10, undefined, undefined, undefined, 'invariant')) as RecallResult;
+    expect(filtered.unreconciled).toBeUndefined(); // narrowed to invariants — the gotcha is out of scope
+  });
 });
 
 // ── TypedMemoryClassification ────────────────────────────────────────────────
@@ -331,6 +351,26 @@ describe('legacy memory without validFromCommit', () => {
     // changedSince: no record/invalidation commit to place on the axis ⇒ not "changed since".
     const since = (await handleRecall(root, undefined, 10, undefined, undefined, c1)) as RecallResult;
     expect(since.authoritative.map((m) => m.id)).not.toContain(m1.id);
+  });
+
+  it('an invalidated memory with no invalidatedByCommit is excluded from asOf history (fail-closed)', async () => {
+    // A superseded memory whose invalidation cannot be placed on the commit axis (no
+    // invalidatedByCommit — e.g. invalidated while HEAD was unavailable, or a pre-bitemporal
+    // store) is excluded from every asOf window rather than guessed into range. This keeps the
+    // memory-integrity invariant honest: a retired memory is never silently revived into an asOf
+    // result we cannot prove it belonged to. (add-bitemporal-typed-memory-operations)
+    const c1 = await commitAll('c1');
+    const m1 = (await handleRemember(root, 'gen 1', fooAnchor)) as RememberResult;
+    await writeFile(join(root, 'NOTES.md'), 'x\n', 'utf-8');
+    await commitAll('c2');
+    await handleRemember(root, 'gen 2', fooAnchor, undefined, undefined, m1.id); // retires m1
+    // Simulate an invalidation that could not be commit-anchored: drop invalidatedByCommit only.
+    await patchNotes((memories) => memories.forEach((m) => { if (m.id === m1.id) delete m.invalidatedByCommit; }));
+
+    // Even at c1 — where m1 was the live, authoritative memory — it is fail-closed out of scope,
+    // because its retirement point is unprovable on the axis.
+    const asOf = (await handleRecall(root, undefined, 10, undefined, c1)) as RecallResult;
+    expect(asOf.authoritative.map((m) => m.id)).not.toContain(m1.id);
   });
 });
 
