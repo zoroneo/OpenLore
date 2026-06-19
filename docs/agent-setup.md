@@ -124,7 +124,6 @@ The recommended setup uses two server entries: one always-visible core server an
 }
 ```
 
-- **`openlore-core`** exposes 5 tools always visible in context (~500 tokens): `orient`, `search_code`, `record_decision`, `detect_changes`, `check_spec_drift`. These are the tools most likely to be called at session start.
 - **`openlore-core`** exposes 6 tools always visible in context (~600 tokens): `orient`, `search_code`, `record_decision`, `detect_changes`, `check_spec_drift`, `get_health_map`. These are the tools most likely to be called at session start.
 - **`openlore`** exposes all 60 tools deferred — loaded on demand when the agent uses Tool Search (e.g. "find tool for BFS graph traversal").
 
