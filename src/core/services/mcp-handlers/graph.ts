@@ -531,6 +531,11 @@ export async function handleAnalyzeImpact(
   if (!ctx)            return { error: 'No analysis found. Run analyze_codebase first.' };
   if (!ctx.edgeStore)  return { error: 'Call graph index is empty or unavailable — run analyze_codebase to (re)build it (a version upgrade resets the graph index until the next analyze).' };
 
+  // `symbol` is required by the MCP inputSchema, but dispatchTool enforces nothing,
+  // so a non-conformant caller could reach here with it undefined — return a clean
+  // error instead of crashing on `undefined.toLowerCase()`.
+  if (typeof symbol !== 'string' || symbol.trim() === '') return { error: 'symbol is required.' };
+
   const lower = symbol.toLowerCase();
   let seeds = ctx.edgeStore.searchNodes(lower);
 

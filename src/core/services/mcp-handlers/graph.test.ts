@@ -766,6 +766,17 @@ describe('handleAnalyzeImpact — edgeStore fast path', () => {
     const result = await handleAnalyzeImpact(dir, 'middle', 2) as Record<string, unknown>;
     expect(['low', 'medium', 'high', 'critical']).toContain(result.riskLevel);
   });
+
+  // Regression: `symbol` is required by the MCP inputSchema, but dispatchTool enforces
+  // nothing — a non-conformant caller reaching the handler with an undefined/blank
+  // symbol must get a clean error, not an uncaught `undefined.toLowerCase()` crash.
+  it('returns a clean error for a missing/blank symbol instead of crashing', async () => {
+    vi.mocked(readCachedContext).mockResolvedValue({ edgeStore: store } as never);
+    for (const bad of [undefined, '', '   ']) {
+      const result = await handleAnalyzeImpact(dir, bad as unknown as string, 2) as { error: string };
+      expect(result.error).toBe('symbol is required.');
+    }
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────

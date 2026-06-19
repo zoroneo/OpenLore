@@ -208,10 +208,17 @@ export async function handleFindPath(
       // `to:"name:greet"` reads as `"greet" is not defined…` rather than echoing
       // the selector prefix.
       const toLabel = (federationBlock?.to as string | undefined) ?? to;
+      // Only claim a bridge when one actually exists. The home repo may *not* call
+      // the cross-repo symbol (no external call site), in which case bridge.present
+      // is false — asserting "the home path reaches it" would be a false statement.
+      const hasBridge = (federationBlock?.bridge as { present?: boolean } | undefined)?.present === true;
+      const note = hasBridge
+        ? `"${toLabel}" is not defined in the home repo; it is published by another federated repo (see federation.producers). The home path reaches it at the external call site(s) named in federation.bridge.fromHomeCallers.`
+        : `"${toLabel}" is not defined in the home repo; it is published by another federated repo (see federation.producers). The home repo has no call site that bridges to it, so there is no cross-repo path from "${from}".`;
       return withFed({
         from, to, resolvedFrom, resolvedTo, path: null,
         crossRepo: true,
-        note: `"${toLabel}" is not defined in the home repo; it is published by another federated repo. The home path reaches it at the external call site(s) named in federation.bridge.`,
+        note,
       });
     }
     return withFed({ error: `"${to}" resolved to no functions.` });

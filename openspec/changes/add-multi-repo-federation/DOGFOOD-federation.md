@@ -11,7 +11,9 @@ Two tiny repos, each with its own independently-built `.openlore` index:
 - **repo-a (producer)** — `src/index.ts` exports `greet(name)` and `farewell(name)`.
   - `greet` → `stable_id: "sid:greet(name: string)"` (internal node).
 - **repo-b (consumer)** — `src/app.ts` `welcome()` calls `greet` (imported from `repo-a`),
-  `runApp()` calls `welcome()`; `src/app.test.ts` `testWelcome()` exercises `welcome()`.
+  `runApp()` calls `welcome()`; `src/app.test.ts` covers `welcome()` via an inline `it()` block. The
+  analyzer associates that test through a `tested_by` edge on the test module — there is no callable
+  `testWelcome` symbol — so cross-repo selection surfaces it as the test `app.test` (see session 2).
   - The cross-package call is retained as an external node `{name:"greet", is_external:1}` plus an
     edge `welcome → greet (confidence:"external")`. This is the signal federation resolves on.
 
@@ -242,3 +244,39 @@ tool-count guard was broadened to cover `docs/cli-reference.md` and to tie the d
 to the measured payload, so neither the count nor the size can silently drift again.
 
 Full suite green: 3926 passed, 2 skipped (+3 guards/regressions).
+
+## Adversarial re-dogfood (2026-06-19, session 5)
+
+Fifth pass on the patched branch (post commit 15f46f0), three fresh probes: a regression-hunt of the
+session-4 cap-liveness fix, previously-underexplored territory (3+ repo fleets, `federationRepos` subset
+through the real tools, cross-repo `readCachedContext` caching, `valueLevel`+federation, `diffRef`-based
+cross-repo `select_tests`, bounds/safety on non-OpenLore dirs), and a verification that the new doc guards
+actually fail on drift.
+
+- **Cap-liveness fix: no regression.** Verified the single-symbol `analyze_impact` truncation is byte-
+  identical to the pre-fix behavior (the guard only relaxes the cap for a symbol's *first* consumer), that
+  `truncated` still counts only dropped consumers (not force-added ones), that over-return stays bounded by
+  symbol count, and — by re-running the *old* rule on the same indexes — that the fix rescues 50/50 live
+  symbols the old code would have falsely reported dead. The KB/token doc guard was proven to FAIL on the
+  stale `~48 KB / ~12k` figure and pass on the current `~55 KB / ~14k`.
+
+Two further gaps fixed with a regression test:
+
+1. **`find_path` cross-repo note over-claimed a bridge that doesn't exist** (`pathfind.ts`). The note was
+   hardcoded to assert "the home path reaches it at the external call site(s)…" whenever a scoped repo
+   merely *defined* the `to` symbol — even when `bridge.present` was false (the home repo has no call site
+   to it). E.g. from repo-a, `find_path greet→welcome --federation` located `welcome` in repo-b but the
+   home repo never calls it, yet the note claimed a reaching bridge. The note is now conditional on
+   `bridge.present`: with a bridge it names `bridge.fromHomeCallers`; without one it states plainly that
+   the home repo has no bridging call site and there is no cross-repo path. Verified both directions e2e.
+
+2. **`analyze_impact` crashed on a missing `symbol` arg** (`graph.ts`, pre-existing, not federation-
+   specific). `symbol` is required by the MCP inputSchema but `dispatchTool` enforces nothing, so a
+   non-conformant caller reaching the handler with an undefined symbol hit `undefined.toLowerCase()` — an
+   uncaught `TypeError` instead of a clean error. Surfaced while driving the federation tools directly;
+   fixed with a guard returning `{ error: 'symbol is required.' }`. Regression test in `graph.test.ts`.
+
+The Setup section's stale `testWelcome()` framing (the lone remaining echo of the hand-built-edge model
+that session 2 corrected) was reconciled to the real inline-`it()` / `tested_by` / `app.test` behavior.
+
+Full suite green: 3927 passed, 2 skipped (+1 regression).
