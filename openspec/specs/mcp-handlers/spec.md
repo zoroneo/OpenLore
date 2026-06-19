@@ -631,3 +631,43 @@ registered only in an opt-in preset (`verify`), never in the minimal or first-ru
 - **GIVEN** a `dead` claim about a symbol reachable only through synthesized dynamic-dispatch edges
 - **WHEN** the claim is verified
 - **THEN** the verdict is `unverifiable` with the dispatch boundary named, never `confirmed` or `refuted`
+
+### Requirement: ProactiveIntentBriefing
+
+`orient` SHALL, for the symbols and files in a task's scope, proactively surface relevant prior
+decisions and `remember` notes as part of orientation — without the agent having to ask for history
+it is unaware of. Surfaced intent SHALL include records authored by any agent or human (not only the
+current session) and SHALL carry a freshness verdict per the authoritative-recall invariant: orphaned
+intent is withheld from the authoritative set (segregated as stale), drifted intent is flagged to
+verify. (Realized by orient's `pendingDecisions` / `staleDecisions` / `unreconciledMemories` briefing.)
+
+#### Scenario: Orientation surfaces an in-scope constraint with its verdict
+
+- **GIVEN** a decision anchored to a function in the task's scope
+- **WHEN** `orient` runs for that task
+- **THEN** the decision is surfaced in the briefing with its freshness verdict
+
+### Requirement: ReversalAwareness
+
+When intent in a task's scope was superseded or reverted, `orient` SHALL surface it in an additive
+`reversals` field as an explicit do-not-repeat warning — naming the reverting commit (from a memory's
+`invalidatedByCommit`) and the recorded reason (the superseding record's content/rationale) — rather
+than silently omitting reverted history, because the absence of a do-not-repeat signal is what lets an
+agent re-introduce a deliberately removed approach. A reverted **memory** is one with `invalidatedAt`
+set whose anchors fall in scope; a reverted **decision** is one targeted by another decision's
+`supersedes`. Reverted intent SHALL NOT be re-served as authoritative current context, only as
+cautionary history. Selection is deterministic retrieval over already-recorded supersession records;
+no LLM. The field SHALL be bounded with an explicit omission note (never a silent truncation of
+history) and omitted entirely when nothing in scope was reverted.
+
+#### Scenario: A reverted approach is surfaced as do-not-repeat
+
+- **GIVEN** an approach recorded and later reverted at commit Y with a reason
+- **WHEN** an agent orients on the code that approach touched
+- **THEN** the briefing's `reversals` warns "Do not re-attempt …; reverted at commit Y — recorded reason …", rather than omitting it
+
+#### Scenario: Reverted intent is never served as authoritative
+
+- **GIVEN** a decision superseded by a later decision
+- **WHEN** `orient` runs for a task in that decision's scope
+- **THEN** the superseded decision appears only under `reversals`, never under `pendingDecisions`

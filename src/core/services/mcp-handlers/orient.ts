@@ -34,7 +34,39 @@ import {
 import { memoryFreshness, decisionAnchors, findUnreconciled, type AnchoredItem, type UnreconciledGroup } from '../../decisions/anchor.js';
 import { makeFreshnessView } from '../../decisions/anchor-adapter.js';
 import { loadMemoryStore } from '../../decisions/memory-store.js';
-import type { MemoryFreshness } from '../../../types/index.js';
+import type { MemoryFreshness, AnchoredMemory } from '../../../types/index.js';
+
+/**
+ * A reverted/superseded piece of intent surfaced as a do-not-repeat warning
+ * (ReversalAwareness, add-cross-agent-intent-handoff). Reverted intent is NEVER
+ * served as authoritative current context — only as cautionary history so an
+ * agent does not re-introduce a deliberately removed approach.
+ */
+export interface Reversal {
+  /** Where the reverted record came from. `note` marks an omission placeholder. */
+  source: 'memory' | 'decision' | 'note';
+  /** Id of the reverted memory/decision (empty for a `note` placeholder). */
+  id: string;
+  /** The reverted approach: the old memory content or decision title. */
+  what: string;
+  /** Recorded reason for the reversal (the superseding item's content/rationale). */
+  reason?: string;
+  /** Reverting commit SHA — present only for memory reversals (invalidatedByCommit). */
+  revertedAtCommit?: string;
+  /** Transaction-time the reversal was recorded (ISO). */
+  revertedAt?: string;
+  /** Id of the memory/decision that superseded this one. */
+  supersededBy?: string;
+  /** Pre-rendered conclusion the agent can act on directly. */
+  warning: string;
+}
+
+/** Render the do-not-repeat conclusion for a reverted record. Deterministic, no LLM. */
+function renderReversalWarning(what: string, commit?: string, reason?: string): string {
+  const where = commit ? ` (reverted at commit ${commit.slice(0, 8)})` : ' (reverted)';
+  const why = reason ? ` — recorded reason: ${reason}` : '';
+  return `Do not re-attempt: ${what}${where}${why}`;
+}
 
 // ============================================================================
 // MANIFEST CACHE
@@ -421,6 +453,10 @@ export async function handleOrient(
   // (add-bitemporal-typed-memory-operations). Computed across the decisions surfaced
   // here plus the task-relevant `remember` notes.
   let unreconciledMemories: UnreconciledGroup[] | undefined;
+  // Reverted/superseded intent in scope, surfaced as do-not-repeat warnings
+  // (ReversalAwareness). Read from the bitemporal supersession record + decision
+  // supersedes links; never re-served as authoritative current context.
+  let reversals: Reversal[] | undefined;
   if (!lean) try {
     const { loadDecisionStore, INACTIVE_STATUSES } = await import('../../decisions/store.js');
     const store = await loadDecisionStore(absDir);
@@ -480,6 +516,69 @@ export async function handleOrient(
     }
     const groups = findUnreconciled(contradictionItems);
     if (groups.length > 0) unreconciledMemories = groups;
+
+    // ── ReversalAwareness (do-not-repeat) ──────────────────────────────────
+    // The absence of a do-not-repeat signal is what lets an agent re-introduce
+    // an approach a prior agent/human already tried and reverted. Surface it.
+    const rev: Reversal[] = [];
+    // Memory reversals: a retired (invalidated) memory whose anchors fall in
+    // scope. The reverting commit is invalidatedByCommit; the reason is the
+    // content of the memory that superseded it (resolved via the supersedes link).
+    const memStoreAll = await loadMemoryStore(absDir);
+    const supersederByTarget = new Map<string, AnchoredMemory>();
+    for (const n of memStoreAll.memories) if (n.supersedes) supersederByTarget.set(n.supersedes, n);
+    for (const m of memStoreAll.memories) {
+      if (!m.invalidatedAt) continue;
+      if (!m.anchors.some((a) => scopeFiles.has(a.filePath))) continue;
+      const by = supersederByTarget.get(m.id);
+      rev.push({
+        source: 'memory',
+        id: m.id,
+        what: m.content,
+        reason: by?.content,
+        revertedAtCommit: m.invalidatedByCommit,
+        revertedAt: m.invalidatedAt,
+        supersededBy: by?.id,
+        warning: renderReversalWarning(m.content, m.invalidatedByCommit, by?.content),
+      });
+    }
+    // Decision reversals: a decision A explicitly superseded by another decision
+    // B (B.supersedes === A.id), where A is in the task's scope. The reason is B's
+    // rationale. Decisions carry no commit SHA, so none is surfaced for this path.
+    const decById = new Map(store.decisions.map((d) => [d.id, d]));
+    for (const b of store.decisions) {
+      if (!b.supersedes) continue;
+      const a = decById.get(b.supersedes);
+      if (!a) continue;
+      const inScope =
+        a.affectedDomains.some((dom) => relevantDomainSet.has(dom)) ||
+        a.affectedFiles.some((f) => scopeFiles.has(f));
+      if (!inScope) continue;
+      rev.push({
+        source: 'decision',
+        id: a.id,
+        what: a.title,
+        reason: b.rationale,
+        revertedAt: b.recordedAt,
+        supersededBy: b.id,
+        warning: renderReversalWarning(a.title, undefined, b.rationale),
+      });
+    }
+    if (rev.length > 0) {
+      // Most-recent reversal first; bounded with an explicit omission note so a
+      // large in-scope history is never silently truncated.
+      rev.sort((x, y) => (y.revertedAt ?? '').localeCompare(x.revertedAt ?? ''));
+      const MAX_REVERSALS = 10;
+      reversals = rev.slice(0, MAX_REVERSALS);
+      if (rev.length > MAX_REVERSALS) {
+        reversals.push({
+          source: 'note',
+          id: '',
+          what: '',
+          warning: `${rev.length - MAX_REVERSALS} more reverted item(s) in scope not shown — query recall for the full history.`,
+        });
+      }
+    }
   } catch {
     // non-fatal — decisions feature may not be initialised
   }
@@ -745,6 +844,7 @@ export async function handleOrient(
     ...(pendingDecisions !== undefined ? { pendingDecisions } : {}),
     ...(staleDecisions !== undefined ? { staleDecisions } : {}),
     ...(unreconciledMemories !== undefined ? { unreconciledMemories } : {}),
+    ...(reversals !== undefined ? { reversals } : {}),
     ...(governingDecisions !== undefined ? { governingDecisions } : {}),
     ...(provenance !== undefined ? { provenance } : {}),
     ...(changeCoupling !== undefined ? { changeCoupling } : {}),
