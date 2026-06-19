@@ -1,13 +1,15 @@
 # Multi-repo federation: a deterministic index-of-indexes for repository fleets
 
-> Status: IMPLEMENTED (2026-06-19, subset) — groups 1–3 + 5 shipped on branch
-> `feat/multi-repo-federation`. Registry + CLI (`openlore federation add|remove|list`),
-> cross-repo resolution via stable-ID name descriptors, federation scope on
-> `analyze_impact` / `find_dead_code` / `select_tests` / `find_path`, the opt-in
-> `federation` preset + `federation_status` tool. Group 4 (fleet-level anchored
-> memory) is DEFERRED — it depends on bitemporal memory (`add-bitemporal-typed-memory-operations`,
-> PR #163) which is not yet in `main`. Decisions: `bf5aff2d` (registry schema),
-> `67ca60fe` (cross-repo resolution contract).
+> Status: IMPLEMENTED — groups 1–3 + 5 shipped on branch `feat/multi-repo-federation`; group 4
+> (fleet-level anchored memory) shipped in PR #168 once its prerequisite landed. Registry + CLI
+> (`openlore federation add|remove|list`), cross-repo resolution via stable-ID name descriptors,
+> federation scope on `analyze_impact` / `find_dead_code` / `select_tests` / `find_path`, the opt-in
+> `federation` preset + `federation_status` tool. Group 4 (fleet-level anchored memory) is DONE
+> (PR #168, ADR-0019): its prerequisite bitemporal memory (`add-bitemporal-typed-memory-operations`,
+> PR #163) is now in `main`, so the requirement was re-homed into the canonical `mcp-handlers` spec —
+> a producer-repo memory OR decision anchored to a consumed interface surfaces in a consumer's
+> `recall.fleetMemory` with its producer-side verdict (`src/core/federation/fleet-memory.ts`).
+> Decisions: `bf5aff2d` (registry schema), `67ca60fe` (cross-repo resolution contract).
 > Phase-2 set (build after the five memory + dispatch changes):
 > `add-multi-repo-federation` · `add-confidence-boundary-disclosure` ·
 > `add-structural-claim-verification` · `add-preflight-blast-radius-guard` ·

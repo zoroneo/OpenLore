@@ -1,6 +1,15 @@
 # Code-anchored agent memory with deterministic staleness
 
-> Status: DRAFT — proposal + spec delta for the next unit of work. No code yet.
+> Status: IMPLEMENTED — this is the foundational freshness engine the later memory proposals build on.
+> Shipped: the anchor model (`StructuralAnchor` + `MemoryFreshness` `fresh|drifted|orphaned`,
+> `src/types/index.ts`), deterministic anchor resolution + span hashing and the `anchorFreshness`
+> engine (`src/core/decisions/anchor.ts`), memory↔code drift findings (`memory-drifted`/`memory-orphaned`
+> in `src/core/drift/drift-detector.ts`), the opt-in `remember`/`recall` MCP tools
+> (`src/core/services/mcp-handlers/memory.ts`, `memory` preset — never in `MINIMAL_TOOLS`), and the
+> authoritative-recall invariant in both `orient` and `recall` (orphaned never served, drifted flagged
+> `verify`). Tests: `anchor.test.ts`, `anchor-adversarial.test.ts`, `memory.test.ts`,
+> `memory-invariant.test.ts`, `memory-staleness.test.ts`, `orient-memory-freshness.test.ts`. Spec delta
+> merged into `openspec/specs/mcp-handlers/spec.md`.
 > This is the change that makes the tagline true: **"Deterministic persistent memory for AI agents."**
 
 ## Why

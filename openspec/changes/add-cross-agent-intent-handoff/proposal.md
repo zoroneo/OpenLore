@@ -1,18 +1,25 @@
 # Cross-agent intent handoff: brief the next agent on what was already decided
 
-> Status: PARTIALLY IMPLEMENTED (PR #168, 2026-06-19).
+> Status: IMPLEMENTED (PR #168, 2026-06-19). All four requirements shipped; the two items previously
+> marked DEFERRED in this header (the dedicated `recall` briefing mode and the federation
+> cross-repo-constraint sub-item) were both built later in the same PR.
 > - **ProactiveIntentBriefing (Req 1 / item 1) — already shipped** before this PR: `orient` surfaces
 >   in-scope decisions and `remember` notes with freshness verdicts (`pendingDecisions` /
 >   `staleDecisions` / `unreconciledMemories`), withholding orphaned and flagging drifted intent.
-> - **ReversalAwareness (Req 2 / item 2) — built in PR #168 (ADR-0017).** `orient` now emits an
->   additive `reversals` field surfacing reverted/superseded intent as do-not-repeat warnings naming
->   the reverting commit and recorded reason. Unit tests in
->   `orient-reversal-awareness.test.ts`; e2e dogfood in `DOGFOOD-reversal-awareness.md`.
+> - **ReversalAwareness (Req 2 / item 2) — built in PR #168 (ADR-0017).** `orient` AND `recall` now emit
+>   an additive `reversals` field surfacing reverted/superseded intent as do-not-repeat warnings naming
+>   the reverting commit and recorded reason, via the shared `reversals.ts` helper (`collectReversals` /
+>   `renderReversalWarning`). The dedicated `recall` briefing mode (previously deferred) is DONE
+>   (commit `9c6b075`). Unit tests in `orient-reversal-awareness.test.ts` + `memory.test.ts`; e2e dogfood
+>   in `DOGFOOD-reversal-awareness.md`.
 > - **Item 3 (cross-agent + freshness)** is satisfied by the existing cross-session briefing; the
->   federation cross-repo-constraint sub-item remains DEFERRED.
-> - **Item 4 (budget/docs)**: `reversals` is bounded with an explicit omission note; documented in the
->   canonical `mcp-handlers` spec. The dedicated `recall` briefing mode remains DEFERRED (orient is the
->   primary briefing surface; recall already retires superseded memories via its bitemporal path).
+>   federation cross-repo-constraint sub-item (previously deferred) is DONE — `FleetLevelAnchoredMemory`
+>   (ADR-0019, commits `be0aa3d`/`1da69e4`): a producer-repo memory OR decision anchored to a consumed
+>   interface surfaces in the consumer's `recall.fleetMemory` with its producer-side verdict, orphaned
+>   withheld (`src/core/federation/fleet-memory.ts`).
+> - **Item 4 (budget/docs)**: `reversals` and `fleetMemory` are bounded with explicit omission notes;
+>   documented in the canonical `mcp-handlers` spec (ProactiveIntentBriefing + ReversalAwareness +
+>   FleetLevelAnchoredMemory requirements).
 >
 > Builds on `add-bitemporal-typed-memory-operations` (supersession/reversal) and
 > `harden-memory-integrity-invariant` (freshness).
