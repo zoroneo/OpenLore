@@ -5609,6 +5609,12 @@ The system SHALL The blast-radius pipeline SHALL catch exceptions from all compo
 
 > Decision recorded: 215092bc
 > Date: 2026-06-19
+### Requirement: BlastradiusBriefingReportsTheResolvedBaseRefNotJustTheRequestedOne
+
+The system SHALL include the resolved base ref in blast-radius briefings and emit a caveat when it differs from the requested ref.
+
+> Decision recorded: c7ddcd1f
+> Date: 2026-06-19
 
 ## Technical Notes
 
@@ -6176,3 +6182,13 @@ A stale or incompatible openlore binary that lacks the --hook flag would fail at
 The blast-radius briefing composes multiple handlers (impact analysis, spec drift); any throw from a composed handler must degrade gracefully rather than blocking a commit, preserving the advisory-by-default contract.
 
 **Consequences:** Failures in individual symbols or drift checks are surfaced as caveats in the briefing but never produce a non-zero exit code; bugs in composed handlers become harder to notice without inspecting briefing output.
+
+### Blast-radius briefing reports the resolved base ref, not just the requested one
+
+**Status:** Approved
+**Date:** 2026-06-19
+**ID:** c7ddcd1f
+
+getChangedFiles/resolveBaseRef silently falls back through main → master → HEAD~1 when a requested base ref does not resolve. computeBlastRadius discarded diff.resolvedBase and labeled the briefing with the requested baseRef, so a typo'd or deleted ref produced a briefing that claimed to diff against that ref while actually diffing main — a silent misrepresentation that violates the tool's no-silent / honest-scope contract.
+
+**Consequences:** The briefing gains a resolvedBaseRef field (what git actually diffed against) alongside the requested baseRef, and emits a caveat when the two differ. The empty-diff headline reports the resolved ref. Consumers can now detect fallback.

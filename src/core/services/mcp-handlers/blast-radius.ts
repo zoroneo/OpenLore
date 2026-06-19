@@ -66,7 +66,12 @@ interface ImpactResult {
 }
 
 export interface BlastRadiusBriefing {
+  /** The base ref the caller requested (default `HEAD`). */
   baseRef: string;
+  /** The ref git actually diffed against. Differs from `baseRef` when the
+   * requested ref did not resolve and resolveBaseRef fell back (main → master →
+   * HEAD~1); a caveat is emitted when they differ. */
+  resolvedBaseRef: string;
   changed: { files: number; symbols: number; symbolNames: string[] };
   impact: {
     highestRiskLevel: RiskLevel | 'none';
@@ -140,10 +145,15 @@ export async function computeBlastRadius(
 
   // ── 1. Resolve the diff → changed files → seed production symbols ───────────
   let changedFiles: string[] = [];
+  // resolveBaseRef silently falls back (main → master → HEAD~1) when the requested
+  // ref does not resolve; capture what git ACTUALLY diffed against so the briefing
+  // never misrepresents its base (honest-scope; mirrors no-silent-truncation).
+  let resolvedBaseRef = baseRef;
   try {
     const { getChangedFiles } = await import('../../drift/git-diff.js');
     const diff = await getChangedFiles({ rootPath: absDir, baseRef, includeUnstaged: true });
     changedFiles = diff.files.map(f => f.path);
+    resolvedBaseRef = diff.resolvedBase ?? baseRef;
   } catch (err) {
     return { error: `git diff failed (base ${baseRef}): ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -240,6 +250,9 @@ export async function computeBlastRadius(
     'Blast radius is an over-approximate structural prioritizer, not a behavioral test outcome.',
     'Impact and test selection can under-select through dynamic dispatch, reflection, and DI.',
   ];
+  if (resolvedBaseRef !== baseRef) {
+    caveats.push(`Requested base ref "${baseRef}" did not resolve; diffed against "${resolvedBaseRef}" instead (main → master → HEAD~1 fallback).`);
+  }
   if (seeds.length > analyzed.length) {
     caveats.push(`Impact analyzed the ${analyzed.length} highest-fan-in changed symbols; ${seeds.length - analyzed.length} lower-risk symbols were not individually analyzed.`);
   }
@@ -265,6 +278,7 @@ export async function computeBlastRadius(
 
   const briefing: BlastRadiusBriefing = {
     baseRef,
+    resolvedBaseRef,
     changed: {
       files: changedFiles.length,
       symbols: seeds.length,
@@ -300,7 +314,7 @@ export async function computeBlastRadius(
 
 /** One-line conclusion summarizing the briefing. */
 function renderHeadline(b: BlastRadiusBriefing): string {
-  if (b.changed.files === 0) return 'No changes vs ' + b.baseRef + ' — nothing to brief.';
+  if (b.changed.files === 0) return 'No changes vs ' + b.resolvedBaseRef + ' — nothing to brief.';
   const parts: string[] = [
     `${b.changed.files} file${b.changed.files === 1 ? '' : 's'} / ${b.changed.symbols} symbol${b.changed.symbols === 1 ? '' : 's'} changed`,
   ];

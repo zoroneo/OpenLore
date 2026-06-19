@@ -145,3 +145,38 @@ This pass exercised the surfaces the earlier passes only unit-tested, against re
   detail list (specs/decisions/memory) so the developer-facing output is never silently truncated.
 
 Feature tests: **27 → 28**. Full suite re-confirmed green (`vitest run src examples`); `tsc` + `eslint` clean.
+
+## 8. Fourth pass — adversarial multi-agent E2E + base-ref honesty fix (2026-06-19)
+
+A fourth review fanned out three adversarial agents (security / docs-consistency / block-path E2E) against
+real inputs, plus direct dogfooding of the built CLI and the live MCP server. It found and fixed one real
+defect and one user-facing doc miss; the remaining surfaces re-confirmed clean.
+
+- **[fixed] Base ref was misrepresented on silent fallback (honesty defect).** `getChangedFiles` →
+  `resolveBaseRef` silently falls back through `main → master → HEAD~1` when the requested ref does not
+  resolve, but `computeBlastRadius` discarded `diff.resolvedBase` and labeled the briefing with the
+  *requested* `baseRef`. So `blast-radius --base totally-bogus-ref` produced a briefing that *claimed* to
+  diff against `totally-bogus-ref` while actually diffing `main` (24 files) — a silent misrepresentation
+  that violates the briefing's own no-silent / honest-scope contract. The briefing now carries a
+  `resolvedBaseRef` field (what git actually diffed against) alongside the requested `baseRef`, emits a
+  caveat when they differ (`Requested base ref "X" did not resolve; diffed against "Y" instead …`), and the
+  empty-diff headline reports the resolved ref. Verified E2E on the real repo and the live MCP server; the
+  advisory-never-block guarantee is preserved (bad ref in `--hook` still exits 0). Decision `c7ddcd1f`.
+- **[fixed] Two stale "50 MCP tools" references.** The third pass corrected the in-prose counts but missed
+  the top-of-README architecture table (`README.md:72`) and the Mermaid architecture diagram
+  (`README.md:395`); both now read **58 MCP tools**, matching the measured surface.
+- **Re-confirmed clean by adversarial agents (no defect):**
+  - *Argument-injection / never-block:* `validateGitRef` (leading-dash + allowlist) plus `execFile`
+    (no shell) reject `--upload-pack=…`, `-x`, shell metacharacters, null bytes, and 5,000-char refs on
+    both the CLI and MCP paths. Every malformed input in `--hook` mode — no analysis, non-git dir, invalid
+    JSON config, bad/empty/null-byte ref, and `blastRadius.block` set to a number / null / nested array /
+    bare string / bogus pattern names — exits 0. The installed hook shell script has no user-controlled
+    interpolation and `sh -n` passes.
+  - *Block path fires E2E:* on a throwaway repo, an anchored memory was orphaned (anchor symbol deleted +
+    re-analyzed); with `block: ["orphans-anchored-memory"]` a real `git commit` through the installed hook
+    was **blocked** (exit 1, "commit blocked" message), and the same diff with no block config **committed**
+    (exit 0, advisory). Confirms `triggeredBlockPatterns` reading the uncapped `*.orphaned` count works end
+    to end, not just by inspection.
+
+Feature tests: **28 → 30** (added base-ref fallback honesty + no-caveat-when-resolved). Full suite green:
+**191 files, 3923 passed, 2 skipped** (`vitest run src examples`); `tsc` + `eslint` clean.

@@ -137,6 +137,24 @@ describe('computeBlastRadius', () => {
     expect(b.caveats.join(' ')).toMatch(/drift could not be evaluated/i);
   });
 
+  it('reports the resolved base ref (and caveats the fallback) when the requested ref does not resolve', async () => {
+    // resolveBaseRef silently falls back to main when the requested ref is bogus;
+    // the briefing must report what git ACTUALLY diffed against, not the typo.
+    const { getChangedFiles } = await import('../../drift/git-diff.js');
+    vi.mocked(getChangedFiles).mockResolvedValueOnce({ files: [{ path: 'src/utils.ts' }], resolvedBase: 'main' } as never);
+    const b = await computeBlastRadius({ directory: '/p', baseRef: 'totally-bogus-ref' }) as BlastRadiusBriefing;
+    expect(b.baseRef).toBe('totally-bogus-ref');     // what the caller asked for
+    expect(b.resolvedBaseRef).toBe('main');          // what git actually diffed
+    expect(b.caveats.join(' ')).toMatch(/Requested base ref "totally-bogus-ref" did not resolve.*diffed against "main"/i);
+  });
+
+  it('emits no fallback caveat when the requested ref resolves as-is', async () => {
+    // Default fixture: getChangedFiles returns resolvedBase 'HEAD' for the default 'HEAD' request.
+    const b = await computeBlastRadius({ directory: '/p' }) as BlastRadiusBriefing;
+    expect(b.resolvedBaseRef).toBe('HEAD');
+    expect(b.caveats.join(' ')).not.toMatch(/did not resolve/i);
+  });
+
   it('errors clearly when no analysis exists', async () => {
     vi.mocked(readCachedContext).mockResolvedValueOnce(null as never);
     const r = await computeBlastRadius({ directory: '/p' });

@@ -69,7 +69,7 @@ Three layers, each usable independently:
 |-------|-------------|----------|
 | **1. Static Analysis** | Call graph, clusters, McCabe CC, external deps → `CODEBASE.md` digest | No |
 | **2. Spec Layer** | LLM-generated living specs, ADRs, drift detection, decision gates | For generation |
-| **3. Agent Runtime** | 50 MCP tools — `orient()`, semantic search, graph expansion | No |
+| **3. Agent Runtime** | 58 MCP tools — `orient()`, semantic search, graph expansion | No |
 
 You can use layer 1 alone to give agents structural context. Add layer 2 for semantic intent and architectural governance through OpenSpec-compatible living specifications. Layer 3 keeps that context continuously accessible through graph-native MCP tools once `openlore mcp` is running.
 
@@ -392,7 +392,7 @@ flowchart TD
     Iac --> DB
     Dec --> DB
 
-    DB --> MCP[50 MCP tools<br/>orient · BFS · search · analyze_impact]
+    DB --> MCP[58 MCP tools<br/>orient · BFS · search · analyze_impact]
     MCP --> Agent((Coding Agent))
 
     Code -. optional, API key .-> Gen[openlore generate]
