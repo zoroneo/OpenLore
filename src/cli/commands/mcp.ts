@@ -135,6 +135,23 @@ export {
 // dropping the one fact that matters (it must be absolute, not relative).
 const DIR_DESC = 'Absolute project path';
 
+// Optional federation scope, shared by the four federation-aware conclusion tools
+// (analyze_impact, select_tests, find_dead_code, find_path). Inert unless an
+// `.openlore/federation.json` registry exists (built via `openlore federation add`),
+// so the default surface registers no active cross-repo behavior.
+// (change: add-multi-repo-federation)
+const FEDERATION_PROPS = {
+  federation: {
+    type: 'boolean',
+    description: 'Opt-in: compute across federated repos (.openlore/federation.json); no-op without a registry (default false).',
+  },
+  federationRepos: {
+    type: 'array',
+    items: { type: 'string' },
+    description: 'Limit federation scope to these registry repo names (default: all).',
+  },
+} as const;
+
 export const TOOL_DEFINITIONS = [
   {
     name: 'orient',
@@ -484,6 +501,7 @@ export const TOOL_DEFINITIONS = [
           type: 'string',
           description: 'Parameter/variable to trace (with valueLevel; omit = all params).',
         },
+        ...FEDERATION_PROPS,
       },
       required: ['directory', 'symbol'],
     },
@@ -512,6 +530,7 @@ export const TOOL_DEFINITIONS = [
         },
         maxDepth: { type: 'number', description: 'Backward reachability depth (default 12)' },
         directResolvedOnly: { type: 'boolean', description: 'Traverse only directly-resolved edges, ignoring synthesized dynamic-dispatch edges (default false).' },
+        ...FEDERATION_PROPS,
       },
       required: ['directory'],
     },
@@ -554,6 +573,7 @@ export const TOOL_DEFINITIONS = [
         maxResults: { type: 'number', description: 'Max candidate-dead results (default 100)' },
         filePattern: { type: 'string', description: 'Only report candidates whose file path contains this substring' },
         directResolvedOnly: { type: 'boolean', description: 'Restrict reachability to directly-resolved edges, ignoring synthesized dynamic-dispatch edges — strict certainty over completeness (default false).' },
+        ...FEDERATION_PROPS,
       },
       required: ['directory'],
     },
@@ -1384,8 +1404,22 @@ export const TOOL_DEFINITIONS = [
         to: { type: 'string', description: 'Goal endpoint: a function name, or landmark:<id> / role:entrypoint|hub|sink / file:<path>' },
         useCallDistance: { type: 'boolean', description: 'Rank by confidence-weighted call-distance (default true); false ranks by fewest hops' },
         directResolvedOnly: { type: 'boolean', description: 'Traverse only directly-resolved edges, ignoring synthesized dynamic-dispatch edges (default false).' },
+        ...FEDERATION_PROPS,
       },
       required: ['directory', 'from', 'to'],
+    },
+  },
+  {
+    name: 'federation_status',
+    description:
+      'Report the multi-repo federation registry (.openlore/federation.json) and each registered ' +
+      'repo\'s live index state (indexed/stale/unindexed/missing). Index-of-indexes: no merged graph. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: DIR_DESC },
+      },
+      required: ['directory'],
     },
   },
   {
@@ -1688,6 +1722,14 @@ export const TOOL_PRESETS: Record<string, Set<string>> = {
   verify: new Set([
     'orient', 'search_code', 'verify_claim',
   ]),
+  // Multi-repo federation (opt-in): the cross-repo conclusion tools plus the
+  // registry status tool. `federation_status` exists ONLY here — the default and
+  // `minimal` surfaces register no federation capability (change:
+  // add-multi-repo-federation; architecture: FederationScopedConclusions opt-in).
+  federation: new Set([
+    'orient', 'federation_status',
+    'analyze_impact', 'find_dead_code', 'select_tests', 'find_path',
+  ]),
 };
 
 /**
@@ -1989,6 +2031,6 @@ export const mcpCommand = new Command('mcp')
   .option('--daemon', 'Delegate tool calls to a shared `openlore serve` daemon, spawning one if needed (coherent state across agents — one warm process + one watcher per repo). Without it, MCP reuses a daemon only if one is already running, else runs in-process.')
   .option('--watch-debounce <ms>', 'Debounce delay in ms before re-indexing after a file change (default: 400)', '400')
   .option('--watch-no-embed', 'Watch signatures only — skip live vector re-embedding (embeddings refresh at commit). Large repos auto-degrade to this.')
-  .option('--minimal', 'Expose only core 5 tools (orient, search_code, record_decision, detect_changes, check_spec_drift). Pair with alwaysLoad: true in Claude Code for always-visible core tools.')
-  .option('--preset <name>', 'Expose a named tool preset instead of all ~45. "minimal" = orient+search+governance; "navigation" = graph-traversal core (orient, search_code, get_subgraph, trace_execution_path, analyze_impact, suggest_insertion_points, get_function_skeleton) for low-overhead code navigation. Takes precedence over --minimal.')
+  .option('--minimal', 'Expose only core 6 tools (orient, search_code, record_decision, detect_changes, check_spec_drift, get_health_map). Pair with alwaysLoad: true in Claude Code for always-visible core tools.')
+  .option('--preset <name>', 'Expose a named tool preset instead of all 58. "minimal" = orient+search+governance; "navigation" = graph-traversal core (orient, search_code, get_subgraph, trace_execution_path, analyze_impact, suggest_insertion_points, get_function_skeleton) for low-overhead code navigation; "memory" = orient+remember+recall; "federation" = orient + federation_status + the four cross-repo conclusion tools. Takes precedence over --minimal.')
   .action((options: McpServerOptions) => startMcpServer(options));

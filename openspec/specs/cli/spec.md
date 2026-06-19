@@ -418,6 +418,12 @@ be an explicit opt-in command (`openlore blast-radius --install-hook`), never au
 - **GIVEN** an installed advisory pre-flight hook
 - **WHEN** `.openlore/config.json` enables blocking for a named high-risk pattern
 - **THEN** the hook blocks only on that pattern and stays advisory otherwise
+### Requirement: FederationRegistryIsAProjectlocalIndexofindexesManifest
+
+The system SHALL maintain a project-local federation registry at .openlore/federation.json that references external repos' independently-built indexes without materializing a union graph.
+
+> Decision recorded: bf5aff2d
+> Date: 2026-06-19
 
 ## Technical Notes
 
@@ -593,3 +599,12 @@ Every conclusion tool (analyze_impact, find_path, find_dead_code, get_subgraph, 
 Comparing the analyze-time project fingerprint (whole-tree mtime+size hash) against a query-time recompute is unreliable: fixture dirs and mtime drift cause false-positive staleness on every answer, training agents to ignore the marker. Replaced with a deterministic git signal: staleness fires iff `git diff --name-only <buildCommit>` reports graph-relevant source files changed since the index was built. Non-git repos and indexes with no captured commit get NO staleness marker (silent rather than false-positive) — a deliberate honesty tradeoff. This supersedes the "fingerprint-mismatch boolean" degradation described in decision 08e71184 above.
 
 **Consequences:** computeStaleness no longer calls computeProjectFingerprint; it reads the build commit from fingerprint.json and shells `git diff` (memoized 5s per dir). A pure buildStalenessMarker(commit, changedCount) holds the emit/silent logic and is unit-tested. The pre-existing fingerprint-includes-.openlore-live-cache bug that affects isCacheFresh is left untouched and flagged separately.
+### Federation registry is a project-local index-of-indexes manifest
+
+**Status:** Approved
+**Date:** 2026-06-19
+**ID:** bf5aff2d
+
+Multi-repo federation needs a registry that references each repo's independently-built .openlore index without merging graphs. Store it project-local at .openlore/federation.json (hermetic, deterministic, co-located with the index) rather than ~/.openlore. Each entry is { name, path (absolute), fingerprint, schemaVersion, lastBuilt } sourced from the target repo's .openlore/analysis/fingerprint.json. The home repo (the one holding the registry) is implicitly in scope. Adding/removing a repo edits only the registry plus that repo's own local build — never a global rebuild.
+
+**Consequences:** A new src/core/federation/ module owns registry load/save/add/remove/list. Federated queries load per-repo CachedContext lazily via readCachedContext on demand; no union graph is materialized. Remote (git-remote) repos and a global ~/.openlore registry are deferred to a follow-up.

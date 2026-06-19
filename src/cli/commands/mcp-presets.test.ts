@@ -7,7 +7,7 @@
  * surface), and the selector's precedence/error behaviour must hold.
  */
 import { describe, it, expect } from 'vitest';
-import { selectActiveTools, TOOL_PRESETS, TOOL_DEFINITIONS } from './mcp.js';
+import { selectActiveTools, TOOL_PRESETS, TOOL_DEFINITIONS, mcpCommand } from './mcp.js';
 
 const NAV = [
   'orient', 'search_code', 'get_subgraph', 'trace_execution_path',
@@ -38,6 +38,19 @@ describe('MCP tool presets', () => {
     expect(new Set(tools)).toEqual(new Set(['orient', 'search_code', 'record_decision', 'detect_changes', 'check_spec_drift', 'get_health_map']));
   });
 
+  // Guard: the user-facing `--minimal` help text must match the actual preset — it
+  // drifted to "5 tools" once after get_health_map was added to the 6-tool set.
+  it('the --minimal help text matches the minimal preset (count + every member named)', () => {
+    const minimal = [...TOOL_PRESETS.minimal];
+    const opt = mcpCommand.options.find(o => o.long === '--minimal');
+    expect(opt, 'the --minimal option is registered').toBeTruthy();
+    const help = opt!.description;
+    expect(help, 'help states the live minimal-preset size').toContain(`core ${minimal.length} tools`);
+    for (const t of minimal) {
+      expect(help, `help names the minimal tool "${t}"`).toContain(t);
+    }
+  });
+
   it('no selector exposes the full tool set', () => {
     expect(selectActiveTools(TOOL_DEFINITIONS, {})).toHaveLength(TOOL_DEFINITIONS.length);
     expect(TOOL_DEFINITIONS.length).toBeGreaterThan(NAV.length); // full surface really is larger
@@ -50,6 +63,19 @@ describe('MCP tool presets', () => {
 
   it('an unknown preset throws with the known list, not a silent full surface', () => {
     expect(() => selectActiveTools(TOOL_DEFINITIONS, { preset: 'nope' })).toThrow(/Unknown --preset "nope".*minimal.*navigation/s);
+  });
+
+  // change: add-multi-repo-federation — FederationScopedConclusions: the
+  // federation capability (federation_status) appears ONLY under the federation
+  // preset; the default and minimal surfaces register no federation capability.
+  it('federation_status is gated to the federation preset, never in default/minimal', () => {
+    const fed = selectActiveTools(TOOL_DEFINITIONS, { preset: 'federation' }).map(t => t.name);
+    expect(fed).toContain('federation_status');
+    expect(new Set(fed)).toEqual(new Set(['orient', 'federation_status', 'analyze_impact', 'find_dead_code', 'select_tests', 'find_path']));
+
+    expect(selectActiveTools(TOOL_DEFINITIONS, { minimal: true }).map(t => t.name)).not.toContain('federation_status');
+    // Default surface DOES list the four federation-aware tools, but federation_status
+    // — the registry-backed capability — is the opt-in marker and rides only the preset.
   });
 });
 
@@ -187,10 +213,16 @@ describe('tools/list payload budget (spec-28)', () => {
   // opt-in `verify` preset); only the full surface widens. Conscious decision, not silent drift.
   it('full surface stays within its prefix budget', () => {
     expect(payloadBytes({})).toBeLessThan(56_500);
+  // Nav bumped 12_500 → 13_300 and full 55_000 → 57_000 when multi-repo federation added the
+  // two opt-in `federation`/`federationRepos` props to the four conclusion tools plus the new
+  // `federation_status` tool (federation preset only) — spec: add-multi-repo-federation.
+  // Conscious decision, not silent drift.
+  it('full surface stays within its prefix budget', () => {
+    expect(payloadBytes({})).toBeLessThan(57_000);
   });
 
   it('navigation preset stays lean (the low-overhead surface that wins the benchmark)', () => {
-    expect(payloadBytes({ preset: 'navigation' })).toBeLessThan(12_500);
+    expect(payloadBytes({ preset: 'navigation' })).toBeLessThan(13_300);
   });
 
   // Lossless-dedup invariant: the `directory` input is shared by every tool, so its

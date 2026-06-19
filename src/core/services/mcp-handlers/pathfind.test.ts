@@ -117,6 +117,19 @@ describe('handleFindPath', () => {
     assertConclusionShape('find_path', r); // conclusion-shaped: chain + bounded alternates, no edge dump
   });
 
+  // Regression: call-graph node paths are already repo-relative. The chain must show
+  // them verbatim, NOT run them through relative(absDir, …) — which mis-resolved a
+  // repo-relative path against process.cwd() and emitted "../../…/cwd/db/writer.ts"
+  // garbage whenever the server's cwd differed from the analyzed directory.
+  it('shows repo-relative chain file paths even when the analyzed dir is not cwd', async () => {
+    mockCtx.mockResolvedValue({ callGraph: cg } as never);
+    const r = await handleFindPath('/some/other/abs/project', 'role:entrypoint', 'file:db/writer.ts') as {
+      path: { chain: Array<{ name: string; file: string }> };
+    };
+    expect(r.path.chain.map(s => s.file)).toEqual(['a.ts', 'db/writer.ts']);
+    for (const step of r.path.chain) expect(step.file).not.toMatch(/\.\.\//); // never an escaping relative path
+  });
+
   it('returns a structured no-path answer (not an empty array)', async () => {
     mockCtx.mockResolvedValue({ callGraph: graph([entry, writer], [], { entryPoints: [entry] }) } as never); // disconnected
     const r = await handleFindPath('/p', 'role:entrypoint', 'file:db/writer.ts') as {

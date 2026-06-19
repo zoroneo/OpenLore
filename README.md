@@ -327,7 +327,7 @@ Compares git changes against spec mappings in milliseconds. Detects: Gap (code c
 
 **MCP** (no API key)
 
-50 graph-native tools exposed over stdio. Together they act as a persistent architectural runtime for coding agents: orientation, graph traversal, semantic retrieval, drift awareness, decision context, and structural risk analysis.
+58 graph-native tools exposed over stdio. Together they act as a persistent architectural runtime for coding agents: orientation, graph traversal, semantic retrieval, drift awareness, decision context, and structural risk analysis.
 `orient()` is the main entry point — it collapses the discovery loop into one call (measured: **−26% round-trips** on deep traces; see the [Value Scorecard](#value-scorecard--does-it-pay-for-itself)). `detect_changes` risk-scores changed functions using call graph centrality × change type multiplier. Every tool call runs the same guards — input validation against its schema (bad args → JSON-RPC `-32602`), a per-tool timeout, a deterministic output-size cap, and normalized error codes — and the surface carries complete MCP `annotations`. See [docs/mcp-tools.md](docs/mcp-tools.md).
 
 `orient()` runs in **~430µs p50** against a 15k-node codebase (TypeScript compiler, ~79k edges). Full benchmark results: [scripts/BENCHMARKS.md](scripts/BENCHMARKS.md).
@@ -498,6 +498,15 @@ openlore manifest validate .well-known/openlore.json
 ```
 
 The manifest captures the public API surface, HTTP routes, stats, dependencies, and spec state in a [versioned schema](schemas/openlore-manifest-v1.json). A future OpenLore federation index will read these manifests across many repos to answer cross-repo `orient()` questions, staying a thin merger rather than a giant analyzer. See [docs/federation.md](docs/federation.md).
+
+A first deterministic slice of that index-of-indexes already ships. Each repo keeps its own independently-built `.openlore` index; a project-local registry references them and federated queries load only what they need — no merged graph is ever materialized:
+
+```bash
+openlore federation add ../billing-service --name billing   # register a peer repo's index
+openlore federation list                                     # ✓ indexed / ⚠ stale / ∅ unindexed
+```
+
+Once peers are registered, `analyze_impact`, `find_dead_code`, `select_tests`, and `find_path` take an opt-in `federation` flag and answer across the fleet — who consumes a published symbol, whether an export is dead *everywhere*, which consumer tests a change touches — always naming the repos consulted vs skipped, never guessing for an unindexed one. The capability is opt-in: `openlore mcp --preset federation`. See [docs/cli-reference.md](docs/cli-reference.md#federation-multi-repo).
 
 ---
 

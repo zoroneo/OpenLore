@@ -119,6 +119,15 @@ describe('handleSelectTests', () => {
     expect(r.message).toBeTruthy();
   });
 
+  // Honesty: opting into federation but resolving no local seed must explain why no
+  // cross-repo selection ran, not silently omit the federation surface.
+  it('discloses a federationNote when federation is requested but no seed resolves', async () => {
+    const r = await handleSelectTests({ directory: '/p', changedSymbols: ['doesNotExist'], federation: true }) as { federationNote?: string };
+    expect(r.federationNote).toMatch(/federation/i);
+    const plain = await handleSelectTests({ directory: '/p', changedSymbols: ['doesNotExist'] }) as { federationNote?: string };
+    expect(plain.federationNote).toBeUndefined();
+  });
+
   it('errors cleanly when no analysis is cached', async () => {
     vi.mocked(readCachedContext).mockResolvedValueOnce(null as never);
     const r = await handleSelectTests({ directory: '/p', changedSymbols: ['bar'] }) as { error: string };

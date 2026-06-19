@@ -32,6 +32,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { validateDirectory, readCachedContext } from './utils.js';
+import { resolveFederationScope, findCrossRepoConsumersBatch } from '../../federation/resolver.js';
 import { buildAdjacency } from './graph.js';
 import { assembleBoundary, computeStaleness, edgeBasisWithinSet } from './confidence-boundary.js';
 import { isIacLanguage } from '../../analyzer/iac/types.js';
@@ -53,6 +54,15 @@ export interface FindDeadCodeInput {
    * synthesized edge is then treated as unreached. Default false.
    */
   directResolvedOnly?: boolean;
+  /**
+   * Opt in to federation scope: a symbol with no consumer in THIS repo may still
+   * be live across the fleet. When set, candidates consumed by another indexed
+   * repo are pulled out of candidate-dead and reported as live-via-federation.
+   * (change: add-multi-repo-federation)
+   */
+  federation?: boolean;
+  /** Restrict the federation scope to these registry repo names (default: all). */
+  federationRepos?: string[];
 }
 
 type Confidence = 'high' | 'medium' | 'low';
@@ -245,6 +255,11 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
       .map(n => ({ name: n.name, file: n.filePath, language: n.language, fanIn: n.fanIn }))
       .sort((a, b) => a.file.localeCompare(b.file) || a.name.localeCompare(b.name));
 
+    // Delete-impact is a within-repo reachability question; federation scope (a
+    // cross-repo *liveness* signal) does not apply. Disclose rather than silently
+    // drop an opt-in flag — a cross-repo consumer is surfaced by the candidate-dead
+    // mode (omit `ifDeleted`), not here.
+    const federationRequested = input.federation === true || (input.federationRepos?.length ?? 0) > 0;
     return {
       target: target.name,
       file: target.filePath,
@@ -253,6 +268,7 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
       note: becomesDead.length === 0
         ? 'Nothing else becomes unreachable — every other node has an independent path to a root (or is itself a root).'
         : 'These nodes are reachable only through the target. Deleting it orphans them — verify before removing (dynamic callers are invisible here).',
+      ...(federationRequested ? { federationNote: 'Federation scope is not applied in delete-impact (ifDeleted) mode — it is a within-repo reachability query. To see cross-repo consumers that keep a symbol live, call find_dead_code with federation and without ifDeleted, or analyze_impact with federation.' } : {}),
       soundness: deadCodeSoundness(exportSignal, languages),
       confidenceBoundary,
     };
@@ -301,11 +317,49 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
       ({ high: 0, medium: 1, low: 2 })[a.confidence] - ({ high: 0, medium: 1, low: 2 })[b.confidence] ||
       a.file.localeCompare(b.file) || a.name.localeCompare(b.name));
 
+  // Federation (opt-in): a symbol with no consumer in THIS repo can still be live
+  // fleet-wide. Pull any candidate consumed by another indexed repo out of the
+  // candidate-dead set and report it as live-via-federation, with named coverage.
+  // (change: add-multi-repo-federation)
+  let finalRanked = ranked;
+  let federationBlock: Record<string, unknown> | undefined;
+  const fedScope = resolveFederationScope(absDir, { federation: input.federation, federationRepos: input.federationRepos });
+  if (fedScope.active && ranked.length > 0) {
+    const names = [...new Set(ranked.map(r => r.name))];
+    const batch = await findCrossRepoConsumersBatch(fedScope, names);
+    const liveNames = new Set([...batch.bySymbol.entries()].filter(([, v]) => v.length > 0).map(([k]) => k));
+    const liveViaFederation = ranked
+      .filter(r => liveNames.has(r.name))
+      .map(r => ({
+        name: r.name,
+        file: r.file,
+        consumers: (batch.bySymbol.get(r.name) ?? []).map(c => ({ repo: c.repo, caller: c.caller.name, file: c.caller.file })),
+      }));
+    finalRanked = ranked.filter(r => !liveNames.has(r.name));
+    federationBlock = {
+      liveViaFederation,
+      keptAliveCount: liveViaFederation.length,
+      reposConsulted: batch.coverage.reposConsulted.map(r => r.name),
+      reposSkipped: batch.coverage.reposSkipped.map(r => ({ name: r.name, state: r.state, reason: r.reason })),
+      // Disclose the consumer cap, matching analyze_impact — never silently drop.
+      ...(batch.truncated > 0 ? { truncated: batch.truncated } : {}),
+      caveats: batch.coverage.caveats,
+    };
+  } else if (fedScope.active) {
+    federationBlock = {
+      liveViaFederation: [],
+      keptAliveCount: 0,
+      reposConsulted: [],
+      reposSkipped: [],
+      caveats: [],
+    };
+  }
+
   const limit = Math.max(1, Math.min(input.maxResults ?? 100, 1000));
   const byConfidence = {
-    high: ranked.filter(r => r.confidence === 'high').length,
-    medium: ranked.filter(r => r.confidence === 'medium').length,
-    low: ranked.filter(r => r.confidence === 'low').length,
+    high: finalRanked.filter(r => r.confidence === 'high').length,
+    medium: finalRanked.filter(r => r.confidence === 'medium').length,
+    low: finalRanked.filter(r => r.confidence === 'low').length,
   };
 
   return {
@@ -313,7 +367,7 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
       analyzed: codeNodes.filter(n => !n.isTest).length,
       roots: roots.length,
       reachable: [...live].filter(id => { const n = nodeMap.get(id); return !!n && isCodeNode(n) && !n.isTest; }).length,
-      candidateDead: ranked.length,
+      candidateDead: finalRanked.length,
     },
     rootKinds: {
       tests: roots.filter(r => r.isTest).length,
@@ -321,9 +375,10 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
       httpHandlers: roots.filter(r => httpHandlerIds.has(r.id)).length,
     },
     byConfidence,
-    candidateDead: ranked.slice(0, limit),
-    truncated: ranked.length > limit ? ranked.length - limit : 0,
+    candidateDead: finalRanked.slice(0, limit),
+    truncated: finalRanked.length > limit ? finalRanked.length - limit : 0,
     coverage: { languages, exportSignal },
+    ...(federationBlock ? { federation: federationBlock } : {}),
     soundness: deadCodeSoundness(exportSignal, languages),
     confidenceBoundary,
   };

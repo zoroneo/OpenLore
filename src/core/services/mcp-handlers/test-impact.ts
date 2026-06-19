@@ -14,6 +14,7 @@
  */
 
 import { validateDirectory, readCachedContext } from './utils.js';
+import { resolveFederationScope, findCrossRepoTests } from '../../federation/resolver.js';
 import { buildAdjacency } from './graph.js';
 import type { SerializedCallGraph, FunctionNode } from '../../analyzer/call-graph.js';
 import { SUBGRAPH_MAX_DEPTH_LIMIT } from '../../../constants.js';
@@ -34,6 +35,13 @@ export interface SelectTestsInput {
    * only through a callback/event/route are still selected).
    */
   directResolvedOnly?: boolean;
+  /**
+   * Opt in to federation scope: also select tests in consumer repos that reach a
+   * call site of a changed published symbol. (change: add-multi-repo-federation)
+   */
+  federation?: boolean;
+  /** Restrict the federation scope to these registry repo names (default: all). */
+  federationRepos?: string[];
 }
 
 type Confidence = 'high' | 'medium' | 'low';
@@ -122,6 +130,9 @@ export async function handleSelectTests(input: SelectTestsInput): Promise<unknow
   }
 
   if (seeds.length === 0) {
+    // Honesty: if federation was opted into, say why no cross-repo selection ran
+    // rather than silently omitting the federation block an active scope implies.
+    const federationRequested = input.federation === true || (input.federationRepos?.length ?? 0) > 0;
     return {
       changed: changedFiles,
       selectedTests: [],
@@ -129,6 +140,7 @@ export async function handleSelectTests(input: SelectTestsInput): Promise<unknow
         ? 'No matching production functions found for the given symbols.'
         : `No changed production functions vs ${baseRef}${defaultedToHead ? ' (defaulted — no changedSymbols or diffRef was given)' : ''}. Nothing has changed, the diff touches only non-code files, or analyze_codebase is stale.`,
       ...(defaultedToHead ? { note: 'Called without changedSymbols/diffRef — diffed the working tree against HEAD. Pass changedSymbols or diffRef to target a specific change.' } : {}),
+      ...(federationRequested ? { federationNote: 'Federation scope was requested, but no changed production symbol resolved in the home repo — cross-repo test selection keys off the home repo\'s changed published symbols, so nothing was propagated. Pass changedSymbols (or a diffRef with code changes) to select across the fleet.' } : {}),
       soundness: { posture: 'over-approximate', caveats: ['No seeds resolved — nothing to select.'] },
       coverage: { languages: [], testDetection: 'none' as const },
       confidenceBoundary: assembleBoundary({ staleness: await computeStaleness(absDir) }),
@@ -251,12 +263,28 @@ export async function handleSelectTests(input: SelectTestsInput): Promise<unknow
   // change through heuristic dispatch. (spec: add-confidence-boundary-disclosure)
   const impactedIds = new Set(depthOf.keys());
   const selectBasis = edgeBasisWithinSet(cg.edges, impactedIds);
+  // Federation (opt-in): select tests in consumer repos that reach a call site of
+  // a changed published symbol — the cross-repo blast radius of the change.
+  // (change: add-multi-repo-federation)
+  let federationBlock: Record<string, unknown> | undefined;
+  const fedScope = resolveFederationScope(absDir, { federation: input.federation, federationRepos: input.federationRepos });
+  if (fedScope.active) {
+    const { tests: crossRepoTests, coverage } = await findCrossRepoTests(fedScope, seeds.map(s => s.name), { maxDepth, directResolvedOnly: input.directResolvedOnly });
+    federationBlock = {
+      crossRepoTests: crossRepoTests.map(t => ({ repo: t.repo, test: t.test.name, file: t.test.file, viaSymbol: t.viaSymbol, confidence: t.depth <= 1 ? 'high' : t.depth <= 3 ? 'medium' : 'low' })),
+      crossRepoTestCount: crossRepoTests.length,
+      reposConsulted: coverage.reposConsulted.map(r => r.name),
+      reposSkipped: coverage.reposSkipped.map(r => ({ name: r.name, state: r.state, reason: r.reason })),
+      caveats: coverage.caveats,
+    };
+  }
 
   return {
     changed: hasSymbols ? seeds.map(s => s.name) : changedFiles,
     seeds: seeds.map(s => ({ name: s.name, file: s.filePath })),
     selectedTests,
     ...(defaultedToHead ? { note: 'No changedSymbols/diffRef given — selected tests for your current working-tree changes vs HEAD.' } : {}),
+    ...(federationBlock ? { federation: federationBlock } : {}),
     soundness: { posture: 'over-approximate' as const, caveats },
     coverage: { languages: seedLangs, testDetection },
     confidenceBoundary: assembleBoundary({ basis: selectBasis, staleness: await computeStaleness(absDir) }),

@@ -2,7 +2,9 @@
 
 OpenLore's single-repo value is well-defined. The next frontier is **cross-repo**: organizations with dozens or hundreds of repos can't answer the questions that matter most — who calls `BillingService.refund`, where is event `X` consumed, how does data flow from service A to service B — because those questions cross repo boundaries. The federation approach is "SBOM-of-cognition": every repo describes itself in a standard shape at `.well-known/openlore.json`, and a future central index becomes a thin merger of those manifests rather than a giant cross-repo analyzer.
 
-**This is the emitter half.** Each OpenLore-instrumented repo can publish its manifest today. The federation index that ingests them across repos is a separate, later piece of work — see "What's next" below.
+**This is the emitter half.** Each OpenLore-instrumented repo can publish its manifest today. The *hosted, manifest-merging* federation index that ingests them across many repos is a separate, later piece of work — see "What's next" below.
+
+> **Already shipping — the local registry index-of-indexes.** A deterministic, local-first slice of cross-repo already works without any hosted index or manifest. A project-local registry (`.openlore/federation.json`) references each peer repo's own independently-built `.openlore` index, and the four conclusion tools answer across the fleet on demand. It is distinct from the manifest emitter on this page: the registry consumes each repo's *full* `.openlore` index by path (local-first); the manifest is the small, public, committable self-description a *future hosted* index will merge. See [The federation registry](#the-federation-registry-shipped) below.
 
 ## Emitting a manifest
 
@@ -74,6 +76,34 @@ Known follow-ups (will not change schema v1):
 
 `openlore_manifest_version` is `1` and the schema is committed at [`schemas/openlore-manifest-v1.json`](../schemas/openlore-manifest-v1.json). Future federation indices can rely on it. If a fundamentally incompatible change is ever needed, the version bumps and (per the spec) v1 keeps being emitted alongside the new version.
 
+## The federation registry (shipped)
+
+The local-first cross-repo layer is live today. Federation is an **index-of-indexes**: each repo keeps its own independently-built `.openlore` index, and a project-local registry references them. No merged cross-repo graph is ever materialized — federated queries load only the per-repo indexes they need, on demand. Adding or removing a repo edits only the registry plus that repo's own build, never a global rebuild.
+
+```bash
+openlore federation add ../billing-service --name billing   # register a peer repo's index
+openlore federation list                                    # ✓ indexed / ⚠ stale / ∅ unindexed / ✗ missing
+openlore federation remove billing                          # alias: rm
+```
+
+Once peers are registered, four conclusion tools accept an opt-in `federation` (boolean) or `federationRepos` (name list) parameter and answer across the fleet — never returning a union graph, always naming `reposConsulted` vs `reposSkipped`, never guessing for an unindexed or stale repo:
+
+| Tool | Cross-repo conclusion |
+|------|------------------------|
+| `analyze_impact` | who across the fleet *consumes* a published symbol |
+| `find_dead_code` | whether an export is dead *everywhere*, or kept **live-via-federation** by a consumer |
+| `select_tests` | which consumer-repo tests a change to a published symbol touches |
+| `find_path` | when the goal symbol isn't local, the cross-repo *producer* + the home **bridge** call site |
+
+Cross-repo resolution is deterministic: a consumer's external call site is matched to a producer symbol by the **stable-ID name descriptor** (content-addressed stable symbol IDs, the same key SCIP/Kythe monikers use). It is exact on the name and honest in `caveats` that a call site carries no signature, so arity is unconfirmed and a bare exported-name collision across packages is possible.
+
+The capability is **opt-in**: the registry-status tool `federation_status` and the federation scope are exposed only under `openlore mcp --preset federation`. The default and `minimal` surfaces register no federation capability. See [docs/cli-reference.md](cli-reference.md#federation-multi-repo) for the full CLI and index-state semantics.
+
+### Honest limits
+
+- **Staleness is only as fresh as each peer's last real `analyze`.** A peer is flagged `stale` by comparing its registered fingerprint against the one written to `.openlore/analysis/fingerprint.json` — which only changes when `openlore analyze` actually rebuilds. If you edit a peer and re-run `analyze` inside its recency window (the analyze TTL short-circuits the rebuild), the fingerprint does not move and the peer still reads as `indexed`. Run `openlore analyze --force` in a peer to be certain its index — and therefore its federation freshness — is current.
+- **Cross-repo resolution matches on `external`-confidence call edges.** If a consumer repo *both* imports a peer's symbol *and* defines its own local symbol of the same name, the analyzer resolves the call to the local node, so that consumer will not appear as a cross-repo consumer (a quiet false-negative, the inverse of the disclosed cross-package name-collision risk).
+
 ## What's next (forward-looking)
 
-A future version of OpenLore will ship a **federation index** that reads many of these manifests and answers cross-repo `orient()` questions — cross-repo call chains, event producer/consumer maps, and service-to-service data flow. Because each repo self-describes in this stable shape, the index stays a thin merger. That work is intentionally out of scope here; this PR ships only the emitter and validator.
+A future version of OpenLore will ship a **hosted, manifest-merging federation index** that reads many of the manifests described above and answers cross-repo `orient()` questions across an organization without each consumer needing every peer's full `.openlore` index on local disk — cross-repo call chains, event producer/consumer maps, and service-to-service data flow. Because each repo self-describes in this stable shape, that index stays a thin merger. It complements the local registry above (which already covers the local-first case); the manifest emitter and validator on this page are its inputs.

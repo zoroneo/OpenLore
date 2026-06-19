@@ -264,6 +264,22 @@ export class EdgeStore {
     ).map(rawToCallEdge);
   }
 
+  /**
+   * Cross-package consumer edges for a symbol name: edges whose callee is an
+   * unresolved external reference (`confidence === 'external'`) with this exact
+   * name. These are the call sites in *this* repo that reach a symbol published
+   * by another repo — the consumer side of federated cross-repo resolution.
+   * Matched on the exact name; arity/signature is unavailable at an external call
+   * site, so callers must disclose name-collision risk.
+   */
+  getExternalConsumers(symbolName: string): CallEdge[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM edges WHERE callee_name = ? AND confidence = 'external'")
+        .all(symbolName) as unknown as RawEdge[]
+    ).map(rawToCallEdge);
+  }
+
   /** Batch: outgoing edges for a set of caller IDs — one query instead of N. */
   getCalleesForIds(callerIds: string[]): CallEdge[] {
     if (callerIds.length === 0) return [];

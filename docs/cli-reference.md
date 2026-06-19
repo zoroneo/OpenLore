@@ -19,6 +19,7 @@
 | `openlore run` | Full pipeline: init, analyze, generate | Yes |
 | `openlore view` | Launch interactive graph & spec viewer in the browser | No |
 | `openlore setup` | Install workflow skills into the project (Vibe, Cline, GSD, BMAD, Pi) | No |
+| `openlore federation add\|remove\|list` | Manage the multi-repo federation registry (index-of-indexes) | No |
 | `openlore mcp` | Start MCP server (stdio, for Cline / Claude Code) | No |
 | `openlore serve` | Start a warm local HTTP daemon exposing tools (loopback, for Pi / editors) | No |
 | `openlore doctor` | Check environment and configuration for common issues | No |
@@ -190,6 +191,18 @@ Checks performed:
 
 Run `openlore doctor` whenever setup instructions aren't working — it tells you exactly what to fix and how.
 
+### Federation (multi-repo)
+
+Federation is an **index-of-indexes**: each repo keeps its own independently-built `.openlore` index, and a project-local registry (`.openlore/federation.json`) references them. Adding or removing a repo edits only the registry plus that repo's own build — never a global rebuild. No merged cross-repo graph is ever materialized; federated queries load only the per-repo indexes they need, on demand.
+
+```bash
+openlore federation add <path> [--name <name>]   # Register a repo (default name: its basename)
+openlore federation remove <nameOrPath>          # alias: rm
+openlore federation list                          # alias: ls — shows each repo's index state
+```
+
+Index state per repo: `✓ indexed`, `⚠ stale` (re-run `openlore analyze` there), `∅ unindexed`, or `✗ missing path`. Once a repo is registered, the four cross-repo conclusion tools — `analyze_impact`, `find_dead_code`, `select_tests`, `find_path` — accept an opt-in `federation` (or `federationRepos`) flag and report which repos were consulted vs skipped. The registry-status tool `federation_status` is exposed only under `openlore mcp --preset federation`. See [docs/federation.md](federation.md).
+
 ---
 
 ## Serve (warm daemon)
@@ -203,7 +216,7 @@ over plain HTTP so non-MCP clients (e.g. the [Pi](https://pi.dev) extension in
 
 ```bash
 openlore serve                          # navigation preset, ephemeral port, watch on
-openlore serve --preset all --port 7077 # all ~45 tools on a fixed port
+openlore serve --preset all --port 7077 # all 58 tools on a fixed port
 openlore serve --no-watch               # transport only, no freshness lane
 openlore serve --stop                   # stop the daemon serving this directory
 ```

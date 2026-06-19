@@ -6,6 +6,7 @@
  */
 
 import { validateDirectory, readCachedContext } from './utils.js';
+import { resolveFederationScope, findCrossRepoConsumersBatch } from '../../federation/resolver.js';
 import type { CachedContext } from './utils.js';
 import { join } from 'node:path';
 import {
@@ -536,6 +537,8 @@ export async function handleAnalyzeImpact(
   directResolvedOnly = false,
   valueLevel = false,
   valueParam?: string,
+  federation = false,
+  federationRepos?: string[],
 ): Promise<unknown> {
   // Clamp to the documented maximum so a hostile depth (e.g. 1e9) can't drive an
   // unbounded BFS over an adversarial graph (mcp-security: Bounded Computation).
@@ -545,6 +548,11 @@ export async function handleAnalyzeImpact(
 
   if (!ctx)            return { error: 'No analysis found. Run analyze_codebase first.' };
   if (!ctx.edgeStore)  return { error: 'Call graph index is empty or unavailable — run analyze_codebase to (re)build it (a version upgrade resets the graph index until the next analyze).' };
+
+  // `symbol` is required by the MCP inputSchema, but dispatchTool enforces nothing,
+  // so a non-conformant caller could reach here with it undefined — return a clean
+  // error instead of crashing on `undefined.toLowerCase()`.
+  if (typeof symbol !== 'string' || symbol.trim() === '') return { error: 'symbol is required.' };
 
   const lower = symbol.toLowerCase();
   let seeds = ctx.edgeStore.searchNodes(lower);
@@ -732,9 +740,30 @@ export async function handleAnalyzeImpact(
     };
   });
 
-  return seeds.length === 1
-    ? { ...results[0], confidenceBoundary }
-    : { matches: results, confidenceBoundary };
+  // Federation scope (opt-in): who across the fleet consumes this published
+  // symbol? Loads scoped repo indexes lazily and names coverage; never a union
+  // graph. (change: add-multi-repo-federation)
+  const fedScope = resolveFederationScope(absDir, { federation, federationRepos });
+  let federationBlock: Record<string, unknown> | undefined;
+  if (fedScope.active) {
+    const seedNames = [...new Set(seeds.map(s => s.name))];
+    const batch = await findCrossRepoConsumersBatch(fedScope, seedNames);
+    const consumers = seedNames.flatMap(n => batch.bySymbol.get(n) ?? []);
+    federationBlock = {
+      consumers: consumers.map(c => ({ repo: c.repo, caller: c.caller.name, file: c.caller.file, symbol: c.symbol })),
+      consumerCount: consumers.length,
+      reposConsulted: batch.coverage.reposConsulted.map(r => r.name),
+      reposSkipped: batch.coverage.reposSkipped.map(r => ({ name: r.name, state: r.state, reason: r.reason })),
+      ...(batch.truncated > 0 ? { truncated: batch.truncated } : {}),
+      caveats: batch.coverage.caveats,
+    };
+  }
+  const fedOut = federationBlock ? { federation: federationBlock } : {};
+
+  if (seeds.length === 1) {
+    return { ...results[0], confidenceBoundary, ...fedOut };
+  }
+  return { matches: results, confidenceBoundary, ...fedOut };
 }
 
 /**

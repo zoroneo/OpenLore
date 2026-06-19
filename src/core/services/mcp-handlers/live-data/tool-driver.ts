@@ -125,6 +125,7 @@ export const TOOL_REGISTRY: Record<string, ToolPlan> = {
     kind: 'read',
     buildArgs: needFn((f, fn) => ({ directory: f.directory, from: fn, to: f.secondFunction ?? fn })),
   },
+  federation_status: { kind: 'read', buildArgs: dirOnly },
   get_function_body: {
     kind: 'read',
     buildArgs: (f) =>
