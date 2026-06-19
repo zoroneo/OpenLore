@@ -1699,7 +1699,7 @@ const MINIMAL_TOOLS = new Set([
 // the agent never calls are pure overhead) while still exposing the graph-
 // traversal tools a "how does X reach Y" task actually needs — which `minimal`
 // (orient + search + governance) omits. CodeGraph wins its benchmark with a
-// surface like this; openlore's was either too lean (no traversal) or all ~45.
+// surface like this; openlore's was either too lean (no traversal) or all ~60.
 export const TOOL_PRESETS: Record<string, Set<string>> = {
   minimal: MINIMAL_TOOLS,
   // Graph-navigation core: orient to enter, then traverse/trace/impact + compact

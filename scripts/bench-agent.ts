@@ -143,9 +143,9 @@ function localCli(): string {
 
 function writeMcpConfigs(work: string, opts: { fullTools: boolean; preset: string }): { openlore: string; empty: string } {
   // WITH = openlore as recommended. By default a lean **--preset** (navigation:
-  // 7 graph-traversal tools) rather than the full ~60 — the MCP best-practice
+  // 10 graph-traversal tools) rather than the full ~60 — the MCP best-practice
   // that tool schemas for tools the agent never calls are pure per-request
-  // overhead. `--with-full-tools` exposes all 45 for the overhead comparison.
+  // overhead. `--with-full-tools` exposes all ~60 for the overhead comparison.
   const cli = localCli();
   const oloreArgs = ['mcp', '--no-watch-auto', ...(opts.fullTools ? [] : ['--preset', opts.preset])];
   const openlore = join(work, `openlore-mcp-${opts.fullTools ? 'full' : opts.preset}.json`);
