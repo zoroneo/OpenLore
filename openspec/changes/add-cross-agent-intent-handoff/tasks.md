@@ -6,7 +6,10 @@
 ## 1. Intent briefing at orient time
 - [~] For a task's in-scope symbols/files, surface relevant prior decisions/constraints as a
       conclusion-shaped briefing within `orient` — ALREADY SHIPPED (`pendingDecisions` /
-      `staleDecisions` / `unreconciledMemories`). A dedicated `recall` briefing mode is DEFERRED.
+      `staleDecisions` / `unreconciledMemories`). The dedicated `recall` briefing mode is now DONE
+      (PR #168): `recall` surfaces a task-scoped `reversals` field via the shared `reversals.ts`
+      helper, matching orient's do-not-repeat behavior (the ReversalAwareness briefing on the
+      memory-retrieval surface).
 - [~] Test: orienting on a file with a recorded constraint surfaces it — `orient-memory-freshness.test.ts`.
 
 ## 2. Reversal / supersession awareness (headline)

@@ -30,6 +30,7 @@ import { queryTerms, scoreMemory, type RankFields } from './memory-ranking.js';
 import { assembleBoundary, computeStaleness } from './confidence-boundary.js';
 import { resolveFederationScope } from '../../federation/resolver.js';
 import { findFleetMemory } from '../../federation/fleet-memory.js';
+import { collectReversals } from './reversals.js';
 import {
   MEMORY_TYPES,
   type AnchoredMemory,
@@ -396,6 +397,22 @@ export async function handleRecall(
         }
       }
 
+      // Reversal-briefing (the dedicated recall surface for ReversalAwareness): reverted/
+      // superseded intent relevant to this recall, surfaced as do-not-repeat warnings via
+      // the same shared logic as orient. Scoped by TASK relevance (not current-memory files)
+      // so a fully-reverted approach surfaces even when no current memory anchors to its file.
+      // With no task, everything reverted is in scope (bounded by the omission cap).
+      const scoreInScope = (fields: RankFields): boolean => !hasQuery || scoreMemory(terms, fields).score > 0;
+      const reversals = collectReversals(memStore.memories, decisionStore.decisions, {
+        memoryInScope: (m) => scoreInScope({
+          anchorSymbols: m.anchors.map((a) => a.symbolName).filter((s): s is string => !!s),
+          tags: m.tags ?? [],
+          anchorFiles: m.anchors.map((a) => a.filePath),
+          content: m.content,
+        }),
+        decisionInScope: (a) => scoreInScope(decisionFields(a, decisionAnchors(a))),
+      });
+
       return {
         task: task ?? null,
         graphAvailable: ctx !== null,
@@ -411,6 +428,7 @@ export async function handleRecall(
         authoritative: authoritativeOut.map(stripScore),
         needsReanchoring: needsReanchoring.map(stripScore),
         unreconciled: unreconciled.length ? unreconciled : undefined,
+        ...(reversals !== undefined ? { reversals } : {}),
         ...(fleetMemory !== undefined ? { fleetMemory } : {}),
         budget,
         note: [budgetNote, reanchorNote, unreconciledNote, ...warnings].filter(Boolean).join(' ') || undefined,

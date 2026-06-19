@@ -369,3 +369,32 @@ describe('handleRecall — budget-aware tiering', () => {
     expect(r.budget).toBeUndefined();
   });
 });
+
+type RecallReversals = { reversals?: Array<{ source: string; id?: string; what?: string; reason?: string; warning: string }> };
+
+describe('handleRecall — reversal-briefing (ReversalAwareness)', () => {
+  it('surfaces a task-relevant superseded memory as a do-not-repeat warning', async () => {
+    const m = (await handleRemember(root, 'foo memoizes via a global cache', [{ symbol: 'foo', file: 'src/foo.ts' }])) as { id: string };
+    await handleRemember(root, 'foo was made pure; the global cache caused races', [{ symbol: 'foo', file: 'src/foo.ts' }], undefined, undefined, m.id);
+    const r = (await handleRecall(root, 'foo')) as RecallReversals;
+    const rev = r.reversals?.find((x) => x.id === m.id);
+    expect(rev, 'reverted memory surfaced in recall').toBeDefined();
+    expect(rev!.source).toBe('memory');
+    expect(rev!.what).toContain('global cache');
+    expect(rev!.reason).toContain('caused races');
+    expect(rev!.warning).toContain('Do not re-attempt');
+  });
+
+  it('does NOT surface a reverted memory irrelevant to the recall task', async () => {
+    const m = (await handleRemember(root, 'foo memoizes via a global cache', [{ symbol: 'foo', file: 'src/foo.ts' }])) as { id: string };
+    await handleRemember(root, 'foo is pure now', [{ symbol: 'foo', file: 'src/foo.ts' }], undefined, undefined, m.id);
+    const r = (await handleRecall(root, 'networking sockets unrelated')) as RecallReversals;
+    expect(r.reversals).toBeUndefined();
+  });
+
+  it('omits reversals when nothing relevant was reverted', async () => {
+    await handleRemember(root, 'foo must stay pure', [{ symbol: 'foo', file: 'src/foo.ts' }]);
+    const r = (await handleRecall(root, 'foo')) as RecallReversals;
+    expect(r.reversals).toBeUndefined();
+  });
+});

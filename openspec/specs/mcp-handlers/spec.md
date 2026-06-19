@@ -649,16 +649,18 @@ verify. (Realized by orient's `pendingDecisions` / `staleDecisions` / `unreconci
 
 ### Requirement: ReversalAwareness
 
-When intent in a task's scope was superseded or reverted, `orient` SHALL surface it in an additive
-`reversals` field as an explicit do-not-repeat warning — naming the reverting commit (from a memory's
-`invalidatedByCommit`) and the recorded reason (the superseding record's content/rationale) — rather
-than silently omitting reverted history, because the absence of a do-not-repeat signal is what lets an
-agent re-introduce a deliberately removed approach. A reverted **memory** is one with `invalidatedAt`
-set whose anchors fall in scope; a reverted **decision** is one targeted by another decision's
-`supersedes`. Reverted intent SHALL NOT be re-served as authoritative current context, only as
-cautionary history. Selection is deterministic retrieval over already-recorded supersession records;
-no LLM. The field SHALL be bounded with an explicit omission note (never a silent truncation of
-history) and omitted entirely when nothing in scope was reverted.
+When intent in a task's scope was superseded or reverted, **`orient` and `recall`** SHALL surface it in
+an additive `reversals` field as an explicit do-not-repeat warning — naming the reverting commit (from a
+memory's `invalidatedByCommit`) and the recorded reason (the superseding record's content/rationale) —
+rather than silently omitting reverted history, because the absence of a do-not-repeat signal is what
+lets an agent re-introduce a deliberately removed approach. A reverted **memory** is one with
+`invalidatedAt` set; a reverted **decision** is one targeted by another decision's `supersedes`. The two
+surfaces differ only in scope: `orient` by the task's relevant files/domains, `recall` by task relevance
+(so a fully-reverted approach surfaces even with no current memory on its file). Reverted intent SHALL
+NOT be re-served as authoritative current context, only as cautionary history. Selection is
+deterministic retrieval over already-recorded supersession records; no LLM. The field SHALL be bounded
+with an explicit omission note (never a silent truncation of history) and omitted entirely when nothing
+in scope was reverted.
 
 #### Scenario: A reverted approach is surfaced as do-not-repeat
 
