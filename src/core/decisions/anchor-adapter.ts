@@ -56,15 +56,23 @@ function readFileCached(rootPath: string, filePath: string, cache: Map<string, s
   return content;
 }
 
-/** Hash a node's source span by its byte offsets against current file content. */
+/**
+ * Slice a node's source span out of its file. `startIndex`/`endIndex` are the
+ * tree-sitter offsets, which are UTF-16 code-unit indices (not byte offsets) — so
+ * we slice the JS string directly. Slicing a Buffer by these indices would drift
+ * in any file containing multibyte characters before the span, citing misaligned
+ * source. String.slice clamps out-of-range indices, so a shrunken file still
+ * yields a deterministic (and differing → drifted) span.
+ */
+function sliceNodeSpan(content: string, node: FunctionNode): string {
+  return content.slice(node.startIndex, node.endIndex);
+}
+
+/** Hash a node's source span (code-unit offsets) against current file content. */
 function hashNodeSpan(rootPath: string, node: FunctionNode, cache: Map<string, string | null>): string | undefined {
   const content = readFileCached(rootPath, node.filePath, cache);
   if (content === null) return undefined;
-  // start/end are byte offsets; slice a Buffer to stay byte-accurate for multibyte
-  // source. subarray clamps out-of-range indices, so a shrunken file still hashes
-  // deterministically (and differs from the original span → drifted).
-  const buf = Buffer.from(content, 'utf-8');
-  return hashSpan(buf.subarray(node.startIndex, node.endIndex).toString('utf-8'));
+  return hashSpan(sliceNodeSpan(content, node));
 }
 
 /**
@@ -177,16 +185,16 @@ export class AnchorContext {
 
   /**
    * The current span hash AND 1-based inclusive line range of a node, computed
-   * from its byte offsets against the live file (the edge store keeps offsets, not
-   * lines). Reuses the same span the freshness hash covers, so `contentHash` here
-   * equals the hash the freshness check compared.
+   * from its code-unit offsets against the live file (the edge store keeps
+   * offsets, not lines). Reuses the same span — and the same {@link sliceNodeSpan}
+   * — that the freshness hash covers, so `contentHash` here equals the hash the
+   * freshness check compared, and the cited line range matches the hashed span.
    */
   private nodeSpanInfo(node: FunctionNode): { contentHash: string; lineSpan: { start: number; end: number } } | undefined {
     const content = readFileCached(this.rootPath, node.filePath, this.fileCache);
     if (content === null) return undefined;
-    const buf = Buffer.from(content, 'utf-8');
-    const spanText = buf.subarray(node.startIndex, node.endIndex).toString('utf-8');
-    const start = buf.subarray(0, node.startIndex).toString('utf-8').split('\n').length;
+    const spanText = sliceNodeSpan(content, node);
+    const start = content.slice(0, node.startIndex).split('\n').length;
     const newlines = (spanText.match(/\n/g) ?? []).length;
     // A span ending in a newline shouldn't count the empty trailing line.
     const end = start + newlines - (spanText.endsWith('\n') ? 1 : 0);

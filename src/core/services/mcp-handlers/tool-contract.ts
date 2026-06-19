@@ -101,6 +101,7 @@ export const TOOL_OUTPUT_CLASS: Record<string, ToolOutputClass> = {
   sync_decisions: 'conclusion',
   remember: 'conclusion',
   recall: 'conclusion',
+  verify_claim: 'conclusion',
 };
 
 /** The tools intentionally allowed to emit raw topology, sorted for stable assertions. */

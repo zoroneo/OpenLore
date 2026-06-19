@@ -559,6 +559,29 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'verify_claim',
+    description:
+      'USE THIS BEFORE asserting a structural fact ("X is dead", "Y calls Z", "this is safe to change"). ' +
+      'Returns a deterministic verdict (confirmed | refuted | unverifiable) + a citation receipt (spans, ' +
+      'content hashes, index commit) — a graph computation, never an LLM guess. kinds: calls, reaches, ' +
+      'impacts, dead, safe-to-change. "unverifiable" is first-class when the claim hits a dynamic-dispatch ' +
+      'blind spot — hedge or read the source. Run analyze_codebase first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: DIR_DESC },
+        kind: {
+          type: 'string',
+          enum: ['calls', 'reaches', 'dead', 'impacts', 'safe-to-change'],
+          description: 'The kind of structural claim to verify.',
+        },
+        subject: { type: 'string', description: 'The symbol the claim is about (a function/method name).' },
+        object: { type: 'string', description: 'The second symbol — required for relational kinds (calls, reaches, impacts).' },
+      },
+      required: ['directory', 'kind', 'subject'],
+    },
+  },
+  {
     name: 'structural_diff',
     description:
       'USE THIS WHEN reviewing or refactoring a change: "what changed structurally?", ' +
@@ -1611,7 +1634,7 @@ const TOOL_ANNOTATIONS: Record<string, typeof _RO | typeof _RWI | typeof _RW> = 
   get_test_coverage: _RO, get_minimal_context: _RO, get_cluster: _RO,
   detect_changes: _RO, get_health_map: _RO, get_surprising_connections: _RO, record_decision: _RW, list_decisions: _RO,
   approve_decision: _RWI, reject_decision: _RWI, sync_decisions: _RWI,
-  remember: _RW, recall: _RO,
+  remember: _RW, recall: _RO, verify_claim: _RO,
 };
 
 // Tools that touch external entities (LLM / network) → openWorldHint: true.
@@ -1657,6 +1680,13 @@ export const TOOL_PRESETS: Record<string, Set<string>> = {
   // the tools an agent must consider).
   memory: new Set([
     'orient', 'remember', 'recall',
+  ]),
+  // Claim verification (opt-in): orient to ground, then verify a structural claim
+  // and cite the receipt before asserting it to a human. Deliberately NOT in the
+  // default or `minimal` surface (mcp-quality: minimize the tools an agent must
+  // consider). search_code helps the agent name the subject/object precisely.
+  verify: new Set([
+    'orient', 'search_code', 'verify_claim',
   ]),
 };
 

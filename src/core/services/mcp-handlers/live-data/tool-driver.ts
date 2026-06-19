@@ -180,6 +180,8 @@ export const TOOL_REGISTRY: Record<string, ToolPlan> = {
     }),
   },
   recall: { kind: 'read', buildArgs: (f) => ({ directory: f.directory, limit: 5 }) },
+  // safe-to-change needs only a subject — a single-symbol probe over the fixture.
+  verify_claim: { kind: 'read', buildArgs: needFn((f, fn) => ({ directory: f.directory, kind: 'safe-to-change', subject: fn })) },
 
   // ── LLM-backed tools (openWorldHint) ─────────────────────────────────────
   // generate_tests has a deterministic no-LLM path (useLlm:false + dryRun:true), so

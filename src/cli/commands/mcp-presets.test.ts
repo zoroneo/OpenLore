@@ -181,6 +181,12 @@ describe('tools/list payload budget (spec-28)', () => {
   // full surface widens. Conscious decision, not silent drift.
   it('full surface stays within its prefix budget', () => {
     expect(payloadBytes({})).toBeLessThan(57_000);
+  // Bumped 55_000 → 56_500 when the opt-in `verify_claim` tool was added to the full surface
+  // (structural claim verification; spec: add-structural-claim-verification) — one new tool
+  // (~900 B trimmed). It stays out of the default/minimal and navigation surfaces (lands in the
+  // opt-in `verify` preset); only the full surface widens. Conscious decision, not silent drift.
+  it('full surface stays within its prefix budget', () => {
+    expect(payloadBytes({})).toBeLessThan(56_500);
   });
 
   it('navigation preset stays lean (the low-overhead surface that wins the benchmark)', () => {

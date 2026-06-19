@@ -603,3 +603,31 @@ Comparing the analyze-time project fingerprint (whole-tree mtime+size hash) agai
 computeProjectFingerprint walked .openlore-live-cache (the gitignored clone cache for live-data fixtures). Those foreign source files churn whenever the live-data MCP tools or integration tests run, so the content hash flapped even when the user's own source was unchanged — forcing needless full re-analysis and false staleness markers. Generalizing the directory skip from exact `.openlore` to any `.openlore`-prefixed name covers `.openlore`, `.openlore-live-cache`, and future OpenLore-managed dirs in one rule.
 
 **Consequences:** walkForFingerprint now skips directories whose name starts with `.openlore` in addition to the static FINGERPRINT_SKIP_DIRS set. The custom OPENLORE_LIVE_CACHE_DIR override (an arbitrary path) is not covered by the prefix rule — acceptable since the default is the in-repo `.openlore-live-cache`. A regression test asserts live-cache churn leaves the fingerprint unchanged while a real user-source edit still flips the hash.
+
+### Requirement: StructuralClaimVerification
+
+The system SHALL provide a `verify_claim` capability that accepts a structured structural claim
+(`{ kind: 'calls' | 'reaches' | 'dead' | 'impacts' | 'safe-to-change', subject, object? }`) and returns
+a deterministic `{ verdict: 'confirmed' | 'refuted' | 'unverifiable', reason, receipt?, confidenceBoundary }`.
+The verdict SHALL be computed by the existing deterministic analysis for that claim kind (call-graph
+traversal for `calls`/`reaches`, backward reachability for `impacts`, mark-and-sweep reachability for
+`dead`, directly-resolved caller analysis for `safe-to-change`), never by an LLM and never as a
+confidence number. A `confirmed` or `refuted` verdict SHALL carry a receipt — the subject/object spans
+and content hashes (grounding-certificate shape) plus the index commit — suitable for the agent to cite
+to a human. A claim whose answer rests on a dispatch blind spot (a symbol reached only through
+synthesized dynamic-dispatch edges, or an unresolved/ambiguous symbol) SHALL return `unverifiable` with
+the boundary named (reusing the confidence-boundary disclosure), never a fabricated `confirmed`/`refuted`.
+The capability SHALL be conclusion-shaped (verdict + bounded receipt, never a graph to traverse) and
+registered only in an opt-in preset (`verify`), never in the minimal or first-run default surface.
+
+#### Scenario: A false claim is refuted with a receipt
+
+- **GIVEN** a claim that function A calls function B, when no such edge exists
+- **WHEN** the claim is verified
+- **THEN** the verdict is `refuted` with a receipt referencing the index commit and the relevant spans
+
+#### Scenario: A blind-spot claim is unverifiable, not fabricated
+
+- **GIVEN** a `dead` claim about a symbol reachable only through synthesized dynamic-dispatch edges
+- **WHEN** the claim is verified
+- **THEN** the verdict is `unverifiable` with the dispatch boundary named, never `confirmed` or `refuted`

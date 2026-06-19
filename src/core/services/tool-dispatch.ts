@@ -22,6 +22,8 @@ import { handleOrient } from './mcp-handlers/orient.js';
 import { handleSelectTests } from './mcp-handlers/test-impact.js';
 import { handleBlastRadius } from './mcp-handlers/blast-radius.js';
 import { handleFindDeadCode } from './mcp-handlers/reachability.js';
+import { handleVerifyClaim } from './mcp-handlers/claim-verification.js';
+import type { ClaimKind } from './mcp-handlers/claim-verification.js';
 import { handleStructuralDiff } from './mcp-handlers/structural-diff.js';
 import { handleGetChangeCoupling } from './mcp-handlers/change-coupling.js';
 import { handleGetHealthMap } from './mcp-handlers/health-map.js';
@@ -315,6 +317,10 @@ export async function dispatchTool(
     const { directory, task, limit = 10, tokenBudget, asOf, changedSince, type } =
       args as { directory: string; task?: string; limit?: number; tokenBudget?: number; asOf?: string; changedSince?: string; type?: string };
     return handleRecall(directory, task, limit, tokenBudget, asOf, changedSince, type);
+  } else if (name === 'verify_claim') {
+    const { directory, kind, subject, object } =
+      args as { directory: string; kind: ClaimKind; subject: string; object?: string };
+    return handleVerifyClaim({ directory, kind, subject, object });
   }
   throw new UnknownToolError(name);
 }

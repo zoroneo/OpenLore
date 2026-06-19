@@ -23,6 +23,9 @@
 | Recording an architectural decision before writing code | `record_decision` |
 | Persisting a durable, code-anchored fact for later sessions | `remember` (opt-in `memory` preset) — anchors a note to a symbol/file so it self-invalidates; optional `type` (invariant/gotcha/rationale/…, default note) and `supersedes=<id>` to retire a prior memory (kept queryable via `asOf`); re-recording the same content+anchor updates in place |
 | Recalling what's known about code you're touching | `recall` (opt-in `memory` preset) — returns memories with a freshness verdict (never serves orphaned ones as authoritative); two authoritative memories on one symbol surface in `unreconciled`; optional `asOf`/`changedSince` (commit-ish) for history and a `type` filter |
+| Persisting a durable, code-anchored fact for later sessions | `remember` (opt-in `memory` preset) — anchors a note to a symbol/file so it self-invalidates |
+| Recalling what's known about code you're touching | `recall` (opt-in `memory` preset) — returns memories with a freshness verdict; never serves orphaned ones as authoritative |
+| About to assert a structural fact to a user ("X is dead", "Y calls Z", "this is safe to change") | `verify_claim` (opt-in `verify` preset) — verify the claim against the graph, then cite the receipt to the human; an `unverifiable` verdict means hedge or read the source |
 
 For all other cases (reading a file, grepping, listing files) use native tools directly.
 
