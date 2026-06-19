@@ -159,9 +159,11 @@ defect and one user-facing doc miss; the remaining surfaces re-confirmed clean.
   diff against `totally-bogus-ref` while actually diffing `main` (24 files) — a silent misrepresentation
   that violates the briefing's own no-silent / honest-scope contract. The briefing now carries a
   `resolvedBaseRef` field (what git actually diffed against) alongside the requested `baseRef`, emits a
-  caveat when they differ (`Requested base ref "X" did not resolve; diffed against "Y" instead …`), and the
-  empty-diff headline reports the resolved ref. Verified E2E on the real repo and the live MCP server; the
-  advisory-never-block guarantee is preserved (bad ref in `--hook` still exits 0). Decision `c7ddcd1f`.
+  caveat when they differ (`Requested base ref "X" did not resolve; diffed against "Y" instead …`), the
+  empty-diff headline reports the resolved ref, and the human/hook render adds a `⚠ base ref … did not
+  resolve` line — so the fallback is honest across all three surfaces (JSON, MCP, human). Verified E2E on
+  the real repo and the live MCP server; the advisory-never-block guarantee is preserved (bad ref in
+  `--hook` still exits 0). Decision `c7ddcd1f`.
 - **[fixed] Two stale "50 MCP tools" references.** The third pass corrected the in-prose counts but missed
   the top-of-README architecture table (`README.md:72`) and the Mermaid architecture diagram
   (`README.md:395`); both now read **58 MCP tools**, matching the measured surface.
@@ -178,5 +180,6 @@ defect and one user-facing doc miss; the remaining surfaces re-confirmed clean.
     (exit 0, advisory). Confirms `triggeredBlockPatterns` reading the uncapped `*.orphaned` count works end
     to end, not just by inspection.
 
-Feature tests: **28 → 30** (added base-ref fallback honesty + no-caveat-when-resolved). Full suite green:
-**191 files, 3923 passed, 2 skipped** (`vitest run src examples`); `tsc` + `eslint` clean.
+Feature tests: **28 → 31** (base-ref fallback honesty + no-caveat-when-resolved + human-render fallback
+line). Full suite green: **191 files, 3924 passed, 2 skipped** (`vitest run src examples`); `tsc` + `eslint`
+clean.

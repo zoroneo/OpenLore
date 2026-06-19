@@ -118,6 +118,11 @@ function renderHuman(b: BlastRadiusBriefing): string {
   lines.push('');
   lines.push('🛫 Pre-flight blast radius (advisory)');
   lines.push('   ' + b.headline);
+  // Surface a silent base-ref fallback here too (not only in the JSON caveats), so a
+  // typo'd --base never makes the human briefing misrepresent what it diffed.
+  if (b.resolvedBaseRef !== b.baseRef) {
+    lines.push(`   ⚠ base ref "${b.baseRef}" did not resolve — diffed against "${b.resolvedBaseRef}" instead.`);
+  }
   if (b.impact.hubsTouched.length > 0) {
     lines.push('   Hubs: ' + b.impact.hubsTouched.map(h => `${h.symbol} (${h.fanIn} callers)`).join(', '));
   }

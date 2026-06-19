@@ -165,6 +165,21 @@ describe('runBlastRadiusCli (advisory posture & exit codes)', () => {
     expect(await runBlastRadiusCli({ cwd: '/p', hook: true })).toBe(0);
   });
 
+  it('human render surfaces a silent base-ref fallback (resolvedBaseRef ≠ baseRef)', async () => {
+    const fellBack = {
+      headline: 'h', posture: 'advisory', baseRef: 'totally-bogus-ref', resolvedBaseRef: 'main',
+      impact: { hubsTouched: [], layersCrossed: [], governingDecisions: [] },
+      tests: { count: 0, toRun: [] },
+      memory: { orphaned: 0, drifted: 0, willDrift: [] },
+      specs: { willGoStale: 0, items: [] },
+      decisions: { affected: 0, orphaned: 0, items: [] },
+    } as unknown as BlastRadiusBriefing;
+    vi.mocked(computeBlastRadius).mockResolvedValue(fellBack);
+    expect(await runBlastRadiusCli({ cwd: '/p' })).toBe(0);
+    const out = outSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('');
+    expect(out).toMatch(/base ref "totally-bogus-ref" did not resolve.*diffed against "main"/i);
+  });
+
   it('human render discloses capped detail lists with a "… and N more" line (no silent truncation)', async () => {
     const capped = {
       headline: 'h', posture: 'advisory',
