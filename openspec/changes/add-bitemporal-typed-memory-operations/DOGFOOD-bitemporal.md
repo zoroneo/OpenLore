@@ -59,9 +59,30 @@ A correctness/coverage pass over the diff surfaced two issues, both fixed in thi
 Both confirmed against the **built** handlers on a real repo (self-supersede now returns
 `"…is this same memory (identical content+anchor) — updated in place, nothing retired."`).
 
+A second (cross-cutting) review pass found three more, all fixed:
+
+3. **`detectMemoryStaleness` flagged superseded notes as stale** (`drift/drift-detector.ts`) — the
+   note loop scanned every record but, unlike the decisions loop above it (which skips inactive
+   decisions), never skipped `invalidatedAt` notes. A retired note whose anchored code later moved
+   would surface as `memory-orphaned`/`memory-drifted`, telling the user to re-record or reject a
+   memory that was already superseded. Now skips invalidated notes, matching recall/orient and the
+   memory-integrity invariant.
+4. **Legacy id-scheme records silently duplicated on re-record** (`memory.ts`) — dedup matched on
+   the stored id string, so a record written under the old `hash(content+recordedAt)` scheme would
+   not match a re-record's new `hash(content+anchors)` id, leaving two copies. Dedup now keys on
+   content+anchor identity (recompute `makeMemoryId`), so re-recording updates in place for
+   pre-existing stores too — zero behavior change for new-scheme records.
+5. **Combined `asOf` + `changedSince` empty-by-construction window returned a silent empty set**
+   (`memory.ts`) — the intersection is non-empty only when `changedSince` is a strict ancestor of
+   `asOf`; otherwise recall now warns instead of returning an indistinguishable `total:0`.
+
+Cross-cutting audit also confirmed (no change needed): `saveMemoryStore`/atomic-store round-trip all
+new optional fields; `tool-contract` classification for recall/remember unaffected; no CLI/API/view
+surface reads the raw memory store; vanished-commit anchors fail closed (excluded from temporal scope).
+
 ## Verification gates
 
-- `vitest run src examples` → **3,917 passed, 2 skipped** (incl. `bitemporal-memory.test.ts` 23 cases
+- `vitest run src examples` → **3,921 passed, 2 skipped** (incl. `bitemporal-memory.test.ts` 26 cases
   + the orient contradiction case).
 - `eslint src` → clean. `tsc --noEmit` → clean.
 - tools/list payload budget (spec-28): full surface < the bumped 57,000 B ceiling; default

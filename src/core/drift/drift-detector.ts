@@ -649,6 +649,12 @@ export async function detectMemoryStaleness(rootPath: string): Promise<DriftIssu
     }
 
     for (const m of memStore.memories) {
+      // Invalidated (superseded) notes are history, not current state — they have left
+      // the authoritative set per the memory-integrity invariant, exactly as recall and
+      // orient exclude them. Flagging a retired note as stale would tell the user to
+      // re-record or reject something already superseded.
+      // (add-bitemporal-typed-memory-operations)
+      if (m.invalidatedAt) continue;
       if (m.anchors.length === 0) continue;
       const f = memoryFreshness(m.anchors, view);
       if (f.freshness === 'fresh') continue;

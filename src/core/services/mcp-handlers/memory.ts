@@ -118,9 +118,14 @@ export async function handleRemember(
         }
         return m;
       });
+      // Dedup on content+anchor IDENTITY, not the stored id string. For new-scheme records
+      // this is identical to `m.id !== memory.id` (id IS hash(content+anchors)). It additionally
+      // catches a record persisted under the OLD id scheme (hash(content+recordedAt)) describing
+      // the same fact+code, so re-recording it updates in place instead of leaving a silent
+      // duplicate — honoring the content-anchor dedup invariant for pre-existing stores too.
       return {
         ...store,
-        memories: [...memories.filter((m) => m.id !== memory.id), memory],
+        memories: [...memories.filter((m) => makeMemoryId(m.content, m.anchors) !== memory.id), memory],
       };
     });
 
@@ -214,6 +219,17 @@ export async function handleRecall(
     const sinceSha = changedSince ? await resolveCommitSha(rootPath, changedSince) : undefined;
     if (changedSince && !sinceSha) warnings.push(`changedSince "${changedSince}" did not resolve to a commit — ignoring it.`);
     const temporal = !!(asOfSha || sinceSha);
+
+    // A combined asOf + changedSince window holds memories with sinceSha < validFrom ≤ asOfSha,
+    // which can only be non-empty when changedSince is a STRICT ancestor of asOf. Otherwise the
+    // intersection is empty by construction — warn so the caller can tell that apart from a
+    // genuine "no matches" rather than getting a silent, indistinguishable empty result.
+    if (asOfSha && sinceSha) {
+      const strictAncestor = sinceSha !== asOfSha && (await isAncestor(rootPath, sinceSha, asOfSha));
+      if (!strictAncestor) {
+        warnings.push('changedSince must be a strict ancestor of asOf for the combined window to be non-empty — nothing can be both authoritative as of the earlier commit and changed after the later one.');
+      }
+    }
 
     const wantType = normalizeMemoryTypeFilter(typeFilter);
     if (typeFilter && !wantType) warnings.push(`type "${typeFilter}" is not a known memory type — ignoring the filter.`);

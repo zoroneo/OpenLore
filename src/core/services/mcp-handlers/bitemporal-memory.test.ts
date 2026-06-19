@@ -106,8 +106,13 @@ function notesPath(): string {
 
 /** Strip `validFromCommit` from every persisted note, simulating a pre-bitemporal store. */
 async function stripValidFromCommit(): Promise<void> {
+  await patchNotes((memories) => memories.forEach((m) => delete m.validFromCommit));
+}
+
+/** Mutate the raw persisted notes in place, simulating records written by an older version. */
+async function patchNotes(fn: (memories: Array<Record<string, unknown>>) => void): Promise<void> {
   const store = JSON.parse(await readFile(notesPath(), 'utf-8'));
-  for (const m of store.memories) delete m.validFromCommit;
+  fn(store.memories);
   await writeFile(notesPath(), JSON.stringify(store, null, 2) + '\n', 'utf-8');
 }
 
@@ -349,6 +354,20 @@ describe('content + anchor dedup', () => {
     const rec = (await handleRecall(root)) as RecallResult;
     expect(rec.total).toBe(2);
   });
+
+  it('re-recording a fact stored under the OLD id scheme updates in place (no legacy duplicate)', async () => {
+    await commitAll('c1');
+    const a = (await handleRemember(root, 'legacy-scheme fact', fooAnchor)) as RememberResult;
+    // Simulate a record persisted by the old hash(content+recordedAt) id scheme: same content
+    // and anchors, but a different stored id than the current content+anchor hash would produce.
+    await patchNotes((memories) => memories.forEach((m) => { if (m.id === a.id) m.id = 'legacyid'; }));
+    const b = (await handleRemember(root, 'legacy-scheme fact', fooAnchor)) as RememberResult;
+    expect(b.id).toBe(a.id);            // computed from content+anchors, not the legacy id
+    expect(b.id).not.toBe('legacyid');
+    const rec = (await handleRecall(root)) as RecallResult;
+    expect(rec.total).toBe(1);          // the legacy row was replaced, not duplicated
+    expect(rec.authoritative.map((m) => m.id)).not.toContain('legacyid');
+  });
 });
 
 // ── graceful degradation of invalid temporal / type inputs ───────────────────
@@ -378,5 +397,25 @@ describe('invalid recall filters degrade gracefully (warn, do not throw or over-
     const rec = (await handleRecall(root, undefined, 10, undefined, undefined, undefined, 'banana')) as RecallResult;
     expect(rec.total).toBe(2);
     expect(rec.note).toMatch(/not a known memory type/i);
+  });
+
+  it('warns when a combined asOf + changedSince window is empty by construction', async () => {
+    const c1 = await git('rev-parse', 'HEAD');
+    await writeFile(join(root, 'NOTES.md'), 'x\n', 'utf-8');
+    const c2 = await commitAll('c2'); // c2 is a descendant of c1
+    // asOf=c1 (≤ c1) AND changedSince=c2 (> c2) can never both hold: empty by construction.
+    const bad = (await handleRecall(root, undefined, 10, undefined, c1, c2)) as RecallResult;
+    expect(bad.note).toMatch(/strict ancestor of asOf/i);
+    // The valid orientation (asOf=c2, changedSince=c1) carries no such warning.
+    const good = (await handleRecall(root, undefined, 10, undefined, c2, c1)) as RecallResult;
+    expect(good.note ?? '').not.toMatch(/strict ancestor of asOf/i);
+  });
+
+  it('a memory anchored to a vanished commit is excluded from temporal scope (fail-closed)', async () => {
+    const head = await git('rev-parse', 'HEAD');
+    // Rewrite the record to a validFromCommit that does not exist (e.g. rebased/squashed away).
+    await patchNotes((memories) => memories.forEach((m) => { m.validFromCommit = 'f'.repeat(40); }));
+    const asOf = (await handleRecall(root, undefined, 10, undefined, head)) as RecallResult;
+    expect(asOf.total).toBe(0); // non-comparable ⇒ excluded, never silently treated as in-range
   });
 });

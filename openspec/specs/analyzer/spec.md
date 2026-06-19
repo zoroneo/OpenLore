@@ -5597,6 +5597,12 @@ The system SHALL use git commit ancestry (merge-base --is-ancestor) rather than 
 
 > Decision recorded: 48771c59
 > Date: 2026-06-18
+### Requirement: MemoryIdentityIsHashcontentanchorsNotTheStoredIdField
+
+The system SHALL deduplicate memories by content-anchor identity (hash of content and anchors) so that re-recording the same fact for the same code updates in place regardless of the original id scheme.
+
+> Decision recorded: 0e96eca1
+> Date: 2026-06-19
 
 ## Technical Notes
 
@@ -6144,3 +6150,23 @@ Implements add-trust-calibrated-context-economy on the recall path (the only mem
 Memory records gain optional validFromCommit (HEAD SHA at record time), invalidatedAt, invalidatedByCommit, supersedes, and a closed-set type. asOf/changedSince recall resolve a commit-ish to a SHA and use `git merge-base --is-ancestor` for valid-time comparison rather than wall-clock timestamps, so history is reproducible for a fixed repo state with no LLM and no tuning constant. Supersession is an explicit caller act (remember gains supersedes), reusing the decisions supersedes semantics. Contradiction is a deterministic set intersection over resolved symbol anchors (unreconciled), surfaced in recall and orient. Dedup keys memory identity on hash(content+resolved anchors) instead of hash(content+timestamp). All fields additive/optional so legacy stores load without migration.
 
 **Consequences:** recall/orient gain an opt-in git subprocess path only when asOf/changedSince is supplied (common path unchanged). New capability rides recall/remember params — no new tool, default and minimal surfaces unchanged. makeMemoryId signature changes from (content, recordedAt) to (content, anchors).
+
+### Memory identity is hash(content+anchors), not the stored id field
+
+**Status:** Approved
+**Date:** 2026-06-19
+**ID:** 0e96eca1
+
+The old id scheme (hash(content+recordedAt)) allowed silent duplicates when re-recording the same fact for the same code. Deduplicating on content+anchor hash makes identity semantic: same fact + same code = same memory, regardless of which id scheme produced the stored record.
+
+**Consequences:** Re-recording an existing memory always updates in place even for pre-existing stores created under the old id scheme; any code that relies on the raw stored id for dedup must use makeMemoryId(content, anchors) instead.
+
+### Bitemporal recall warns when combined asOf+changedSince window is empty by construction
+
+**Status:** Approved
+**Date:** 2026-06-19
+**ID:** f740c091
+
+When changedSince is not a strict ancestor of asOf the intersection of the two temporal filters is always empty. Without an explicit warning the caller cannot distinguish 'no memories match' from 'the query window itself is degenerate,' leading to silent confusion.
+
+**Consequences:** Callers receive a warning string rather than a silent empty result; the ancestry check adds one git call per combined-window recall.

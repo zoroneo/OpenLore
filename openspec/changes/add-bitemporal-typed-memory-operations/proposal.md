@@ -4,9 +4,9 @@
 > `feat/bitemporal-typed-memory-operations`. Decision `48771c59` (ADR-0013). Spec deltas merged into
 > `openspec/specs/mcp-handlers/spec.md` (BitemporalMemoryValidity, ExplicitMemorySupersession,
 > DeterministicContradictionSurfacing, TypedMemoryClassification, ChangedSinceRecall, ContentAnchorDedup)
-> and `openspec/specs/architecture/spec.md` (AdditiveBitemporalMemorySchema). 23 e2e tests
+> and `openspec/specs/architecture/spec.md` (AdditiveBitemporalMemorySchema). 26 e2e tests
 > (`bitemporal-memory.test.ts`) over a real git repo + an orient contradiction case; full suite green
-> (3,917 passed); end-to-end dogfood confirmed against a real `analyze` run. See "Implementation
+> (3,921 passed); end-to-end dogfood confirmed against a real `analyze` run. See "Implementation
 > status" at the foot of this file.
 > Change 2 of the memory-integrity set (see `harden-memory-integrity-invariant`,
 > `add-trust-calibrated-context-economy`). Depends on change 1's authoritative-recall invariant
@@ -185,10 +185,10 @@ unchanged.
   dedup documented in the `mcp-handlers` spec; additive schema fields documented in the
   `architecture` spec. Decision `48771c59` (ADR-0013).
 
-**Verification:** `bitemporal-memory.test.ts` (23 e2e cases over a real git repo: validFromCommit
+**Verification:** `bitemporal-memory.test.ts` (26 e2e cases over a real git repo: validFromCommit
 reproducibility, supersede→asOf history, asOf/changedSince boundary cases, self-supersede guard,
 already-invalidated supersede, unreconciled + clear, file-level-anchor guard, typed filter, legacy
 records under temporal filters, invalid-filter graceful degradation, dedup) plus an orient
-contradiction case in `orient-memory-freshness.test.ts`. Full suite green (3,917 passed, 2
+contradiction case in `orient-memory-freshness.test.ts`. Full suite green (3,921 passed, 2
 skipped); lint clean; typecheck clean. End-to-end dogfood (see `DOGFOOD-bitemporal.md`) drove the
 built handlers against a real `openlore analyze` run and confirmed every behavior.

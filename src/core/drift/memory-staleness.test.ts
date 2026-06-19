@@ -113,6 +113,17 @@ describe('detectMemoryStaleness', () => {
     expect(await detectMemoryStaleness(root)).toEqual([]);
   });
 
+  it('ignores invalidated (superseded) notes even when their anchored code is gone', async () => {
+    // A retired note has left the authoritative set; staleness must not resurrect it.
+    // (add-bitemporal-typed-memory-operations)
+    await writeNotes([{
+      id: 'n1', kind: 'note', content: 'note about gone.ts', recordedAt: '2026-01-01T00:00:00Z',
+      anchors: [{ filePath: 'src/gone.ts', contentHash: 'x' }],
+      invalidatedAt: '2026-01-02T00:00:00Z',
+    }]);
+    expect(await detectMemoryStaleness(root)).toEqual([]);
+  });
+
   it('returns [] when no analysis exists (unverifiable, never a false stale)', async () => {
     await rm(join(root, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR), { recursive: true, force: true });
     await writeDecisions([{ id: 'd1', title: 'about target', affectedFiles: ['src/gone.ts'] }]);
