@@ -105,6 +105,15 @@ vi.mock('../../core/services/config-manager.js', () => ({
   readOpenLoreConfig: vi.fn(),
 }));
 
+// Partial-mock utils: keep everything real except isCacheFresh, so the action-handler
+// tests can drive the source-unchanged (skip) vs source-changed (re-analyze) decision
+// directly — the skip is now fingerprint-gated, not a wall-clock TTL.
+vi.mock('../../core/services/mcp-handlers/utils.js', async (orig) => {
+  const actual = await orig<typeof import('../../core/services/mcp-handlers/utils.js')>();
+  return { ...actual, isCacheFresh: vi.fn().mockResolvedValue(true) };
+});
+import { isCacheFresh } from '../../core/services/mcp-handlers/utils.js';
+
 describe('analyze command', () => {
   describe('command configuration', () => {
     it('should have correct name and description', () => {
@@ -191,41 +200,33 @@ describe('analyze command', () => {
     });
   });
 
-  describe('analysis caching', () => {
-    it('should skip analysis when recent (< 1 hour)', () => {
-      const analysisAge = 30 * 60 * 1000; // 30 minutes
-      const oneHour = 60 * 60 * 1000;
-      const force = false;
+  describe('analysis caching (fingerprint-gated, not a wall-clock TTL)', () => {
+    // The real skip decision: skip iff an analysis exists, --force is off, AND the
+    // source is unchanged since the last run (`cacheFresh` = isCacheFresh). A
+    // committed/edited source change re-analyzes even within the freshness window;
+    // an unchanged tree skips regardless of age.
+    const shouldSkip = (analysisAge: number | null, force: boolean, cacheFresh: boolean): boolean =>
+      analysisAge !== null && !force && cacheFresh;
 
-      const shouldSkip = analysisAge !== null && analysisAge < oneHour && !force;
-      expect(shouldSkip).toBe(true);
+    it('skips when an analysis exists and the source is unchanged (cacheFresh)', () => {
+      expect(shouldSkip(30 * 60 * 1000, false, true)).toBe(true);
     });
 
-    it('should run analysis when old (> 1 hour)', () => {
-      const analysisAge = 2 * 60 * 60 * 1000; // 2 hours
-      const oneHour = 60 * 60 * 1000;
-      const force = false;
-
-      const shouldSkip = analysisAge !== null && analysisAge < oneHour && !force;
-      expect(shouldSkip).toBe(false);
+    it('re-analyzes when source changed even if the analysis is recent (the bug fix)', () => {
+      // Previously this skipped on the < 1h TTL, ignoring the source change.
+      expect(shouldSkip(30 * 60 * 1000, false, false)).toBe(false);
     });
 
-    it('should run analysis with --force', () => {
-      const analysisAge = 30 * 60 * 1000; // 30 minutes
-      const oneHour = 60 * 60 * 1000;
-      const force = true;
-
-      const shouldSkip = analysisAge !== null && analysisAge < oneHour && !force;
-      expect(shouldSkip).toBe(false);
+    it('skips an unchanged tree regardless of age (fingerprint overrides the old TTL)', () => {
+      expect(shouldSkip(2 * 60 * 60 * 1000, false, true)).toBe(true);
     });
 
-    it('should run analysis when none exists', () => {
-      const analysisAge: number | null = null;
-      const oneHour = 60 * 60 * 1000;
-      const force = false;
+    it('always runs with --force', () => {
+      expect(shouldSkip(30 * 60 * 1000, true, true)).toBe(false);
+    });
 
-      const shouldSkip = analysisAge !== null && analysisAge < oneHour && !force;
-      expect(shouldSkip).toBe(false);
+    it('runs when no analysis exists', () => {
+      expect(shouldSkip(null, false, true)).toBe(false);
     });
   });
 
@@ -451,6 +452,8 @@ describe('analyze command', () => {
       mockMkdir.mockReset().mockResolvedValue(undefined);
       mockReadFile.mockReset().mockResolvedValue('{}');
       mockReadOpenLoreConfig.mockReset();
+      // Default: source unchanged since the last analysis (the common skip case).
+      vi.mocked(isCacheFresh).mockReset().mockResolvedValue(true);
 
       cwdSpy     = vi.spyOn(process, 'cwd').mockReturnValue('/fake/root');
       consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -471,11 +474,12 @@ describe('analyze command', () => {
       expect(process.exitCode).toBe(1);
     });
 
-    it('skips analysis when recent cache exists (< 1 hour) without --force', async () => {
+    it('skips analysis when a recent cache exists AND the source is unchanged', async () => {
       mockReadOpenLoreConfig.mockResolvedValue(FAKE_CONFIG);
       // mtime 30 minutes ago → recent
       mockStat.mockResolvedValue({ mtime: new Date(Date.now() - 30 * 60_000) });
       mockReadFile.mockResolvedValue(CACHED_STRUCTURE);
+      vi.mocked(isCacheFresh).mockResolvedValue(true); // source unchanged
 
       const mapperMod = await import('../../core/analyzer/repository-mapper.js');
       vi.mocked(mapperMod.RepositoryMapper).mockClear();
@@ -484,6 +488,22 @@ describe('analyze command', () => {
 
       // RepositoryMapper must NOT have been instantiated (analysis was skipped)
       expect(vi.mocked(mapperMod.RepositoryMapper)).not.toHaveBeenCalled();
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it('re-analyzes a recent cache when the source CHANGED (the fingerprint-staleness fix)', async () => {
+      mockReadOpenLoreConfig.mockResolvedValue(FAKE_CONFIG);
+      mockStat.mockResolvedValue({ mtime: new Date(Date.now() - 30 * 60_000) }); // still "recent"
+      mockReadFile.mockResolvedValue(CACHED_STRUCTURE);
+      vi.mocked(isCacheFresh).mockResolvedValue(false); // source changed since last analysis
+
+      const mapperMod = await import('../../core/analyzer/repository-mapper.js');
+      vi.mocked(mapperMod.RepositoryMapper).mockClear();
+
+      await analyzeCommand.parseAsync([], { from: 'user' });
+
+      // The change must force a full re-analysis even within the freshness window.
+      expect(vi.mocked(mapperMod.RepositoryMapper)).toHaveBeenCalled();
       expect(process.exitCode).toBeUndefined();
     });
 

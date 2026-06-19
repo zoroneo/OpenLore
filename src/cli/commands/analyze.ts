@@ -11,7 +11,6 @@ import { join } from 'node:path';
 import { logger } from '../../utils/logger.js';
 import { fileExists, formatDuration, formatAge, getAnalysisAge } from '../../utils/command-helpers.js';
 import {
-  ANALYSIS_STALE_THRESHOLD_MS,
   ARTIFACT_DEPENDENCY_GRAPH,
   ARTIFACT_FINGERPRINT,
   ARTIFACT_REFACTOR_PRIORITIES,
@@ -26,7 +25,7 @@ import {
   OPENLORE_ANALYSIS_REL_PATH,
   OPENLORE_CONFIG_REL_PATH,
 } from '../../constants.js';
-import { computeProjectFingerprint } from '../../core/services/mcp-handlers/utils.js';
+import { computeProjectFingerprint, isCacheFresh } from '../../core/services/mcp-handlers/utils.js';
 import type { AnalyzeOptions, OpenLoreConfig } from '../../types/index.js';
 import { readOpenLoreConfig } from '../../core/services/config-manager.js';
 import { RepositoryMapper, type RepositoryMap } from '../../core/analyzer/repository-mapper.js';
@@ -366,11 +365,16 @@ After analysis, run 'openlore generate' to create OpenSpec files.
       const outputPath = join(rootPath, opts.output);
       const analysisAge = await getAnalysisAge(outputPath);
 
+      // Skip re-analysis only when the SOURCE is unchanged since the last run — a
+      // content fingerprint (path+mtime+size of every source file), not a wall-clock
+      // TTL. A committed/edited source change therefore re-analyzes even within the
+      // freshness window; an unchanged tree skips regardless of age. (isCacheFresh
+      // falls back to the TTL only for a legacy analysis written without a fingerprint.)
+      const cacheFresh = analysisAge !== null && (await isCacheFresh(rootPath));
       if (analysisAge !== null && !opts.force) {
-        // Analysis exists - check if recent
-        if (analysisAge < ANALYSIS_STALE_THRESHOLD_MS) {
-          logger.discovery(`Recent analysis exists (${formatAge(analysisAge)})`);
-          logger.info('Tip', 'Use --force to re-analyze');
+        if (cacheFresh) {
+          logger.discovery(`Analysis is up to date — source unchanged (${formatAge(analysisAge)})`);
+          logger.info('Tip', 'Use --force to re-analyze anyway');
           logger.blank();
 
           // Show existing analysis stats
@@ -429,7 +433,7 @@ After analysis, run 'openlore generate' to create OpenSpec files.
             logger.debug(`Could not read existing analysis summary: ${(readErr as Error).message}`);
           }
         } else {
-          logger.discovery(`Existing analysis is ${formatAge(analysisAge)} old, re-analyzing...`);
+          logger.discovery('Source files changed since the last analysis — re-analyzing...');
           logger.blank();
         }
       }
