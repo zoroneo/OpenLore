@@ -86,3 +86,34 @@ two new guards fail — `governance-dogfooding.md cites "50 tools" but the live 
   without it). Correct by design — the server is not cwd-bound.
 - `docs/AGENT-BENCHMARKS.md` cites "~45 tools" / "--minimal (5 tools)": dated benchmark
   measurements (older `--minimal` had no `get_health_map`); left as historical record.
+
+## Round 2 — deeper verification (the LLM, embedding, graph, federation, and governance paths)
+
+The first round ran in BM25/no-LLM mode. This round exercised the paths that round 1 could not,
+using the **Claude Code CLI as the LLM backend** (`generation.provider: "claude-code"` → shells to
+`claude -p … --output-format json`, no API key) and a **local OpenAI-compatible embedding endpoint**
+(deterministic 256-dim hashing vectorizer, so the HTTP→LanceDB→cosine plumbing is real). Driven
+against the built `dist/cli/index.js` (== 2.1.1). No new bugs found; nothing changed in this commit
+beyond this note.
+
+| Path | Check | Result |
+|------|-------|--------|
+| **LLM `generate`** (claude-code) | full pipeline on a 5-function repo | ✓ real, source-accurate specs in **45.7 s** (Account entity, validation rules, GIVEN/WHEN/THEN scenarios) |
+| **LLM `verify`** (claude-code) | sample a file, score spec vs code | ✓ **71% confidence, 1/1 passed in 7.9 s**; correctly caught the spec gap (Exports 3/4 = 86%) after an undocumented method was added |
+| **LLM `drift`** (claude-code) | detect code changes not in specs | ✓ flagged the 1 changed file, mapped it to the `account` spec |
+| **Embedding / vector index** | `analyze --embed` against the embed server | ✓ LanceDB `functions.lance` built; `orient` + `search_code` flip `bm25_fallback → hybrid` |
+| **Graph traversal** | get_subgraph / analyze_impact / find_path / trace_execution_path / suggest_insertion_points / get_map / select_tests / get_function_skeleton / blast_radius | ✓ real topology (63-node subgraph from a fanIn-172 hub; blast radius 350, riskScore 100); honest "no path within depth 6" + soundness caveats |
+| **`verify_claim`** | claim-with-receipt tool | ✓ ambiguous object → `unverifiable` (refuses to guess); "safe-to-change" hub → `refuted` with receipt (indexCommit, lineSpan, contentHash, 170 callers) |
+| **Federation** | `federation add/list/status` + cross-repo `analyze_impact` | ✓ registry + fingerprint staleness; federation-scoped query reports `reposConsulted: ["securifine"]` (genuinely loads the federated index) |
+| **Decisions / governance gate** | record → consolidate → gate → approve → sync | ✓ full cycle: `record_decision` draft → LLM consolidate (also **extracted 2 real decisions from the diff** via claude-code) → `--gate` emits `{gated:true, reason:"verified"}` → approve → `--sync` writes all 3 into `openspec/specs/account/spec.md` → gate clears (exit 0) |
+| **Repo-shape breadth** | analyze + hybrid `orient` | ✓ added two Python repos (securifine, onkos) to round 1's TS + Rust |
+
+Notes / honest limits:
+- `claude-code` is a real **agentic** backend, so `generate` is slow and token-heavy on large repos
+  (securifine's pre-flight estimated ~217k tokens across many sequential `claude -p` turns; the
+  pipeline is resumable via on-disk stage checkpoints, which a kill/restart confirmed). Not a bug —
+  inherent to using an interactive-agent CLI as a batch completion backend. A new user running
+  `openlore generate` from a normal shell (not nested inside a Claude Code session) avoids the
+  session-nesting contention seen here.
+- `verify` filters candidates by a complexity heuristic (`minComplexity: 50`); files too trivial to
+  verify are skipped with a clean exit — exercised only after adding a genuinely complex function.
