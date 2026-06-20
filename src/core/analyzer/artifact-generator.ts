@@ -1107,6 +1107,7 @@ export class AnalysisArtifactGenerator {
     // All dynamic imports grouped here; CALL_GRAPH_LANGS hoisted out of the loop.
     const { extractSignatures, detectLanguage, resolveHeaderLanguage } = await import('./signature-extractor.js');
     const { CallGraphBuilder, serializeCallGraph } = await import('./call-graph.js');
+    const { extractHtmlScripts } = await import('./html-script-extractor.js');
     const { detectDuplicates } = await import('./duplicate-detector.js');
     const { analyzeForRefactoring } = await import('./refactor-analyzer.js');
     const { classifyYaml } = await import('./iac/index.js');
@@ -1118,6 +1119,9 @@ export class AnalysisArtifactGenerator {
       // Infrastructure-as-Code (spec-07) — projected onto the same graph primitives.
       'Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible',
     ]);
+    // Skip inline-script extraction for very large HTML files: bounds the
+    // same-length char-array allocation in extractHtmlScripts (the scan is O(N)).
+    const MAX_HTML_INLINE_SCRIPT_CHARS = 1_000_000;
     // Helm charts: every file under a directory containing Chart.yaml is Helm.
     const chartDirs = repoMap.allFiles
       .filter(f => /(^|\/)Chart\.ya?ml$/.test(f.path.replace(/\\/g, '/')))
@@ -1164,6 +1168,16 @@ export class AnalysisArtifactGenerator {
         const lang = resolveLang(file.path, content);
         if (CALL_GRAPH_LANGS.has(lang)) {
           callGraphFiles.push({ path: file.path, content, language: lang });
+        } else if (/\.html?$/i.test(file.path) && content.length <= MAX_HTML_INLINE_SCRIPT_CHARS) {
+          // Inline <script> JS (decision 5b38bad2): blank everything outside the
+          // script bodies (newlines preserved) so the JS extractor parses the
+          // islands at their true offsets and node line numbers map to the HTML
+          // file. Skip files with no inline JS. Oversized HTML is skipped (a
+          // bound on the per-file char-array allocation; the scan itself is O(N)).
+          const blanked = extractHtmlScripts(content);
+          if (blanked !== null) {
+            callGraphFiles.push({ path: file.path, content: blanked, language: 'JavaScript' });
+          }
         }
       } catch {
         // skip unreadable files
