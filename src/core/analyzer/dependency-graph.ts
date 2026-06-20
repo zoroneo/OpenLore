@@ -155,6 +155,60 @@ export interface DependencyGraphOptions {
 // ============================================================================
 
 /**
+ * Compute the outgoing dependency edges for a single file from its parsed
+ * imports. The canonical edge-resolution logic, shared by the full-build
+ * `buildEdges` and the watcher's incremental `dependency-graph.json` update so
+ * the two can never drift. Pure: resolves each import against `fileSet` and
+ * returns the edges; the caller owns adjacency/state.
+ *
+ * @param fromAbs    absolute path of the importing file (edge source)
+ * @param analysis   the file's parsed imports/exports (FileAnalysis)
+ * @param fileSet    absolute paths of all files that are nodes in the graph
+ * @param rootDir    project root, used as the import-resolution base
+ * @param extensions optional resolver extension override (undefined = defaults)
+ */
+export async function computeFileImportEdges(
+  fromAbs: string,
+  analysis: FileAnalysis,
+  fileSet: Set<string>,
+  rootDir: string,
+  extensions?: string[],
+): Promise<DependencyEdge[]> {
+  const isPythonFile = fromAbs.endsWith('.py') || fromAbs.endsWith('.pyw');
+  const isJavaFile = fromAbs.endsWith('.java');
+  const edges: DependencyEdge[] = [];
+
+  for (const imp of analysis.imports) {
+    // Skip non-relative imports for JS/TS (always npm packages). Python and Java
+    // must NOT skip: `from services.retriever import X` / absolute class FQNs may
+    // resolve to a local module.
+    if (!imp.isRelative && !isPythonFile && !isJavaFile) continue;
+    // Skip builtins / third-party that can't resolve to a project file.
+    if (!imp.isRelative && imp.isBuiltin) continue;
+
+    const resolvedPath = await resolveImport(imp.source, fromAbs, {
+      baseDir: rootDir,
+      extensions,
+      sourcePackage: isJavaFile ? analysis.javaPackage : undefined,
+    });
+    if (!resolvedPath || !fileSet.has(resolvedPath)) continue;
+
+    const edge: DependencyEdge = {
+      source: fromAbs,
+      target: resolvedPath,
+      importedNames: imp.importedNames,
+      isTypeOnly: imp.isTypeOnly,
+      weight: imp.isTypeOnly ? 0.5 : 1,
+    };
+    // Carry the HTML asset label (script / stylesheet) onto the edge.
+    if (imp.assetKind) edge.assetKind = imp.assetKind;
+    edges.push(edge);
+  }
+
+  return edges;
+}
+
+/**
  * Builds and analyzes a dependency graph from scored files
  */
 export class DependencyGraphBuilder {
@@ -340,46 +394,18 @@ export class DependencyGraphBuilder {
       const analysis = analyses.get(file.absolutePath);
       if (!analysis) continue;
 
-      const isPythonFile = file.absolutePath.endsWith('.py') || file.absolutePath.endsWith('.pyw');
-      const isJavaFile = file.absolutePath.endsWith('.java');
-
-      for (const imp of analysis.imports) {
-        // Skip non-relative imports for JS/TS (those are always npm packages).
-        // For Python files we must NOT skip: `from services.retriever import X`
-        // is flagged isRelative=false but may resolve to a local module.
-        // For Java files we also must NOT skip: imports are always absolute
-        // class FQNs and we try to resolve them against the project source root.
-        if (!imp.isRelative && !isPythonFile && !isJavaFile) continue;
-        // Skip known builtins and third-party packages that can't resolve to
-        // a file inside the project (Python stdlib, JDK, Spring, etc.).
-        if (!imp.isRelative && imp.isBuiltin) continue;
-
-        // Resolve the import to an absolute path
-        const resolvedPath = await resolveImport(imp.source, file.absolutePath, {
-          baseDir: this.options.rootDir,
-          extensions: this.options.extensions.length > 0 ? this.options.extensions : undefined,
-          sourcePackage: isJavaFile ? analysis.javaPackage : undefined,
-        });
-
-        // Skip if not resolved or not in our file set
-        if (!resolvedPath || !fileSet.has(resolvedPath)) continue;
-
-        // Create edge
-        const edge: DependencyEdge = {
-          source: file.absolutePath,
-          target: resolvedPath,
-          importedNames: imp.importedNames,
-          isTypeOnly: imp.isTypeOnly,
-          weight: imp.isTypeOnly ? 0.5 : 1,
-        };
-        // Carry the HTML asset label (script / stylesheet) onto the edge.
-        if (imp.assetKind) edge.assetKind = imp.assetKind;
-
+      const edges = await computeFileImportEdges(
+        file.absolutePath,
+        analysis,
+        fileSet,
+        this.options.rootDir,
+        this.options.extensions.length > 0 ? this.options.extensions : undefined,
+      );
+      for (const edge of edges) {
         this.edges.push(edge);
-
         // Update adjacency lists
-        this.adjacencyList.get(file.absolutePath)?.add(resolvedPath);
-        this.reverseAdjacencyList.get(resolvedPath)?.add(file.absolutePath);
+        this.adjacencyList.get(file.absolutePath)?.add(edge.target);
+        this.reverseAdjacencyList.get(edge.target)?.add(file.absolutePath);
       }
     }
   }

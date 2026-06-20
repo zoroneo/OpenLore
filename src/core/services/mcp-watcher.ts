@@ -24,7 +24,7 @@
  *     OPENLORE_WATCH_DEBUG).
  */
 
-import { readFile, writeFile, readdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, rename } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -38,6 +38,7 @@ import {
   OPENLORE_DIR,
   OPENLORE_ANALYSIS_SUBDIR,
   ARTIFACT_LLM_CONTEXT,
+  ARTIFACT_DEPENDENCY_GRAPH,
   WATCH_DEBOUNCE_MS,
   WATCH_MAX_BATCH_MS,
   WATCH_BULK_THRESHOLD,
@@ -471,6 +472,13 @@ export class McpWatcher {
     //      files). This keeps code-file literals (e.g. JSX strings) current.
     await this.updateTextLines(changedFiles);
 
+    // 3.6. Dependency graph — keep dependency-graph.json's file→file import edges
+    //      live (get_file_dependencies reads that static artifact). Incremental,
+    //      O(change): re-resolve the changed files' imports and splice their
+    //      edges, recompute in/out-degree. Global metrics (pageRank, clusters,
+    //      betweenness) are O(graph) and left to the next full `analyze`.
+    await this.updateDependencyGraph(changedFiles);
+
     // 4. Vector update — decoupled from signature freshness (Step 4).
     const isBulk = consumedVcsBulk || changedFiles.length >= this.bulkThreshold;
     if (this.embed && !this.embedDegraded && context.callGraph) {
@@ -677,6 +685,93 @@ export class McpWatcher {
       }
     } catch (err) {
       process.stderr.write(`[mcp-watcher] text-line error: ${(err as Error).message}\n`);
+    }
+  }
+
+  /**
+   * Incrementally patch dependency-graph.json's file→file import edges for the
+   * changed files. `get_file_dependencies` reads that static artifact, so without
+   * this an import edit goes stale until a full `analyze`. O(change): re-resolve
+   * each changed file's imports (reusing the builder's `computeFileImportEdges`,
+   * so resolution can't drift), replace that file's import edges, and recompute
+   * in/out-degree. HTTP- and call-graph-synthesized edges are preserved (the
+   * watcher does not rebuild them). Global metrics (pageRank, betweenness,
+   * clusters) are O(graph) and deliberately left to the next full `analyze`.
+   * No-op when no dependency graph exists. Never throws into the batch loop.
+   */
+  private async updateDependencyGraph(changedFiles: ChangedFile[]): Promise<void> {
+    const graphPath = join(this.outputPath, ARTIFACT_DEPENDENCY_GRAPH);
+    try {
+      let raw: string;
+      try {
+        raw = await readFile(graphPath, 'utf-8');
+      } catch {
+        return; // no dependency graph yet — nothing to keep fresh
+      }
+      // Narrow view for the fields we touch. We MUTATE the parsed object in place
+      // and re-serialize it, so untyped node fields not modeled here (file,
+      // exports, cluster, metrics.pageRank/betweenness) survive the round-trip.
+      const graph = JSON.parse(raw) as {
+        nodes: Array<{ id: string; metrics?: Record<string, number> }>;
+        edges: Array<{ source: string; target: string; httpEdge?: unknown; isCallEdge?: boolean }>;
+      };
+      if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return;
+
+      const { ImportExportParser } = await import('../analyzer/import-parser.js');
+      const { computeFileImportEdges } = await import('../analyzer/dependency-graph.js');
+      const fileSet = new Set(graph.nodes.map((n) => n.id)); // absolute paths
+      const parser = new ImportExportParser();
+      let changed = false;
+
+      for (const f of changedFiles) {
+        const abs = join(this.rootPath, f.rel);
+        if (!fileSet.has(abs)) continue; // new file — a full analyze adds the node
+        let analysis;
+        try {
+          analysis = await parser.parseFile(abs);
+        } catch {
+          continue;
+        }
+        const newEdges = await computeFileImportEdges(abs, analysis, fileSet, this.rootPath);
+        // Drop this file's previous IMPORT edges (keep HTTP / call-synthesized
+        // edges, which the watcher does not rebuild), then splice in the fresh set.
+        graph.edges = graph.edges.filter(
+          (e) => e.source !== abs || e.httpEdge !== undefined || e.isCallEdge === true,
+        );
+        graph.edges.push(...(newEdges as typeof graph.edges));
+        changed = true;
+      }
+      if (!changed) return;
+
+      // Recompute file-level in/out degree from the patched edge set (cheap).
+      const out = new Map<string, Set<string>>();
+      const inn = new Map<string, Set<string>>();
+      for (const n of graph.nodes) {
+        out.set(n.id, new Set());
+        inn.set(n.id, new Set());
+      }
+      for (const e of graph.edges) {
+        out.get(e.source)?.add(e.target);
+        inn.get(e.target)?.add(e.source);
+      }
+      for (const n of graph.nodes) {
+        if (!n.metrics) n.metrics = {};
+        n.metrics.outDegree = out.get(n.id)?.size ?? 0;
+        n.metrics.inDegree = inn.get(n.id)?.size ?? 0;
+      }
+
+      // Atomic write (tmp + rename) so a concurrent MCP read never sees a torn
+      // JSON — matching the watcher's "readers never see a torn graph" invariant.
+      const tmp = `${graphPath}.${process.pid}.tmp`;
+      await writeFile(tmp, JSON.stringify(graph));
+      await rename(tmp, graphPath);
+      if (this.debug) {
+        process.stderr.write(
+          `[mcp-watcher] dependency graph: patched import edges for ${changedFiles.length} file(s)\n`,
+        );
+      }
+    } catch (err) {
+      process.stderr.write(`[mcp-watcher] dependency-graph error: ${(err as Error).message}\n`);
     }
   }
 
