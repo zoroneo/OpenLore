@@ -238,11 +238,16 @@ describe('getPanicSignalText', () => {
     expect(getPanicSignalText(defaultPanicState())).toBeNull();
   });
 
-  it('returns advisory text at level 1', () => {
+  it('returns null at level 1 (advisory injection floor is L2 — L1 is observe-only)', () => {
     const state: PanicState = { ...defaultPanicState(), panicLevel: 1 };
+    expect(getPanicSignalText(state)).toBeNull();
+  });
+
+  it('returns advisory text at level 2 (the injection floor)', () => {
+    const state: PanicState = { ...defaultPanicState(), panicLevel: 2 };
     const text = getPanicSignalText(state);
     expect(text).not.toBeNull();
-    expect(text).toContain('[PANIC:ELEVATED]');
+    expect(text).toContain('[PANIC:PLANNING]');
   });
 
   it('returns directive text when interventionCountSinceStable ≥ 3', () => {

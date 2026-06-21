@@ -307,12 +307,17 @@ export function buildPanicCheckOutput(state: PanicState): PanicCheckOutput {
   };
 }
 
+/** Advisory MCP response injection begins at L2 — the documented advisory-injection floor and the
+ *  same threshold the accuracy gate/calibration measure (L1 is "elevated": tracked, not intervened on).
+ *  Keeping L1 silent avoids nagging on a weak signal and matches `advisory (surface a signal at L2+)`. */
+export const PANIC_INJECTION_MIN_LEVEL = 2;
+
 /**
- * Returns panic signal text for MCP tool response injection.
+ * Returns panic signal text for MCP tool response injection, or null below the injection floor.
  * Appended after result (not prepended) to preserve JSON structure.
  */
 export function getPanicSignalText(state: PanicState): string | null {
-  if (state.panicLevel === 0) return null;
+  if (state.panicLevel < PANIC_INJECTION_MIN_LEVEL) return null;
   const isDirective = state.interventionCountSinceStable >= 3;
   const messages = isDirective ? DIRECTIVE_MESSAGES : ADVISORY_MESSAGES;
   return messages[state.panicLevel] ?? null;

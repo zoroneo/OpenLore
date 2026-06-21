@@ -114,3 +114,35 @@ secret confinement (no API keys/tokens leak to telemetry/state); MCP tool surfac
 freshness signal unchanged by panic mode; atomic state-file rename (never corrupt); daemon
 SIGTERM/SIGINT/stdin-EOF lifecycle + PID singleton; score bounds [0,100]; hysteresis/ceiling/refractory
 boundaries; determinism; ~50k-step replay performance.
+
+## 9. Final adversarial round (deep multi-agent: lock-stress, replay, resource, property, multi-agent)
+
+- [x] **withPanicStateLock let fn() throw out** — write failures inside the lock escaped (fail-open
+      violation). Wrapped fn() → returns fallback. Plus `atomicWriteState()` unlinks the temp on any
+      failure (no `.tmp` leak in a long-lived daemon). LOCK_STALE_MS 5000→1500 + a short daemon attempt
+      budget (no event-loop stall on the gryph poll path).
+- [x] **panic-hotspots --write silent failure** — now prints the report first, writes in its own
+      try/catch with a stderr warning.
+- [x] **null trigger** from a name-less `panic_score_delta` — string-name guard in validatePanicSignal.
+- [x] **gryph-watch premature exit on closed-pipe stdin** — the stdin-EOF parent-death proxy was unsound
+      (the `UserPromptSubmit &` launch closes stdin); removed it. Daemon now runs until SIGTERM/SIGINT/
+      SIGHUP or until panic mode is set off in config (a real stop control + orphan bound); cleanup is
+      idempotent; SIGHUP no longer leaks the PID.
+- [x] **Advisory injection floor aligned to L2** — `getPanicSignalText` injected at L1, contradicting the
+      README (`advisory … L2+`) and the calibration ("L2 is the advisory-injection floor"). Now gated at
+      `PANIC_INJECTION_MIN_LEVEL = 2`; L1 is observe-only (tracked, not intervened on).
+
+Verified ROBUST (no change needed): the cross-process lock is lossless under sustained multi-agent load
+(3 concurrent MCP servers + gryph-watch + hooks, ~1.1M reads, revision monotonic to 854, 0 corruption,
+0 lost cooldowns, 0 crashes); lock serialization at 50–100 writers loses 0 writes; stale-lock steal
+correct; no fd/SharedArrayBuffer leak (40k calls → fds flat); symlinked state path safe; double-signal
+cleanup safe. **Property-based: all hard invariants held across 137,552 random steps** (score∈[0,100],
+level∈{0..4}, density/oscillation∈[0,1], freshness monotonic, post-orient reset, determinism, no throws).
+
+Documented-not-a-bug: a stale tracker hit by a heavy architectural tool jumps `staleDepth` 1→3 in one
+step (intentional pre-panic freshness burst), so the panic CEILING floors the level 0→2 in that step.
+The "≤1 level per step" smoothing applies to score-based transitions, not the ceiling — the ceiling is a
+deliberate immediate floor (`staleDepth≥3 → ≥L2`). Left unchanged (freshness semantics are out of scope).
+The MCP hot path writes panic-state with the unlocked `writePanicState` by design — locking a
+request-serving event loop would be worse than the (self-healing via `max(tracker,disk)`) revision race,
+which did not reproduce under real load.
