@@ -13,6 +13,10 @@ import { readPanicState } from '../../core/services/mcp-handlers/panic-response.
 
 export const panicLevelCommand = new Command('panic-level')
   .description('Output current panic level for status line display (read-only, exits 0)')
+  // Status-line / hook consumer: always exit 0, even on a parse error (see panic-check).
+  .allowUnknownOption(true)
+  .allowExcessArguments(true)
+  .exitOverride(() => process.exit(0))
   .option('-d, --directory <path>', 'Project directory', process.cwd())
   .action((options: { directory: string }) => {
     try {

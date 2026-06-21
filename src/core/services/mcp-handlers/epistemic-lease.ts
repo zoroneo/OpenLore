@@ -240,11 +240,26 @@ export function updatePanic(
   const now = _clock();
   const inRefractory = tracker.panicRecoverySuppressionUntil > now;
 
-  // Passive wall-clock decay: -5 per minute elapsed since last update
-  const elapsedMin = tracker.lastPanicUpdateAt > 0
-    ? Math.max(0, (now - tracker.lastPanicUpdateAt) / 60_000)
-    : 0;
-  const decayDelta = -Math.floor(elapsedMin * PANIC_DECAY_PER_MIN);
+  // Passive wall-clock decay: PANIC_DECAY_PER_MIN points per minute elapsed.
+  // The remainder below one whole point is PRESERVED (the baseline only advances by the time
+  // consumed by the points actually applied), so decay accrues by wall-clock regardless of call
+  // cadence. (Bug fix: previously this floored per-call AND reset the baseline to `now` every call,
+  // so an agent calling tools more often than once per 12s decayed at 0/min — pinned forever.)
+  const MS_PER_DECAY_POINT = 60_000 / PANIC_DECAY_PER_MIN; // 12s/point at 5/min
+  let decayDelta = 0;
+  let elapsedMin = 0;
+  if (tracker.lastPanicUpdateAt > 0) {
+    const elapsedMs = Math.max(0, now - tracker.lastPanicUpdateAt);
+    elapsedMin = elapsedMs / 60_000;
+    const points = Math.floor(elapsedMs / MS_PER_DECAY_POINT);
+    if (points > 0) {
+      decayDelta = -points;
+      tracker.lastPanicUpdateAt += points * MS_PER_DECAY_POINT; // advance only by consumed time
+    }
+    // else: leave lastPanicUpdateAt unchanged so the sub-point remainder carries to the next call
+  } else {
+    tracker.lastPanicUpdateAt = now; // initialize on the first call
+  }
 
   let delta = decayDelta;
   const provenance: PanicProvenanceItem[] = [];
@@ -285,7 +300,7 @@ export function updatePanic(
   }
 
   const scoreBefore = tracker.panicScore;
-  tracker.lastPanicUpdateAt = now;
+  // lastPanicUpdateAt is advanced in the decay block above (remainder-preserving) — not reset here.
   tracker.panicScore = Math.min(PANIC_SCORE_MAX, Math.max(0, tracker.panicScore + delta));
 
   // Accumulate trigger names for the current episode (upward signals only)

@@ -189,8 +189,24 @@ describe.skipIf(!haveCli)('panic CLI — e2e against the built binary', () => {
     expect(fcs.peakLevel).toBe(0);
   });
 
-  it('panic-replay errors (exit 1) on a missing trace file', () => {
+  it('panic-replay errors (exit 1) on a missing trace file or a directory', () => {
     expect(run(['panic-replay', join(dir, 'does-not-exist.jsonl')]).code).toBe(1);
+    expect(run(['panic-replay', dir]).code).toBe(1); // a directory is not a readable trace
+  });
+
+  it('panic-check / panic-level ALWAYS exit 0 — even on commander parse errors (fail-open invariant)', () => {
+    // A PreToolUse hook / status-line consumer must never surface a non-zero exit to the runtime.
+    for (const argv of [
+      ['panic-check', '-d', dir, '--unknown-extra=1'],
+      ['panic-check', '--bogusflag'],
+      ['panic-check', '--format'],       // missing option value
+      ['panic-check', '-d'],             // missing option value
+      ['panic-check', '--help'],
+      ['panic-level', '-x'],
+      ['panic-level', '--nope'],
+    ]) {
+      expect(run(argv).code, `${argv.join(' ')} must exit 0`).toBe(0);
+    }
   });
 
   it('gryph-watch exits cleanly and writes no PID file when mode is off (safe default)', () => {

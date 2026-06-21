@@ -13,7 +13,7 @@
  */
 
 import { Command } from 'commander';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { replayBehavioralTrace, type ReplayStep } from '../../core/services/mcp-handlers/panic-replay.js';
 
 function readTrace(path: string): ReplayStep[] {
@@ -42,8 +42,8 @@ export const panicReplayCommand = new Command('panic-replay')
   .option('--timeline', 'Print the per-step timeline (human mode)', false)
   .action((trace: string, options: { sourceRoots: string; json: boolean; timeline: boolean }) => {
     try {
-      if (!existsSync(trace)) {
-        process.stderr.write(`panic-replay: trace file not found: ${trace}\n`);
+      if (!existsSync(trace) || !statSync(trace).isFile()) {
+        process.stderr.write(`panic-replay: not a readable trace file: ${trace}\n`);
         process.exit(1);
       }
       const steps = readTrace(trace);

@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTracker, updateTracker, updatePanic, resetPanicOnOrient, injectFreshness, getSourceRoots, trackerToPanicState } from './epistemic-lease.js';
+import { createTracker, updateTracker, updatePanic, resetPanicOnOrient, injectFreshness, getSourceRoots, trackerToPanicState, _setEngineClock } from './epistemic-lease.js';
 import type { EpistemicTracker } from './epistemic-lease.js';
 
 // ============================================================================
@@ -1094,5 +1094,42 @@ describe('panic telemetry is gated out of the freshness path', () => {
     const pe = panicEmits();
     expect(pe.length).toBeGreaterThanOrEqual(1);
     expect(pe.some(c => (c[2] as { event?: string }).event === 'panic_orient_reset')).toBe(true);
+  });
+});
+
+// ============================================================================
+// Regression: passive decay must accrue by wall-clock, independent of call cadence.
+// (Adversarial finding — decay starvation: the old per-call floor + baseline reset
+//  discarded the sub-12s remainder, so an agent calling tools more often than once
+//  per 12s decayed at 0/min and stayed pinned at CRITICAL forever.)
+// ============================================================================
+
+describe('panic — decay accrues by wall-clock regardless of call cadence', () => {
+  // Use the injectable engine clock for a fully deterministic virtual timeline.
+  let now = 1_000_000_000_000;
+  beforeEach(() => { now = 1_000_000_000_000; _setEngineClock(() => now); });
+  afterEach(() => { _setEngineClock(null); });
+
+  // density 0.2 isolates decay: above the locality_recovery cutoff (0.10) yet below the
+  // trajectory-burst threshold (0.60), and oscillation 0 — so ONLY passive decay applies.
+  const decayOnly = { density: 0.2, oscillation: 0, weight: 1, staleDepth: 0, directory: '', tool: 'search_code' };
+  const primed = () => { const t = freshTracker(); t.panicScore = 100; t.lastPanicUpdateAt = now; return t; };
+
+  it('one 10-min gap and sixty 10s gaps decay the score identically', () => {
+    const a = primed();
+    now += 10 * 60 * 1000; updatePanic(a, decayOnly);                          // single big gap
+
+    const b = primed();
+    for (let i = 0; i < 60; i++) { now += 10_000; updatePanic(b, decayOnly); } // 60 × 10s = 10 min
+
+    expect(a.panicScore).toBe(50);   // 10 min × 5/min = 50 points
+    expect(b.panicScore).toBe(50);   // identical — the sub-point remainder is preserved, not discarded
+  });
+
+  it('frequent sub-12s calls still decay (the remainder is never discarded)', () => {
+    const t = primed();
+    // 120 calls × 5s = 600s; every gap is below the 12s/point granularity — pre-fix this decayed 0.
+    for (let i = 0; i < 120; i++) { now += 5_000; updatePanic(t, decayOnly); }
+    expect(t.panicScore).toBe(50);
   });
 });

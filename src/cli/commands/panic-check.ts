@@ -19,6 +19,12 @@ type HookFormat = 'claude' | 'kilo' | 'codex';
 
 export const panicCheckCommand = new Command('panic-check')
   .description('Check current panic level (PreToolUse hook consumer)')
+  // Fail-open invariant: a PreToolUse hook must NEVER surface a non-zero exit to the agent runtime.
+  // Commander would exit(1) on an unknown/extra option BEFORE the action's try/catch runs, so we
+  // tolerate unknown options and force every parse-layer exit (incl. --help) to 0.
+  .allowUnknownOption(true)
+  .allowExcessArguments(true)
+  .exitOverride(() => process.exit(0))
   .option('-d, --directory <path>', 'Project directory', process.cwd())
   .option('-f, --format <format>', 'Hook format: claude|kilo|codex', 'claude')
   .action(async (options: { directory: string; format: string }) => {
