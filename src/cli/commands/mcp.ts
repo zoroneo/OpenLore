@@ -1943,6 +1943,11 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
             ...trackerToPanicState(tracker, agentName),
             lastHookInterventionAt: diskState.lastHookInterventionAt,
             gryphWindowStart: diskState.gryphWindowStart,
+            // Never regress the revision below what another writer (the panic-check hook)
+            // already persisted — a fresh in-memory tracker starts at revision 0, so seed
+            // the write from the highest revision seen on disk. Keeps the monotonic-revision
+            // invariant across writers (relied on by the deferred Gryph CAS path).
+            revision: Math.max(tracker.panicRevision, diskState.revision ?? 0),
           };
           tracker.panicRevision = writePanicState(directory, stateToWrite);
 
