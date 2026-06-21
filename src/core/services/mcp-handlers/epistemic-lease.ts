@@ -39,6 +39,34 @@ import {
   ARTIFACT_CALL_GRAPH_DB,
 } from '../../../constants.js';
 import { emit } from '../telemetry.js';
+import { applyPanicHysteresis } from './panic-response.js';
+import type { PanicLevel, PanicState } from './panic-response.js';
+import {
+  PANIC_SCORE_MAX,
+  PANIC_TRAJECTORY_DENSITY,
+  PANIC_TRAJECTORY_DELTA,
+  PANIC_OSCILLATION_THRESHOLD,
+  PANIC_OSCILLATION_DELTA,
+  PANIC_STALE_D3_LOCALITY_GATE,
+  PANIC_STALE_D3_DELTA,
+  PANIC_LOCALITY_RECOVERY,
+  PANIC_DECAY_PER_MIN,
+  PANIC_REFRACTORY_MS,
+} from './panic-constants.js';
+
+// ============================================================================
+// CLOCK (injectable for deterministic replay/calibration)
+// Defaults to Date.now() — production behavior is identical. Replay tooling sets
+// a virtual clock so the time-based signals (decay, refractory, staleness) can be
+// reproduced faithfully from a recorded trace. Reset to null to restore real time.
+// ============================================================================
+
+let _clock: () => number = () => Date.now();
+
+/** Override the engine clock (replay/calibration only). Pass null to restore Date.now(). */
+export function _setEngineClock(fn: (() => number) | null): void {
+  _clock = fn ?? (() => Date.now());
+}
 
 // ============================================================================
 // TYPES
@@ -72,6 +100,28 @@ export interface EpistemicTracker {
    *  signal surfaced in the freshness note. It does NOT by itself force a stale state:
    *  the agent's own commits are the most-informed action, not a reason to expire its model. */
   repoMovedSinceOrient: boolean;
+  /** V3.2: last computed cross-module density [0,1] — stored so callers can read after updateTracker(). */
+  density: number;
+  // Panic fields — behavioral destabilization tracking (separate from freshness)
+  panicScore: number;
+  panicLevel: PanicLevel;
+  /**
+   * Shared behavioral coherence metric [0,1].
+   * Used by: freshness burst gating AND panic escalation gating (stale_depth_3, burst).
+   * WARNING: changes affect both systems. Modify with full blast-radius awareness.
+   */
+  localityConfidence: number;
+  recentOrientCount: number;
+  lastOrientResetAt: number;
+  interventionCountSinceStable: number;
+  /** Epoch ms of last panic score update — for passive decay calculation. */
+  lastPanicUpdateAt: number;
+  /** Accumulated signal trigger labels for the current panic episode. */
+  panicTriggers: string[];
+  /** Epoch ms — upward panic signals suppressed until this time after orient() recovery. */
+  panicRecoverySuppressionUntil: number;
+  /** Revision of the last panic-state.json write (from MCP or Gryph sync). Used for CAS monotonicity. */
+  panicRevision: number;
 }
 
 // ============================================================================
@@ -166,6 +216,142 @@ const SWITCH_DAMPENING_MS           = 5_000;
 const BURST_DENSITY_THRESHOLD       = 0.60;  // density for post-stale burst escalation
 const BURST_TOOL_WEIGHT_THRESHOLD   = 8;     // tool weight for post-stale burst escalation
 
+// Panic constants
+const RAPID_ORIENT_INTERVAL_MS      = 2 * 60 * 1000;  // orients within 2min are "rapid"
+// Panic signal thresholds and weights imported from panic-constants.ts
+
+// ============================================================================
+// PANIC UPDATE
+// Called on every tool call with current density/oscillation signals.
+// Score delta: positive from instability signals, negative from orient resets.
+// ============================================================================
+
+interface PanicProvenanceItem {
+  name: string;
+  delta: number;
+  evidence: Record<string, number | string | boolean>;
+}
+
+export function updatePanic(
+  tracker: EpistemicTracker,
+  opts: { density: number; oscillation: number; weight: number; staleDepth: number; directory?: string; tool?: string },
+): void {
+  const { density, oscillation, staleDepth, directory = '', tool = '' } = opts;
+  const now = _clock();
+  const inRefractory = tracker.panicRecoverySuppressionUntil > now;
+
+  // Passive wall-clock decay: PANIC_DECAY_PER_MIN points per minute elapsed.
+  // The remainder below one whole point is PRESERVED (the baseline only advances by the time
+  // consumed by the points actually applied), so decay accrues by wall-clock regardless of call
+  // cadence. (Bug fix: previously this floored per-call AND reset the baseline to `now` every call,
+  // so an agent calling tools more often than once per 12s decayed at 0/min — pinned forever.)
+  const MS_PER_DECAY_POINT = 60_000 / PANIC_DECAY_PER_MIN; // 12s/point at 5/min
+  let decayDelta = 0;
+  let elapsedMin = 0;
+  if (tracker.lastPanicUpdateAt > 0) {
+    const elapsedMs = Math.max(0, now - tracker.lastPanicUpdateAt);
+    elapsedMin = elapsedMs / 60_000;
+    const points = Math.floor(elapsedMs / MS_PER_DECAY_POINT);
+    if (points > 0) {
+      decayDelta = -points;
+      tracker.lastPanicUpdateAt += points * MS_PER_DECAY_POINT; // advance only by consumed time
+    }
+    // else: leave lastPanicUpdateAt unchanged so the sub-point remainder carries to the next call
+  } else {
+    tracker.lastPanicUpdateAt = now; // initialize on the first call
+  }
+
+  let delta = decayDelta;
+  const provenance: PanicProvenanceItem[] = [];
+  if (decayDelta < 0) {
+    provenance.push({ name: 'passive_decay', delta: decayDelta, evidence: { elapsed_min: Math.round(elapsedMin * 100) / 100 } });
+  }
+
+  // localityConfidence is computed in updateTracker() and stored in tracker.
+  // Read it here so signal gating uses the current value.
+  const localityConfidence = tracker.localityConfidence;
+
+  // Upward signals — suppressed during refractory period after orient() recovery
+  if (!inRefractory) {
+    if (density >= PANIC_TRAJECTORY_DENSITY) {
+      const d = PANIC_TRAJECTORY_DELTA;
+      delta += d;
+      provenance.push({ name: 'trajectory_burst', delta: d, evidence: { density } });
+    }
+    if (oscillation >= PANIC_OSCILLATION_THRESHOLD) {
+      const d = PANIC_OSCILLATION_DELTA;
+      delta += d;
+      provenance.push({ name: 'oscillation_spike', delta: d, evidence: { oscillation } });
+    }
+    // stale_depth_3 signal gated by localityConfidence: a stale agent doing focused local
+    // work (high confidence) is much less risky than a stale agent in behavioral drift.
+    if (staleDepth >= 3 && localityConfidence < PANIC_STALE_D3_LOCALITY_GATE) {
+      const d = PANIC_STALE_D3_DELTA;
+      delta += d;
+      provenance.push({ name: 'stale_depth_3', delta: d, evidence: { stale_depth: staleDepth, locality_confidence: localityConfidence } });
+    }
+  }
+
+  // Locality recovery — always applies, not gated by refractory
+  if (density < 0.10 && oscillation < 0.10 && staleDepth === 0) {
+    const d = -PANIC_LOCALITY_RECOVERY;
+    delta += d;
+    provenance.push({ name: 'locality_recovery', delta: d, evidence: { density, oscillation } });
+  }
+
+  const scoreBefore = tracker.panicScore;
+  // lastPanicUpdateAt is advanced in the decay block above (remainder-preserving) — not reset here.
+  tracker.panicScore = Math.min(PANIC_SCORE_MAX, Math.max(0, tracker.panicScore + delta));
+
+  // Accumulate trigger names for the current episode (upward signals only)
+  const upwardTriggers = provenance.filter(p => p.delta > 0).map(p => p.name);
+  for (const t of upwardTriggers) {
+    if (!tracker.panicTriggers.includes(t)) tracker.panicTriggers.push(t);
+  }
+
+  const prevLevel = tracker.panicLevel;
+  tracker.panicLevel = applyPanicHysteresis(tracker.panicLevel, tracker.panicScore, staleDepth);
+
+  // Emit provenance trace whenever score changes with active signals
+  if (tracker.panicScore !== scoreBefore && provenance.length > 0) {
+    emit(directory, 'panic', {
+      event: 'panic_score_delta',
+      tool,
+      score_before: scoreBefore,
+      score_after: tracker.panicScore,
+      delta,
+      in_refractory: inRefractory,
+      stale_depth: staleDepth,
+      density,
+      oscillation,
+      triggers: provenance,
+    });
+  }
+
+  if (tracker.panicLevel !== prevLevel) {
+    const levelTrigger = staleDepth >= 2 && tracker.panicLevel > prevLevel ? 'ceiling' : 'score';
+    emit(directory, 'panic', {
+      event: 'panic_level_change',
+      tool,
+      from_level: prevLevel,
+      to_level: tracker.panicLevel,
+      score_before: scoreBefore,
+      panic_score: tracker.panicScore,
+      density,
+      oscillation,
+      stale_depth: staleDepth,
+      in_refractory: inRefractory,
+      trigger: levelTrigger,
+      provenance,
+    });
+  }
+
+  if (tracker.panicLevel === 0 && prevLevel > 0) {
+    tracker.interventionCountSinceStable = 0;
+    tracker.panicTriggers = [];
+  }
+}
+
 // ============================================================================
 // GIT HASH
 // ============================================================================
@@ -214,7 +400,7 @@ export function getSourceRoots(directory: string): string[] {
   }
 }
 
-function moduleFromPath(filePath: string, sourceRoots: string[]): string | null {
+export function moduleFromPath(filePath: string, sourceRoots: string[]): string | null {
   const parts = filePath.split(/[/\\]/);
   for (const root of sourceRoots) {
     const idx = parts.indexOf(root);
@@ -256,13 +442,19 @@ function computeCrossModuleDensity(window: (string | null)[]): number {
 function computeOscillationScore(window: (string | null)[]): number {
   const modules = window.filter((m): m is string => m !== null);
   if (modules.length < 3) return 0;
-  let repeated = 0;
-  let total = 0;
-  for (let i = 2; i < modules.length; i++) {
-    total++;
-    if (modules[i] === modules[i - 2]) repeated++;
+  // Compute over transition sequence (entries where module actually changed).
+  // A→A→A→A → 0 transitions → oscillation = 0 (focused local work, not confusion).
+  // A→B→A→B → transitions [A,B,A,B] → oscillation = 1.0 (pure confusion loop).
+  const transitions: string[] = [modules[0]!];
+  for (let i = 1; i < modules.length; i++) {
+    if (modules[i] !== modules[i - 1]) transitions.push(modules[i]!);
   }
-  return total > 0 ? repeated / total : 0;
+  if (transitions.length < 3) return 0;
+  let repeated = 0;
+  for (let i = 2; i < transitions.length; i++) {
+    if (transitions[i] === transitions[i - 2]) repeated++;
+  }
+  return repeated / (transitions.length - 2);
 }
 
 // ============================================================================
@@ -286,13 +478,13 @@ function computeStaleDepth(load: number): StaleDepth {
 
 export function createTracker(directory: string): EpistemicTracker {
   return {
-    lastOrientAt: new Date(),
+    lastOrientAt: new Date(_clock()),
     graphVersionAtOrient: getGitHash(directory),
     cognitiveLoad: 0,
     modulesVisited: new Set(),
     freshnessState: 'fresh',
     staleDepth: 0,
-    lastGitCheckAt: Date.now(),
+    lastGitCheckAt: _clock(),
     sourceRoots: getSourceRoots(directory),
     lastModule: null,
     moduleAccessWindow: [],
@@ -300,17 +492,89 @@ export function createTracker(directory: string): EpistemicTracker {
     lastSwitchAt: 0,
     oscillation: 0,
     repoMovedSinceOrient: false,
+    density: 0,
+    panicScore: 0,
+    panicLevel: 0,
+    localityConfidence: 1,
+    recentOrientCount: 0,
+    lastOrientResetAt: 0,
+    interventionCountSinceStable: 0,
+    lastPanicUpdateAt: 0,
+    panicTriggers: [],
+    panicRecoverySuppressionUntil: 0,
+    panicRevision: 0,
   };
 }
 
+/**
+ * Panic recovery on orient() — orient spam protection + score reduction + refractory.
+ * Policy-gated: the caller (mcp.ts) invokes this ONLY when panic mode != 'off', so no
+ * panic scoring or panic telemetry occurs in the default (off) path. Kept separate from
+ * resetTracker() (freshness reset, which always runs) so freshness and panic stay decoupled.
+ */
+export function resetPanicOnOrient(tracker: EpistemicTracker, directory: string): void {
+  const now = _clock();
+
+  // Orient spam protection — diminishing recovery bonus on rapid reuse
+  const timeSinceLastOrient = now - tracker.lastOrientResetAt;
+  if (timeSinceLastOrient >= RAPID_ORIENT_INTERVAL_MS) {
+    tracker.recentOrientCount = 0; // non-rapid: reset spam counter
+  }
+  tracker.recentOrientCount++;
+  tracker.lastOrientResetAt = now;
+
+  let panicDelta: number;
+  let orientKind: 'normal' | 'rapid' | 'spam';
+  if (tracker.recentOrientCount >= 3) {
+    panicDelta = 0;   orientKind = 'spam';
+  } else if (timeSinceLastOrient < RAPID_ORIENT_INTERVAL_MS) {
+    panicDelta = -15; orientKind = 'rapid';
+  } else {
+    panicDelta = -40; orientKind = 'normal';
+  }
+
+  const prevScore = tracker.panicScore;
+  const prevLevel = tracker.panicLevel;
+  tracker.panicScore = Math.min(PANIC_SCORE_MAX, Math.max(0, tracker.panicScore + panicDelta));
+  tracker.localityConfidence = 1;
+  tracker.panicLevel = applyPanicHysteresis(tracker.panicLevel, tracker.panicScore, 0);
+  if (tracker.panicLevel === 0) {
+    tracker.interventionCountSinceStable = 0;
+    tracker.panicTriggers = [];
+  }
+  // Set refractory window when orient() achieves actual score reduction.
+  // Suppresses upward signals for 45s to let recovery land before re-escalating.
+  // Subsequent orient() calls during an active refractory replace the deadline
+  // (not extend): the window always starts fresh from the most recent recovery.
+  if (panicDelta < 0) {
+    tracker.panicRecoverySuppressionUntil = now + PANIC_REFRACTORY_MS;
+  }
+
+  emit(directory, 'panic', {
+    event: 'panic_orient_reset',
+    orient_kind: orientKind,
+    delta: panicDelta,
+    from_score: prevScore,
+    to_score: tracker.panicScore,
+    from_level: prevLevel,
+    to_level: tracker.panicLevel,
+    recent_orient_count: tracker.recentOrientCount,
+    time_since_last_ms: tracker.lastOrientResetAt === now ? timeSinceLastOrient : 0,
+  });
+}
+
 function resetTracker(tracker: EpistemicTracker, directory: string): void {
-  tracker.lastOrientAt = new Date();
+  const now = _clock();
+  // Freshness reset only. Panic recovery is handled separately by resetPanicOnOrient(),
+  // which the MCP path calls only when panic mode != 'off' — so the default (off) path
+  // performs no panic scoring and emits no panic telemetry on orient().
+  tracker.lastOrientAt = new Date(_clock());
   tracker.graphVersionAtOrient = getGitHash(directory);
   tracker.cognitiveLoad = 0;
   tracker.modulesVisited = new Set();
   tracker.freshnessState = 'fresh';
   tracker.staleDepth = 0;
-  tracker.lastGitCheckAt = Date.now();
+  tracker.lastGitCheckAt = now;
   tracker.lastModule = null;
   tracker.moduleAccessWindow = [];
   tracker.lastDensityPenaltyAt = 0;
@@ -339,14 +603,14 @@ export function updateTracker(
         prior_load: tracker.cognitiveLoad,
         prior_depth: tracker.staleDepth,
         tool: 'orient', module: null, cognitive_load: tracker.cognitiveLoad, density: 0,
-        oscillation: tracker.oscillation, age_min: Math.floor((Date.now() - tracker.lastOrientAt.getTime()) / 60_000),
+        oscillation: tracker.oscillation, age_min: Math.floor((_clock() - tracker.lastOrientAt.getTime()) / 60_000),
       });
     }
     resetTracker(tracker, directory);
     return;
   }
 
-  const now = Date.now();
+  const now = _clock();
   const ageMs = now - tracker.lastOrientAt.getTime();
   const weight = TOOL_WEIGHTS[toolName] ?? 1;
 
@@ -361,11 +625,22 @@ export function updateTracker(
   const density = computeCrossModuleDensity(tracker.moduleAccessWindow);
   const oscillation = computeOscillationScore(tracker.moduleAccessWindow);
   tracker.oscillation = oscillation;
+  tracker.density = density;
+  // localityConfidence is shared behavioral state: used by freshness (burst gate)
+  // and panic (stale_depth_3 gate, burst escalation gate). Computed here so it's
+  // always current regardless of whether panic scoring is enabled.
+  tracker.localityConfidence = Math.max(0, (1 - Math.min(1, density * 2)) * (1 - Math.min(1, oscillation)));
 
   // Already stale — time-based depth escalation only, plus V3.2 burst sensitivity.
   // Load stops accumulating here; burst detection uses tool weight and density instead.
   if (tracker.freshnessState === 'stale') {
-    // Post-stale burst: heavy architectural tool or trajectory burst → immediate depth 3
+    // Post-stale burst: heavy architectural tool or trajectory burst → immediate depth 3.
+    // NOTE: freshness depth escalation is deliberately NOT gated by localityConfidence —
+    // updateTracker() freshness semantics stay identical to pre-panic main (the staleDepth
+    // signal is shown to all users regardless of panic mode). localityConfidence gating
+    // applies only to the panic-layer signals in updatePanic(). (Gating freshness escalation
+    // on focused-stale work is a separate freshness change, deferred — see adopt-agent-
+    // behavioral-governance proposal.)
     if (tracker.staleDepth < 3 && (weight >= BURST_TOOL_WEIGHT_THRESHOLD || density >= BURST_DENSITY_THRESHOLD)) {
       emit(directory, 'epistemic-lease', {
         event: 'depth_escalate', from_depth: tracker.staleDepth, to_depth: 3,
@@ -508,7 +783,7 @@ export function getFreshnessSignal(
 ): { text: string; prepend: boolean } | null {
   if (tracker.freshnessState === 'fresh') return null;
 
-  const ageMin = Math.floor((Date.now() - tracker.lastOrientAt.getTime()) / 60_000);
+  const ageMin = Math.floor((_clock() - tracker.lastOrientAt.getTime()) / 60_000);
 
   if (tracker.freshnessState === 'stale') {
     // staleDepth is always ≥1 when freshnessState === 'stale' — invariant enforced by transitionToStale.
@@ -528,4 +803,24 @@ export function injectFreshness(text: string, tracker: EpistemicTracker): string
   const signal = getFreshnessSignal(tracker);
   if (!signal) return text;
   return signal.prepend ? signal.text + text : text + signal.text;
+}
+
+export function trackerToPanicState(tracker: EpistemicTracker, agentId?: string, sessionId?: string): PanicState {
+  return {
+    schemaVersion: 1,
+    panicScore: tracker.panicScore,
+    panicLevel: tracker.panicLevel,
+    updatedAt: new Date(_clock()).toISOString(),
+    lastOrientAt: tracker.lastOrientAt.toISOString(),
+    recentOrientCount: tracker.recentOrientCount,
+    localityConfidence: tracker.localityConfidence,
+    interventionCountSinceStable: tracker.interventionCountSinceStable,
+    triggers: [...tracker.panicTriggers],
+    panicRecoverySuppressionUntil: tracker.panicRecoverySuppressionUntil > _clock()
+      ? new Date(tracker.panicRecoverySuppressionUntil).toISOString()
+      : undefined,
+    agentId,
+    sessionId,
+    revision: tracker.panicRevision,
+  };
 }

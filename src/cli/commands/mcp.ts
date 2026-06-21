@@ -41,9 +41,12 @@ import {
 } from '../../core/services/mcp-handlers/tool-guard.js';
 
 import { sanitizeMcpError, validateDirectory } from '../../core/services/mcp-handlers/utils.js';
-import { createTracker, updateTracker, getFreshnessSignal } from '../../core/services/mcp-handlers/epistemic-lease.js';
+import { createTracker, updateTracker, updatePanic, resetPanicOnOrient, getFreshnessSignal, trackerToPanicState } from '../../core/services/mcp-handlers/epistemic-lease.js';
 import type { EpistemicTracker } from '../../core/services/mcp-handlers/epistemic-lease.js';
+import type { PanicResponseMode } from '../../types/index.js';
+import { readPanicState, writePanicState, getPanicSignalText } from '../../core/services/mcp-handlers/panic-response.js';
 import { emit } from '../../core/services/telemetry.js';
+import { readOpenLoreConfig } from '../../core/services/config-manager.js';
 import { MCP_TOOL_MAX_BYTES } from '../../constants.js';
 import {
   handleGetCallGraph,
@@ -1804,6 +1807,7 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
   // Per-session epistemic lease tracker — re-initialized when directory changes.
   let tracker: EpistemicTracker | undefined;
   let trackerDir = '';
+  let panicPolicy: PanicResponseMode = 'off';
 
   // --watch-auto: start the watcher on the first tool call that carries a directory
   let autoWatcher: import('../../core/services/mcp-watcher.js').McpWatcher | undefined;
@@ -1906,9 +1910,61 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
       if (directory && (!tracker || directory !== trackerDir)) {
         tracker = createTracker(directory);
         trackerDir = directory;
+        const cfg = await readOpenLoreConfig(directory);
+        panicPolicy = cfg?.panicResponse?.mode ?? 'off';
       }
-      // Update epistemic state before dispatch (orient resets tracker internally)
-      if (tracker && directory) updateTracker(tracker, name, directory, typeof filePath === 'string' ? filePath : undefined);
+      // Update epistemic state before dispatch (orient resets tracker internally).
+      // Invariant: only MCP tool calls (this path) feed panic. CLI commands (panic-check,
+      // telemetry) are separate processes that read state but never call updateTracker —
+      // no recursive panic feedback loop from openlore internal commands.
+      if (tracker && directory) {
+        const isOrient = name === 'orient';
+        updateTracker(tracker, name, directory, typeof filePath === 'string' ? filePath : undefined);
+
+        if (panicPolicy !== 'off') {
+          // Read disk state to preserve hook-written fields (lastHookInterventionAt, gryphWindowStart)
+          // that panic-check (separate process) may have set since the last MCP write.
+          const diskState = readPanicState(directory);
+          // orient() runs panic recovery (separate from updateTracker's freshness reset);
+          // every other tool call runs the per-call panic signal update.
+          if (isOrient) {
+            resetPanicOnOrient(tracker, directory);
+          } else {
+            updatePanic(tracker, {
+              density: tracker.density,
+              oscillation: tracker.oscillation,
+              weight: 1,
+              staleDepth: tracker.staleDepth,
+              directory,
+              tool: name,
+            });
+          }
+          const stateToWrite = {
+            ...trackerToPanicState(tracker, agentName),
+            lastHookInterventionAt: diskState.lastHookInterventionAt,
+            gryphWindowStart: diskState.gryphWindowStart,
+            // Never regress the revision below what another writer (the panic-check hook)
+            // already persisted — a fresh in-memory tracker starts at revision 0, so seed
+            // the write from the highest revision seen on disk. Keeps the monotonic-revision
+            // invariant across writers (relied on by the deferred Gryph CAS path).
+            revision: Math.max(tracker.panicRevision, diskState.revision ?? 0),
+          };
+          tracker.panicRevision = writePanicState(directory, stateToWrite);
+
+          // Feedback loop: did orient() respond to a prior hook intervention?
+          if (isOrient && diskState.lastHookInterventionAt) {
+            const lagMs = Date.now() - new Date(diskState.lastHookInterventionAt).getTime();
+            if (lagMs < 5 * 60 * 1000) {
+              emit(directory, 'panic', {
+                event: 'panic_intervention_outcome',
+                outcome: 'responded',
+                intervention_lag_ms: lagMs,
+                orient_kind: tracker.recentOrientCount >= 3 ? 'spam' : tracker.recentOrientCount >= 2 ? 'rapid' : 'normal',
+              });
+            }
+          }
+        }
+      }
 
       let result: unknown;
       let _unknownTool = false;
@@ -1971,17 +2027,38 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
       emit(directory, 'mcp', {
         event: 'tool_call', tool: name, ms: Date.now() - _t0, agent: agentName, agent_version: agentVersion,
         bytes: Buffer.byteLength(text, 'utf8'), outcome: truncated ? 'truncated' : 'ok',
+        panic_level: tracker?.panicLevel ?? 0,
+        panic_score: tracker?.panicScore ?? 0,
       });
 
       const signal = tracker ? getFreshnessSignal(tracker) : null;
 
-      // Freshness signal is a separate content item — never concatenated into
-      // the result body — so structured outputs (JSON, patches) are not corrupted.
-      const content: Array<{ type: 'text'; text: string }> = signal
-        ? signal.prepend
-          ? [{ type: 'text', text: signal.text }, { type: 'text', text }]
-          : [{ type: 'text', text }, { type: 'text', text: signal.text }]
-        : [{ type: 'text', text }];
+      // Both freshness and panic signals are separate content items — never
+      // concatenated into the result body — so structured outputs (JSON, patches)
+      // are not corrupted. Panic signal always appended (after result).
+      const content: Array<{ type: 'text'; text: string }> = [];
+      if (signal?.prepend) content.push({ type: 'text', text: signal.text });
+      content.push({ type: 'text', text });
+      if (signal && !signal.prepend) content.push({ type: 'text', text: signal.text });
+
+      if (tracker && (panicPolicy === 'advisory' || panicPolicy === 'experimental_blocking')) {
+        const panicState = trackerToPanicState(tracker, agentName);
+        const panicText = getPanicSignalText(panicState);
+        if (panicText) {
+          content.push({ type: 'text', text: panicText });
+          tracker.interventionCountSinceStable++;
+          tracker.panicRevision = writePanicState(directory, trackerToPanicState(tracker, agentName));
+          emit(directory, 'panic', {
+            event: 'panic_signal_injected',
+            panic_level: tracker.panicLevel,
+            panic_score: tracker.panicScore,
+            intervention_count: tracker.interventionCountSinceStable,
+            directive_mode: tracker.interventionCountSinceStable >= 3,
+            tool: name,
+            agent: agentName,
+          });
+        }
+      }
 
       return { content };
     } catch (err) {

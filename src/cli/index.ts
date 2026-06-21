@@ -35,6 +35,13 @@ import { blastRadiusCommand } from './commands/blast-radius.js';
 import { exportCommand } from './export/index.js';
 import { manifestCommand } from './manifest/index.js';
 import { serveCommand } from './commands/serve.js';
+import { panicCheckCommand } from './commands/panic-check.js';
+import { panicLevelCommand } from './commands/panic-level.js';
+import { panicValidateCommand } from './commands/panic-validate.js';
+import { panicHotspotsCommand } from './commands/panic-hotspots.js';
+import { panicCalibrateCommand } from './commands/panic-calibrate.js';
+import { panicReplayCommand } from './commands/panic-replay.js';
+import { gryphWatchCommand } from './commands/gryph-watch.js';
 import { configureLogger } from '../utils/logger.js';
 
 // Read version from package.json at runtime so it never drifts from the published version
@@ -157,5 +164,12 @@ program.addCommand(blastRadiusCommand);
 program.addCommand(exportCommand);
 program.addCommand(manifestCommand);
 program.addCommand(serveCommand);
+program.addCommand(panicCheckCommand);
+program.addCommand(panicLevelCommand);
+program.addCommand(panicValidateCommand);
+program.addCommand(panicHotspotsCommand);
+program.addCommand(panicCalibrateCommand);
+program.addCommand(panicReplayCommand);
+program.addCommand(gryphWatchCommand);
 
 program.parse();

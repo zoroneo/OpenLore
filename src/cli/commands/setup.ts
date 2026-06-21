@@ -23,6 +23,8 @@ import { fileURLToPath } from 'node:url';
 import { checkbox } from '@inquirer/prompts';
 import { logger } from '../../utils/logger.js';
 import { installPreCommitHook, uninstallClaudeHook } from './decisions.js';
+import { readOpenLoreConfig, writeOpenLoreConfig } from '../../core/services/config-manager.js';
+import type { PanicResponseMode } from '../../types/index.js';
 
 // ============================================================================
 // TYPES
@@ -283,6 +285,111 @@ async function runSetup(
 // COMMAND
 // ============================================================================
 
+// ============================================================================
+// PANIC HOOKS (opt-in) — install the behavioral-governance hooks into Claude
+// Code settings. Never installed by default; only via `setup --hooks <format>`.
+// ============================================================================
+
+const PANIC_CHECK_HOOK_MARKER = 'openlore panic-check';
+const GRYPH_WATCH_HOOK_MARKER = 'openlore gryph-watch';
+
+interface ClaudeHookSettings {
+  hooks?: {
+    PreToolUse?: Array<{ _comment?: string; [key: string]: unknown }>;
+    UserPromptSubmit?: Array<{ _comment?: string; [key: string]: unknown }>;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+/** Thrown when settings.json exists but is unparseable — we must NOT overwrite user content. */
+class CorruptSettingsError extends Error {}
+
+async function readClaudeSettings(settingsPath: string): Promise<ClaudeHookSettings> {
+  let raw: string;
+  try {
+    raw = await readFile(settingsPath, 'utf-8');
+  } catch {
+    return {}; // file genuinely missing → safe to start fresh
+  }
+  if (raw.trim() === '') return {}; // empty file → start fresh
+  try {
+    return JSON.parse(raw) as ClaudeHookSettings;
+  } catch {
+    // Exists with content but is invalid JSON — refuse to clobber the user's file.
+    throw new CorruptSettingsError(
+      `${settingsPath} exists but is not valid JSON — refusing to overwrite it. Fix or remove the file, then re-run.`,
+    );
+  }
+}
+
+/** Install `openlore panic-check` as a PreToolUse hook (idempotent). */
+export async function installPanicCheckHook(rootPath: string, format: string = 'claude'): Promise<void> {
+  const settingsPath = join(rootPath, '.claude', 'settings.json');
+  let settings: ClaudeHookSettings;
+  try { settings = await readClaudeSettings(settingsPath); }
+  catch (e) { logger.error((e as Error).message); return; }
+  const hooks = settings.hooks?.PreToolUse ?? [];
+  if (hooks.some((h) => JSON.stringify(h).includes(PANIC_CHECK_HOOK_MARKER))) {
+    logger.success('panic-check PreToolUse hook already present in .claude/settings.json');
+    return;
+  }
+  const hookEntry = {
+    _comment: 'openlore: behavioral destabilization guard — fires before every tool call',
+    type: 'command',
+    command: `openlore panic-check --directory "$(pwd)" --format ${format}`,
+  };
+  settings.hooks ??= {};
+  settings.hooks.PreToolUse = [...hooks, hookEntry];
+  await mkdir(join(rootPath, '.claude'), { recursive: true });
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+  logger.success(`panic-check PreToolUse hook added to .claude/settings.json (format: ${format})`);
+}
+
+/** Install `openlore gryph-watch` as a UserPromptSubmit hook (idempotent). */
+export async function installGryphWatchHook(rootPath: string): Promise<void> {
+  const settingsPath = join(rootPath, '.claude', 'settings.json');
+  let settings: ClaudeHookSettings;
+  try { settings = await readClaudeSettings(settingsPath); }
+  catch (e) { logger.error((e as Error).message); return; }
+  const hooks = settings.hooks?.UserPromptSubmit ?? [];
+  if (hooks.some((h) => JSON.stringify(h).includes(GRYPH_WATCH_HOOK_MARKER))) {
+    logger.success('gryph-watch UserPromptSubmit hook already present in .claude/settings.json');
+    return;
+  }
+  const hookEntry = {
+    _comment: 'openlore: start Gryph behavioral observer (singleton, background)',
+    type: 'command',
+    command: 'openlore gryph-watch &',
+  };
+  settings.hooks ??= {};
+  settings.hooks.UserPromptSubmit = [...hooks, hookEntry];
+  await mkdir(join(rootPath, '.claude'), { recursive: true });
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+  logger.success('gryph-watch UserPromptSubmit hook added to .claude/settings.json');
+}
+
+/** Set panicResponse.mode in .openlore/config.json. Returns true on success. */
+async function setPanicMode(rootPath: string, mode: string): Promise<boolean> {
+  const valid: PanicResponseMode[] = ['off', 'observe', 'advisory', 'experimental_blocking'];
+  if (!valid.includes(mode as PanicResponseMode)) {
+    logger.error(`Unknown panic mode "${mode}". Valid: ${valid.join(', ')}`);
+    return false;
+  }
+  const cfg = await readOpenLoreConfig(rootPath);
+  if (!cfg) {
+    logger.error('setup --panic: no .openlore/config.json found. Run `openlore init` first.');
+    return false;
+  }
+  cfg.panicResponse = { mode: mode as PanicResponseMode };
+  await writeOpenLoreConfig(rootPath, cfg);
+  logger.success(`panic response mode set to "${mode}" in .openlore/config.json`);
+  if (mode === 'advisory' || mode === 'experimental_blocking') {
+    logger.warning('Interventional mode enabled — validate signal accuracy first: `openlore panic-validate`');
+  }
+  return true;
+}
+
 export const setupCommand = new Command('setup')
   .description(
     'Install workflow skills and agent integration files into this project.\n' +
@@ -299,8 +406,27 @@ export const setupCommand = new Command('setup')
   )
   .option('--dir <path>', 'Project root directory', process.cwd())
   .option('--global', 'For the pi target: install the extension to ~/.pi/agent/extensions/ instead of the project', false)
-  .action(async (options: { tools?: string; force: boolean; dir: string; global: boolean }) => {
+  .option('--hooks <format>', 'Install the opt-in panic-check + gryph-watch hooks for the given agent format: claude|kilo|codex')
+  .option('--panic <mode>', 'Set panic response mode in .openlore/config.json: off|observe|advisory|experimental_blocking')
+  .action(async (options: { tools?: string; force: boolean; dir: string; global: boolean; hooks?: string; panic?: string }) => {
     const projectRoot = options.dir;
+
+    // Opt-in panic setup — runs independently of skill install and needs no TTY.
+    if (options.panic !== undefined) {
+      const ok = await setPanicMode(projectRoot, options.panic);
+      if (!ok) process.exit(1);
+    }
+    if (options.hooks) {
+      const validFormats = ['claude', 'kilo', 'codex'];
+      const fmt = validFormats.includes(options.hooks) ? options.hooks : 'claude';
+      if (!validFormats.includes(options.hooks)) logger.warning(`Unknown hooks format "${options.hooks}" — defaulting to "claude"`);
+      await installPanicCheckHook(projectRoot, fmt);
+      await installGryphWatchHook(projectRoot);
+    }
+    // If only panic flags were requested (no skill install), we're done — don't prompt.
+    if (!options.tools && (options.hooks || options.panic !== undefined) && !process.stdout.isTTY) {
+      return;
+    }
     const allTools: ToolName[] = ['vibe', 'cline', 'gsd', 'bmad', 'claude', 'opencode', 'omoa', 'pi'];
 
     let tools: ToolName[];

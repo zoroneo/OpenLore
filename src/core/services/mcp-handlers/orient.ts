@@ -37,6 +37,8 @@ import { loadMemoryStore } from '../../decisions/memory-store.js';
 import type { MemoryFreshness } from '../../../types/index.js';
 
 import { type Reversal, collectReversals, fileScope, supersededDecisionIds } from './reversals.js';
+import { getSourceRoots, moduleFromPath } from './epistemic-lease.js';
+import { readHotspotArtifact, hotspotsForModules } from './behavioral-hotspots.js';
 
 // ============================================================================
 // MANIFEST CACHE
@@ -742,6 +744,43 @@ export async function handleOrient(
   // depend on it, so flag it rather than silently returning a thinner result.
   const graphIndexStale = relevantFunctions.length > 0 && !llmCtx?.edgeStore;
 
+  // ── Behavioral hotspots (observe → memory) ────────────────────────────────
+  // If observe-mode telemetry has identified destabilization-prone regions and the task's
+  // files fall in one of them, surface it at orientation time so the agent arrives forewarned
+  // — the inverse of a real-time panic nudge. Fail-open, enrichment-only (omitted in lean
+  // mode), and gated on panic mode != 'off' (a pre-existing artifact must not leak when the
+  // panic subsystem is disabled). Contextual: only hotspots intersecting relevantFiles.
+  let behavioralHotspots:
+    | Array<{ module: string; events: number; maxDepth: number; labels: string[] }>
+    | undefined;
+  if (!lean) {
+    try {
+      const cfg = await readOpenLoreConfig(absDir);
+      if ((cfg?.panicResponse?.mode ?? 'off') !== 'off') {
+        const report = readHotspotArtifact(outputDir);
+        if (report && report.hotspots.length > 0 && relevantFiles.length > 0) {
+          const roots = getSourceRoots(absDir);
+          const taskModules = new Set(
+            relevantFiles.map(f => moduleFromPath(f, roots)).filter((m): m is string => m !== null),
+          );
+          // Only surface hotspots that crossed a threshold (carry a label) — an unlabeled
+          // module with a stray event is noise, not a destabilization signal worth a heads-up.
+          const hits = hotspotsForModules(report, taskModules).filter(h => h.labels.length > 0).slice(0, 5);
+          if (hits.length > 0) {
+            behavioralHotspots = hits.map(h => ({
+              module: h.module,
+              events: h.events,
+              maxDepth: h.max_depth,
+              labels: h.labels,
+            }));
+          }
+        }
+      }
+    } catch {
+      // fail-open: orient must never break on the optional memory signal
+    }
+  }
+
   // Minimal-sufficient navigation core — always returned (Spec 27).
   const core = {
     task,
@@ -785,6 +824,7 @@ export async function handleOrient(
     ...(changeCoupling !== undefined ? { changeCoupling } : {}),
     ...(architectureViolations !== undefined ? { architectureViolations } : {}),
     ...(landmarks !== undefined ? { landmarks } : {}),
+    ...(behavioralHotspots !== undefined ? { behavioralHotspots } : {}),
     nextSteps,
   };
 }

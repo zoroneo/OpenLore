@@ -50,6 +50,20 @@ interface LeaseEvent {
   from_state?: string; tool?: string; cognitive_load?: number;
   density?: number; oscillation?: number; age_min?: number; prior_load?: number; prior_depth?: number;
 }
+interface PanicEvent {
+  ts: string;
+  event: 'panic_level_change' | 'panic_orient_reset' | 'hook_intervention' | 'panic_signal_injected'
+       | 'panic_intervention_outcome' | 'panic_score_delta';
+  from_level?: number; to_level?: number;
+  panic_score?: number; severity?: string;
+  orient_kind?: 'normal' | 'rapid' | 'spam';
+  delta?: number; from_score?: number; to_score?: number;
+  intervention_count?: number;
+  triggers?: Array<{ name: string; delta: number }>;
+  provenance?: Array<{ name: string; delta: number }>;
+  gryph_enriched?: boolean;
+  outcome?: string; intervention_lag_ms?: number;
+}
 
 // ============================================================================
 // METRIC COMPUTATIONS
@@ -188,6 +202,88 @@ function computeRecovery(mcp: McpEvent[], lease: LeaseEvent[]) {
   };
 }
 
+// Exported for testing
+export type { PanicEvent, LeaseEvent, McpEvent };
+export { computePanicStats, computeRecovery, computeObstinacy };
+
+// Observe-mode validation (the accuracy gate) lives in the shared panic-validation module so the
+// `openlore panic-validate` command and the `openlore telemetry` summary compute it identically.
+import { validatePanicSignal } from '../../core/services/mcp-handlers/panic-validation.js';
+
+/**
+ * Panic stats: episode count, avg recovery latency, hook intercepts, orient spam.
+ */
+function computePanicStats(panic: PanicEvent[]) {
+  // Episodes: sequences from first level change up to return to level 0
+  const levelChanges = panic.filter(e => e.event === 'panic_level_change');
+  const hookIntercepts = panic.filter(e => e.event === 'hook_intervention').length;
+  const injections = panic.filter(e => e.event === 'panic_signal_injected').length;
+
+  // Episode: starts when level goes from 0→N, ends when N→0
+  const episodes: { start: string; end?: string; peak: number }[] = [];
+  let inEpisode = false;
+  let peakLevel = 0;
+  let startTs = '';
+  for (const e of levelChanges.sort((a, b) => a.ts.localeCompare(b.ts))) {
+    const from = e.from_level ?? 0;
+    const to = e.to_level ?? 0;
+    if (!inEpisode && from === 0 && to > 0) {
+      inEpisode = true; peakLevel = to; startTs = e.ts;
+    } else if (inEpisode) {
+      if (to > peakLevel) peakLevel = to;
+      if (to === 0) {
+        episodes.push({ start: startTs, end: e.ts, peak: peakLevel });
+        inEpisode = false; peakLevel = 0;
+      }
+    }
+  }
+  if (inEpisode) episodes.push({ start: startTs, peak: peakLevel });
+
+  // Avg recovery latency (ms): episode start to end
+  const completedEpisodes = episodes.filter(e => e.end);
+  const recoveryLatencies = completedEpisodes.map(e =>
+    new Date(e.end!).getTime() - new Date(e.start).getTime()
+  );
+  const avgRecoveryMs = recoveryLatencies.length
+    ? Math.round(recoveryLatencies.reduce((a, b) => a + b, 0) / recoveryLatencies.length)
+    : null;
+
+  // Failed recovery rate: episodes that never returned to L0
+  const failedRate = episodes.length
+    ? `${episodes.filter(e => !e.end).length}/${episodes.length}`
+    : '—';
+
+  // Orient spam events
+  const orientResets = panic.filter(e => e.event === 'panic_orient_reset');
+  const spamOrients = orientResets.filter(e => e.orient_kind === 'spam').length;
+  const rapidOrients = orientResets.filter(e => e.orient_kind === 'rapid').length;
+
+  // Gryph enrichments
+  const gryphEnriched = panic.filter(e => e.event === 'hook_intervention' && e.gryph_enriched).length;
+
+  // Trigger frequency across all events. panic_score_delta carries per-trigger provenance under
+  // `triggers`; panic_level_change under `provenance`. (Previously read a non-existent
+  // `call_triggers` field, so this line was always empty.)
+  const triggerCounts = new Map<string, number>();
+  for (const e of panic) {
+    for (const t of [...(e.triggers ?? []), ...(e.provenance ?? [])]) {
+      if (t.delta > 0) triggerCounts.set(t.name, (triggerCounts.get(t.name) ?? 0) + 1);
+    }
+  }
+
+  return {
+    panic_episodes: episodes.length,
+    avg_recovery_ms: avgRecoveryMs,
+    failed_recovery_rate: failedRate,
+    hook_intercepts: hookIntercepts,
+    mcp_injections: injections,
+    orient_spam_events: spamOrients,
+    orient_rapid_events: rapidOrients,
+    gryph_enriched_intercepts: gryphEnriched,
+    trigger_counts: [...triggerCounts.entries()].sort((a, b) => b[1] - a[1]),
+  };
+}
+
 /**
  * Trajectory entropy: low entropy oscillation (auth→billing→auth→billing) vs
  * exploratory (auth→billing→infra→cache). Uses bigram repetition ratio.
@@ -218,7 +314,7 @@ function hr() { console.log('─'.repeat(60)); }
 function section(title: string) { hr(); console.log(`  ${title}`); hr(); }
 
 function renderSummary(
-  mcp: McpEvent[], orient: OrientEvent[], cache: CacheEvent[], lease: LeaseEvent[]
+  mcp: McpEvent[], orient: OrientEvent[], cache: CacheEvent[], lease: LeaseEvent[], panicEvents: PanicEvent[]
 ) {
   const tools = computeToolStats(mcp);
   const cacheStats = computeCacheStats(cache);
@@ -226,6 +322,8 @@ function renderSummary(
   const obstinacy = computeObstinacy(mcp, lease);
   const recovery = computeRecovery(mcp, lease);
   const trajectory = computeTrajectoryEntropy(lease);
+  const panicStats = computePanicStats(panicEvents);
+  const panicValidation = validatePanicSignal(panicEvents);
 
   section('TOOL LATENCY');
   if (tools.stats.length) {
@@ -283,6 +381,27 @@ function renderSummary(
   console.log(`  avg cross-module density : ${trajectory.avg_density}`);
   console.log(`  max density              : ${trajectory.max_density}`);
   console.log(`  burst events (≥0.6)      : ${trajectory.burst_events}`);
+
+  section('PANIC RESPONSE');
+  console.log(`  panic episodes           : ${panicStats.panic_episodes}`);
+  console.log(`  avg recovery latency     : ${panicStats.avg_recovery_ms != null ? `${panicStats.avg_recovery_ms}ms` : '—'}`);
+  console.log(`  failed recovery rate     : ${panicStats.failed_recovery_rate}`);
+  console.log(`  hook intercepts          : ${panicStats.hook_intercepts}`);
+  console.log(`  mcp injections           : ${panicStats.mcp_injections}`);
+  console.log(`  orient spam events       : ${panicStats.orient_spam_events}  (rapid: ${panicStats.orient_rapid_events})`);
+  console.log(`  gryph-enriched           : ${panicStats.gryph_enriched_intercepts}`);
+  if (panicStats.trigger_counts.length) {
+    console.log(`  triggers                 : ${panicStats.trigger_counts.map(([k, v]) => `${k}×${v}`).join('  ')}`);
+  }
+
+  section('OBSERVE-MODE VALIDATION (accuracy gate)');
+  const pv = panicValidation;
+  const pct = (r: number | null) => (r != null ? `${Math.round(r * 100)}%` : '—');
+  console.log(`  gate verdict             : ${pv.verdict}  (never auto-CLEARED — maintainer decides)`);
+  console.log(`  episodes observed        : ${pv.episodes.completed} completed / ${pv.episodes.total} total  (need ≥${pv.min_episodes})`);
+  console.log(`  false-positive proxy     : ${pct(pv.false_positive.proxy_rate)}  (${pv.false_positive.resolved_via_decay}/${pv.episodes.completed} resolved without re-orient)`);
+  console.log(`  intervention follow-thru : ${pct(pv.intervention.follow_through_rate)}  (${pv.intervention.responses}/${pv.intervention.hook_intercepts} intercepts → orient)`);
+  console.log(`  → full report: openlore panic-validate${pv.recommendations[0] ? `  —  ${pv.recommendations[0]}` : ''}`);
 
   hr();
 }
@@ -384,18 +503,19 @@ Examples:
       return; // keep process alive — watcher keeps running
     }
 
-    const [mcp, orient, cache, lease] = await Promise.all([
+    const [mcp, orient, cache, lease, panicEvents] = await Promise.all([
       readJsonl<McpEvent>(join(telDir, 'mcp.jsonl')),
       readJsonl<OrientEvent>(join(telDir, 'orient.jsonl')),
       readJsonl<CacheEvent>(join(telDir, 'cache.jsonl')),
       readJsonl<LeaseEvent>(join(telDir, 'epistemic-lease.jsonl')),
+      readJsonl<PanicEvent>(join(telDir, 'panic.jsonl')),
     ]);
 
-    if (!mcp.length && !orient.length && !cache.length && !lease.length) {
+    if (!mcp.length && !orient.length && !cache.length && !lease.length && !panicEvents.length) {
       console.log(`No telemetry found at ${telDir}`);
       console.log('Enable with: export OPENLORE_TELEMETRY=1');
       return;
     }
 
-    renderSummary(mcp, orient, cache, lease);
+    renderSummary(mcp, orient, cache, lease, panicEvents);
   });
