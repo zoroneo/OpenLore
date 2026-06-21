@@ -378,7 +378,14 @@ async function ensureDaemon(cwd: string): Promise<Daemon | null> {
   const existing = await readDescriptor(cwd);
   if (existing && (await healthy(existing))) return { baseUrl: `http://${existing.host}:${existing.port}`, token: existing.token };
   try {
-    spawn('openlore', ['serve', '--directory', cwd], { detached: true, stdio: 'ignore', windowsHide: true, ...(process.platform === 'win32' ? { shell: true } : {}) }).unref();
+    if (process.platform === 'win32') {
+      // shell:true + detached:true applies windowsHide only to cmd.exe, not the
+      // node child it spawns. `start /b` runs without a new console window and
+      // inherits the PATH, so openlore.cmd resolves correctly.
+      spawn('cmd.exe', ['/c', 'start', '/b', 'openlore', 'serve', '--directory', cwd], { stdio: 'ignore', windowsHide: true }).unref();
+    } else {
+      spawn('openlore', ['serve', '--directory', cwd], { detached: true, stdio: 'ignore' }).unref();
+    }
   } catch { return null; }
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   while (Date.now() < deadline) {
