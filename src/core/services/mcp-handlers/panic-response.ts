@@ -9,7 +9,7 @@
  * Hook consumer: `openlore panic-check` reads this file before every agent tool call.
  */
 
-import { writeFileSync, renameSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, renameSync, readFileSync, existsSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { OPENLORE_DIR } from '../../../constants.js';
 import {
@@ -132,6 +132,13 @@ export function readPanicState(directory: string): PanicState {
   }
 }
 
+// Per-process unique temp suffix — two processes must NOT write to the same `.tmp` path
+// (that races into a torn temp that one of them then renames into place).
+let _tmpSeq = 0;
+function uniqueTmp(path: string): string {
+  return `${path}.${process.pid}.${_tmpSeq++}.tmp`;
+}
+
 /**
  * Atomically writes panic state. POSIX rename(2) is atomic on same filesystem.
  * Bumps revision on every write — callers sync their own revision counter from the return value.
@@ -142,7 +149,7 @@ export function writePanicState(directory: string, state: PanicState): number {
   const newRevision = (state.revision ?? 0) + 1;
   try {
     const path = join(directory, OPENLORE_DIR, PANIC_STATE_FILE);
-    const tmp = `${path}.tmp`;
+    const tmp = uniqueTmp(path);
     writeFileSync(tmp, JSON.stringify({ ...state, revision: newRevision }, null, 2), 'utf-8');
     renameSync(tmp, path);
     return newRevision;
@@ -152,33 +159,94 @@ export function writePanicState(directory: string, state: PanicState): number {
   }
 }
 
+// ── Cross-process lock for read-modify-write on panic-state.json ──────────────
+// O_CREAT|O_EXCL gives an atomic acquire across separate OS processes (the panic
+// subsystem has up to three writers: MCP server, the panic-check hook, gryph-watch).
+// A held lock older than LOCK_STALE_MS is assumed orphaned (holder crashed) and stolen.
+const LOCK_STALE_MS = 5_000;
+const LOCK_MAX_ATTEMPTS = 80;
+
+function sleepSyncMs(ms: number): void {
+  // Block the thread without busy-spinning (these are short-lived CLI/daemon processes).
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(1, ms)); } catch { /* ignore */ }
+}
+
 /**
- * Compare-and-swap write for concurrent writers (Gryph poll path).
- * All ops are synchronous — no await between read and write — so this is atomic
- * within the Node.js event loop (no interleaving at JS level).
- * Returns false if on-disk revision !== expectedRevision (stale read → caller retries).
+ * Run `fn` while holding an exclusive cross-process lock on the panic-state file.
+ * Returns fn()'s result, or `fallback` if the lock cannot be acquired (fail-open — the panic
+ * subsystem must never block or crash a tool call over a contended write).
+ */
+function withPanicStateLock<T>(directory: string, fn: () => T, fallback: T): T {
+  const lockPath = `${join(directory, OPENLORE_DIR, PANIC_STATE_FILE)}.lock`;
+  for (let attempt = 0; attempt < LOCK_MAX_ATTEMPTS; attempt++) {
+    let fd: number;
+    try {
+      fd = openSync(lockPath, 'wx'); // atomic create-exclusive
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') return fallback; // e.g. missing dir → fail open
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) { try { unlinkSync(lockPath); } catch { /* raced */ } }
+      } catch { /* lock vanished between open and stat — retry immediately */ }
+      sleepSyncMs(3 + (attempt & 7));
+      continue;
+    }
+    try {
+      return fn();
+    } finally {
+      try { closeSync(fd); } catch { /* ignore */ }
+      try { unlinkSync(lockPath); } catch { /* ignore */ }
+    }
+  }
+  return fallback; // contended past the attempt budget → fail open
+}
+
+/**
+ * Compare-and-swap write across concurrent writers (Gryph poll vs MCP vs hook).
+ * Serialized by an exclusive cross-process lock so the read-check-write is atomic against OTHER
+ * PROCESSES (not just within one event loop). Returns false if on-disk revision !== expectedRevision
+ * (stale read → caller retries) or the lock could not be acquired.
  */
 export function casWritePanicState(
   directory: string,
   expectedRevision: number,
   state: PanicState,
 ): boolean {
-  try {
+  return withPanicStateLock(directory, () => {
     const path = join(directory, OPENLORE_DIR, PANIC_STATE_FILE);
-    const currentRevision = existsSync(path)
-      ? (() => {
-          try { return (JSON.parse(readFileSync(path, 'utf-8')) as Partial<PanicState>).revision ?? 0; }
-          catch { return 0; }
-        })()
-      : 0;
+    let currentRevision = 0;
+    if (existsSync(path)) {
+      try { currentRevision = (JSON.parse(readFileSync(path, 'utf-8')) as Partial<PanicState>).revision ?? 0; }
+      catch { currentRevision = 0; }
+    }
     if (currentRevision !== expectedRevision) return false;
-    const tmp = `${path}.tmp`;
+    const tmp = uniqueTmp(path);
     writeFileSync(tmp, JSON.stringify({ ...state, revision: expectedRevision + 1 }, null, 2), 'utf-8');
     renameSync(tmp, path);
     return true;
-  } catch {
-    return false;
-  }
+  }, false);
+}
+
+/**
+ * Atomically (cross-process) record a hook intervention: re-read the freshest state under the lock,
+ * bump interventionCountSinceStable, merge the given fields, and persist. Returns the new count.
+ * This prevents concurrent panic-check processes from losing increments (last-writer-wins on a
+ * non-locked read-modify-write under-counts the advisory→directive escalation gate).
+ */
+export function recordHookInterventionLocked(
+  directory: string,
+  fields: { lastHookInterventionAt: string; gryphWindowStart?: string },
+  fallbackCount: number,
+): number {
+  return withPanicStateLock(
+    directory,
+    () => {
+      const fresh = readPanicState(directory);
+      const newCount = fresh.interventionCountSinceStable + 1;
+      writePanicState(directory, { ...fresh, ...fields, interventionCountSinceStable: newCount });
+      return newCount;
+    },
+    fallbackCount,
+  );
 }
 
 // ============================================================================

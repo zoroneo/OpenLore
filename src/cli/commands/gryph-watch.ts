@@ -79,5 +79,10 @@ export const gryphWatchCommand = new Command('gryph-watch')
     // startGryphPolling drives a while loop internally — pending setTimeout keeps
     // the process alive. getTracker: () => null is intentional: staleDepth is
     // unknown without an active MCP session; largePatchWhileStale is MCP-path-only.
-    startGryphPolling({ directory, getTracker: () => null });
+    // Guard startup so a throw (e.g. bad env) cleans the PID file instead of leaving it stale.
+    try {
+      startGryphPolling({ directory, getTracker: () => null });
+    } catch {
+      cleanup();
+    }
   });

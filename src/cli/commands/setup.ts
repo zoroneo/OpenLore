@@ -302,18 +302,33 @@ interface ClaudeHookSettings {
   [key: string]: unknown;
 }
 
+/** Thrown when settings.json exists but is unparseable — we must NOT overwrite user content. */
+class CorruptSettingsError extends Error {}
+
 async function readClaudeSettings(settingsPath: string): Promise<ClaudeHookSettings> {
+  let raw: string;
   try {
-    return JSON.parse(await readFile(settingsPath, 'utf-8')) as ClaudeHookSettings;
+    raw = await readFile(settingsPath, 'utf-8');
   } catch {
-    return {}; // file missing or corrupt — start fresh
+    return {}; // file genuinely missing → safe to start fresh
+  }
+  if (raw.trim() === '') return {}; // empty file → start fresh
+  try {
+    return JSON.parse(raw) as ClaudeHookSettings;
+  } catch {
+    // Exists with content but is invalid JSON — refuse to clobber the user's file.
+    throw new CorruptSettingsError(
+      `${settingsPath} exists but is not valid JSON — refusing to overwrite it. Fix or remove the file, then re-run.`,
+    );
   }
 }
 
 /** Install `openlore panic-check` as a PreToolUse hook (idempotent). */
 export async function installPanicCheckHook(rootPath: string, format: string = 'claude'): Promise<void> {
   const settingsPath = join(rootPath, '.claude', 'settings.json');
-  const settings = await readClaudeSettings(settingsPath);
+  let settings: ClaudeHookSettings;
+  try { settings = await readClaudeSettings(settingsPath); }
+  catch (e) { logger.error((e as Error).message); return; }
   const hooks = settings.hooks?.PreToolUse ?? [];
   if (hooks.some((h) => JSON.stringify(h).includes(PANIC_CHECK_HOOK_MARKER))) {
     logger.success('panic-check PreToolUse hook already present in .claude/settings.json');
@@ -334,7 +349,9 @@ export async function installPanicCheckHook(rootPath: string, format: string = '
 /** Install `openlore gryph-watch` as a UserPromptSubmit hook (idempotent). */
 export async function installGryphWatchHook(rootPath: string): Promise<void> {
   const settingsPath = join(rootPath, '.claude', 'settings.json');
-  const settings = await readClaudeSettings(settingsPath);
+  let settings: ClaudeHookSettings;
+  try { settings = await readClaudeSettings(settingsPath); }
+  catch (e) { logger.error((e as Error).message); return; }
   const hooks = settings.hooks?.UserPromptSubmit ?? [];
   if (hooks.some((h) => JSON.stringify(h).includes(GRYPH_WATCH_HOOK_MARKER))) {
     logger.success('gryph-watch UserPromptSubmit hook already present in .claude/settings.json');

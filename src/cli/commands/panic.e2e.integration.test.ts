@@ -194,6 +194,18 @@ describe.skipIf(!haveCli)('panic CLI — e2e against the built binary', () => {
     expect(run(['panic-replay', dir]).code).toBe(1); // a directory is not a readable trace
   });
 
+  it('setup --hooks refuses to clobber a corrupt non-empty .claude/settings.json', () => {
+    const isolated = mkdtempSync(join(tmpdir(), 'panic-setup-corrupt-')); // own dir — don't pollute shared `dir`
+    mkdirSync(join(isolated, '.claude'), { recursive: true });
+    const settingsPath = join(isolated, '.claude', 'settings.json');
+    const corrupt = '{ "hooks": { trailing, } INVALID';
+    writeFileSync(settingsPath, corrupt);
+    run(['setup', '--hooks', 'claude', '--dir', isolated]);
+    // The user's (broken) content must be preserved, not silently overwritten.
+    expect(readFileSync(settingsPath, 'utf-8')).toBe(corrupt);
+    rmSync(isolated, { recursive: true, force: true });
+  });
+
   it('panic-check / panic-level ALWAYS exit 0 — even on commander parse errors (fail-open invariant)', () => {
     // A PreToolUse hook / status-line consumer must never surface a non-zero exit to the runtime.
     for (const argv of [

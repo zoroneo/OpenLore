@@ -10,7 +10,7 @@
  */
 
 import { Command } from 'commander';
-import { readPanicState, writePanicState, buildPanicCheckOutput } from '../../core/services/mcp-handlers/panic-response.js';
+import { readPanicState, recordHookInterventionLocked, buildPanicCheckOutput } from '../../core/services/mcp-handlers/panic-response.js';
 import { queryGryphSignals, applyGryphDelta } from '../../core/services/mcp-handlers/gryph-bridge.js';
 import { readOpenLoreConfig } from '../../core/services/config-manager.js';
 import { emit } from '../../core/services/telemetry.js';
@@ -60,14 +60,14 @@ export const panicCheckCommand = new Command('panic-check')
       const output = buildPanicCheckOutput(state);
 
       if (output.decision === 'warn') {
-        const newCount = state.interventionCountSinceStable + 1;
         const now = new Date().toISOString();
-        writePanicState(dir, {
-          ...state,
-          lastHookInterventionAt: now,
-          gryphWindowStart: now,
-          interventionCountSinceStable: newCount,
-        });
+        // Cross-process atomic increment — concurrent panic-check hooks must not lose increments
+        // (the count drives the advisory→directive escalation gate).
+        const newCount = recordHookInterventionLocked(
+          dir,
+          { lastHookInterventionAt: now, gryphWindowStart: now },
+          state.interventionCountSinceStable + 1,
+        );
         emit(dir, 'panic', {
           event: 'hook_intervention',
           channel: 'pre_tool_use',

@@ -105,7 +105,15 @@ interface SnapshotDeltaResult {
 // CONSTANTS
 // ============================================================================
 
-const GRYPH_TIMEOUT_MS        = Math.max(50, Number(process.env['OPENLORE_GRYPH_TIMEOUT_MS'] ?? 150));
+/** Parse an env override to a finite int >= min; a non-numeric/blank value falls back to `def`
+ *  (NOT NaN — `Math.max(min, Number("abc"))` is NaN, which crashes downstream date/timer math). */
+function envInt(name: string, def: number, min: number): number {
+  const raw = process.env[name];
+  const n = raw === undefined || raw === '' ? def : Number(raw);
+  return Math.max(min, Number.isFinite(n) ? n : def);
+}
+
+const GRYPH_TIMEOUT_MS        = envInt('OPENLORE_GRYPH_TIMEOUT_MS', 150, 50);
 const GRYPH_DETECT_TIMEOUT_MS = 50;
 
 // ============================================================================
@@ -174,7 +182,19 @@ function isGryphAvailable(): boolean {
 // QUERY HELPERS
 // ============================================================================
 
-/** Synchronous query — used by the backward-compat panic-check enrichment path. */
+/** Kill the entire process group of a spawned gryph child (reaps any grandchildren it forked).
+ *  Falls back to a direct child kill if the group kill isn't available. Never throws. */
+function killGryphGroup(pid: number | undefined, child?: { kill: (s?: NodeJS.Signals) => boolean }): void {
+  if (typeof pid === 'number' && pid > 0) {
+    try { process.kill(-pid, 'SIGKILL'); return; } catch { /* group gone / unsupported → fall through */ }
+  }
+  try { child?.kill('SIGKILL'); } catch { /* ignore */ }
+}
+
+/** Synchronous query — used by the backward-compat panic-check enrichment path.
+ *  spawnSync's timeout signals the direct child (the real `gryph` is a single binary, so no
+ *  grandchildren to orphan). The continuously-running daemon path uses the group-killing async
+ *  query below, which is where orphan accumulation would otherwise matter. */
 function queryGryphSync(action: 'exec' | 'write', since: string): unknown[] {
   const result = spawnSync(
     _gryphBin,
@@ -196,11 +216,11 @@ async function queryGryphAsync(action: 'exec' | 'write', since: string): Promise
     const child = spawn(
       _gryphBin,
       ['query', '--format', 'json', '--action', action, '--since', since],
-      { stdio: ['ignore', 'pipe', 'ignore'] },
+      { stdio: ['ignore', 'pipe', 'ignore'], detached: true }, // own group → reap grandchildren on timeout
     );
-    const timer = setTimeout(() => { child.kill(); resolve([]); }, GRYPH_TIMEOUT_MS);
+    const timer = setTimeout(() => { killGryphGroup(child.pid, child); resolve([]); }, GRYPH_TIMEOUT_MS);
     let output = '';
-    child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    child.stdout?.on('data', (chunk: Buffer) => { output += chunk.toString(); });
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0 || !output) { resolve([]); return; }
@@ -353,10 +373,7 @@ export function startGryphPolling(opts: GryphPollingOptions): () => void {
   // Enforce one-per-workspace: stop any existing poller for this directory
   _pollerRegistry.get(directory)?.();
 
-  const intervalMs = Math.max(
-    GRYPH_POLL_INTERVAL_MIN_MS,
-    Number(process.env['OPENLORE_GRYPH_POLL_INTERVAL_MS'] ?? GRYPH_POLL_INTERVAL_MS),
-  );
+  const intervalMs = envInt('OPENLORE_GRYPH_POLL_INTERVAL_MS', GRYPH_POLL_INTERVAL_MS, GRYPH_POLL_INTERVAL_MIN_MS);
 
   let isPolling = false;
   let lastPollAt = new Date(Date.now() - intervalMs).toISOString();

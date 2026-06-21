@@ -8,6 +8,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -15,6 +16,8 @@ import {
   defaultPanicState,
   readPanicState,
   writePanicState,
+  casWritePanicState,
+  recordHookInterventionLocked,
   buildPanicCheckOutput,
   getPanicSignalText,
 } from './panic-response.js';
@@ -246,5 +249,59 @@ describe('getPanicSignalText', () => {
     const state: PanicState = { ...defaultPanicState(), panicLevel: 3, interventionCountSinceStable: 3 };
     const text = getPanicSignalText(state);
     expect(text).toContain('DIRECTIVE');
+  });
+});
+
+// ============================================================================
+// Cross-process locked writes (adversarial-round fixes C1/C2)
+// ============================================================================
+
+describe('casWritePanicState (locked CAS)', () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'panic-cas-'));
+    await mkdir(join(dir, '.openlore'), { recursive: true });
+  });
+
+  const seed = (revision: number) => writePanicState(dir, { ...defaultPanicState(), revision: revision - 1 });
+
+  it('rejects a stale expected revision and accepts a matching one', () => {
+    seed(5); // file now at revision 5
+    expect(casWritePanicState(dir, 4, defaultPanicState())).toBe(false); // stale
+    expect(casWritePanicState(dir, 5, defaultPanicState())).toBe(true);  // matches → writes rev 6
+    expect(readPanicState(dir).revision).toBe(6);
+  });
+
+  it('leaves no lock or temp files behind', () => {
+    seed(1);
+    casWritePanicState(dir, 1, defaultPanicState());
+    const leftovers = readdirSync(join(dir, '.openlore')).filter((f) => f.endsWith('.lock') || f.endsWith('.tmp'));
+    expect(leftovers).toEqual([]);
+  });
+});
+
+describe('recordHookInterventionLocked', () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'panic-hook-'));
+    await mkdir(join(dir, '.openlore'), { recursive: true });
+  });
+
+  it('increments interventionCountSinceStable atomically and persists the merged fields', () => {
+    writePanicState(dir, { ...defaultPanicState(), panicLevel: 3, interventionCountSinceStable: 2 });
+    const now = new Date().toISOString();
+    const newCount = recordHookInterventionLocked(dir, { lastHookInterventionAt: now, gryphWindowStart: now }, 99);
+    expect(newCount).toBe(3); // 2 + 1, NOT the fallback
+    const s = readPanicState(dir);
+    expect(s.interventionCountSinceStable).toBe(3);
+    expect(s.lastHookInterventionAt).toBe(now);
+    expect(readdirSync(join(dir, '.openlore')).filter((f) => f.endsWith('.lock'))).toEqual([]);
+  });
+
+  it('returns the fallback when the directory is unwritable (fail-open, never throws)', () => {
+    // A non-existent .openlore dir means the lock open fails → fallback, no throw.
+    const bad = join(dir, 'nope');
+    expect(() => recordHookInterventionLocked(bad, { lastHookInterventionAt: 'x' }, 7)).not.toThrow();
+    expect(recordHookInterventionLocked(bad, { lastHookInterventionAt: 'x' }, 7)).toBe(7);
   });
 });
