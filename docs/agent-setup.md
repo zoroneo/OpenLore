@@ -100,7 +100,7 @@ Wire the generated digest into your agent's context:
 
 **Claude Code — MCP config (token-efficient two-server setup)**
 
-MCP clients load all tool schemas at session start. With 60 tools, this costs ~12k tokens of `tools/list` before any work begins (Spec 28 measured it; the lossless server-side trim is only ~2%, so the real lever is deferral). Claude Code supports `alwaysLoad: false` (deferred, default) — tools load only when the agent searches for them via Tool Search.
+MCP clients load all tool schemas at session start. With 59 tools, this costs ~12k tokens of `tools/list` before any work begins (Spec 28 measured it; the lossless server-side trim is only ~2%, so the real lever is deferral). Claude Code supports `alwaysLoad: false` (deferred, default) — tools load only when the agent searches for them via Tool Search.
 
 The recommended setup uses two server entries: one always-visible core server and one deferred full server:
 
@@ -124,7 +124,7 @@ The recommended setup uses two server entries: one always-visible core server an
 ```
 
 - **`openlore-core`** exposes 6 tools always visible in context (~600 tokens): `orient`, `search_code`, `record_decision`, `detect_changes`, `check_spec_drift`, `get_health_map`. These are the tools most likely to be called at session start.
-- **`openlore`** exposes all 60 tools deferred — loaded on demand when the agent uses Tool Search (e.g. "find tool for BFS graph traversal").
+- **`openlore`** exposes all 59 tools deferred — loaded on demand when the agent uses Tool Search (e.g. "find tool for BFS graph traversal").
 
 If you only need one server entry, use `alwaysLoad: false` (the default) with the standard `openlore mcp` command — all tools are deferred and searchable via Tool Search.
 

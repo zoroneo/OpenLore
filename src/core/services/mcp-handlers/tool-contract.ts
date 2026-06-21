@@ -76,7 +76,6 @@ export const TOOL_OUTPUT_CLASS: Record<string, ToolOutputClass> = {
   get_file_dependencies: 'conclusion',
   generate_change_proposal: 'conclusion',
   annotate_story: 'conclusion',
-  get_decisions: 'conclusion',
   get_route_inventory: 'conclusion',
   get_middleware_inventory: 'conclusion',
   get_schema_inventory: 'conclusion',

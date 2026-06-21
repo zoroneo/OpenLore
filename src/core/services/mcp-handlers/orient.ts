@@ -338,7 +338,7 @@ export async function handleOrient(
 
   // ── Spec search (best-effort — skipped if spec index not available) ────────
   let matchingSpecs: OrientSpecMatch[] | undefined;
-  if (!lean && hasSpecIndex && embedSvc) {
+  if (!lean && hasSpecIndex) {  // embedSvc may be null — SpecVectorIndex.search falls back to BM25
     try {
       const specResults = await SpecVectorIndex.search(outputDir, task, embedSvc, { limit: 3 });
       matchingSpecs = specResults.map(r => ({
