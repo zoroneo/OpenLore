@@ -66,19 +66,30 @@ export const gryphWatchCommand = new Command('gryph-watch')
     }
     try { writeFileSync(pidPath, String(process.pid), 'utf-8'); } catch { /* non-fatal */ }
 
+    let cleanedUp = false;
     const cleanup = (): void => {
+      if (cleanedUp) return; // idempotent — repeated signals must not double-act
+      cleanedUp = true;
       try { unlinkSync(pidPath); } catch { /* ignore */ }
       process.exit(0);
     };
     process.on('SIGTERM', cleanup);
     process.on('SIGINT', cleanup);
-    // Detect parent process death via stdin EOF (pipe from shell/agent closes)
-    process.stdin.resume();
-    process.stdin.on('close', cleanup);
+    process.on('SIGHUP', cleanup);
 
-    // startGryphPolling drives a while loop internally — pending setTimeout keeps
-    // the process alive. getTracker: () => null is intentional: staleDepth is
-    // unknown without an active MCP session; largePatchWhileStale is MCP-path-only.
+    // Lifecycle: this is a backgrounded daemon (`gryph-watch &`), so stdin EOF is NOT a reliable
+    // parent-death signal (the launching hook shell closes the pipe immediately) — using it caused
+    // the observer to exit one poll in. Instead it runs until an explicit signal, OR until panic is
+    // turned off in config (a natural stop control that also bounds an orphaned daemon's lifetime).
+    const modeCheck = setInterval((): void => {
+      void readOpenLoreConfig(directory).then((c) => {
+        if ((c?.panicResponse?.mode ?? 'off') === 'off') cleanup();
+      }).catch(() => { /* transient read error — keep running */ });
+    }, 30_000);
+    modeCheck.unref(); // the poll loop's timers keep the process alive; don't double-hold it
+
+    // startGryphPolling drives a while loop internally — pending setTimeout keeps the process alive.
+    // getTracker: () => null is intentional: staleDepth is unknown without an active MCP session.
     // Guard startup so a throw (e.g. bad env) cleans the PID file instead of leaving it stale.
     try {
       startGryphPolling({ directory, getTracker: () => null });

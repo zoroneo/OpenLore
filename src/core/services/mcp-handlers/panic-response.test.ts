@@ -305,3 +305,33 @@ describe('recordHookInterventionLocked', () => {
     expect(recordHookInterventionLocked(bad, { lastHookInterventionAt: 'x' }, 7)).toBe(7);
   });
 });
+
+describe('locked writes fail open on a write failure (adversarial final round)', () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'panic-failopen-'));
+    await mkdir(join(dir, '.openlore'), { recursive: true });
+    // Make the state path a DIRECTORY so writeFileSync/renameSync inside the lock fail.
+    await mkdir(join(dir, '.openlore', 'panic-state.json'), { recursive: true });
+  });
+
+  it('casWritePanicState returns false (never throws) and leaks no temp/lock files', () => {
+    let result: boolean | undefined;
+    expect(() => { for (let i = 0; i < 10; i++) result = casWritePanicState(dir, 0, defaultPanicState()); }).not.toThrow();
+    expect(result).toBe(false);
+    const leftovers = readdirSync(join(dir, '.openlore')).filter((f) => f.endsWith('.tmp') || f.endsWith('.lock'));
+    expect(leftovers).toEqual([]);
+  });
+
+  it('recordHookInterventionLocked never throws and leaks no temp files on write failure', () => {
+    // writePanicState fails gracefully (returns, never throws), so the computed count is returned and
+    // no exception escapes; the key guarantees are no-throw + no leaked temp files.
+    expect(() => recordHookInterventionLocked(dir, { lastHookInterventionAt: 'x' }, 42)).not.toThrow();
+    expect(readdirSync(join(dir, '.openlore')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('recordHookInterventionLocked returns the fallback when the lock cannot be acquired (missing dir)', () => {
+    const noDir = join(dir, 'does-not-exist');
+    expect(recordHookInterventionLocked(noDir, { lastHookInterventionAt: 'x' }, 42)).toBe(42);
+  });
+});

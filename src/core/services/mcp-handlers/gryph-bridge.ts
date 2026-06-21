@@ -22,7 +22,7 @@
 import { spawnSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { emit } from '../telemetry.js';
-import { readPanicState, casWritePanicState, applyPanicHysteresis } from './panic-response.js';
+import { readPanicState, casWritePanicState, applyPanicHysteresis, LOCK_ATTEMPTS_DAEMON } from './panic-response.js';
 import type { PanicState, PanicLevel } from './panic-response.js';
 import type { EpistemicTracker } from './epistemic-lease.js';
 import {
@@ -416,7 +416,9 @@ export function startGryphPolling(opts: GryphPollingOptions): () => void {
           updatedAt: new Date().toISOString(),
           triggers: [...(readState.triggers ?? []), ...applyResult.provenance.map(p => p.name)],
         };
-        if (casWritePanicState(directory, readState.revision, candidate)) {
+        // Short lock budget on the daemon path: a contended write is skipped and retried next poll
+        // rather than blocking this background event loop.
+        if (casWritePanicState(directory, readState.revision, candidate, LOCK_ATTEMPTS_DAEMON)) {
           const writtenRevision = readState.revision + 1;
           // Sync in-memory tracker so MCP path doesn't overwrite with stale state
           if (tracker) {

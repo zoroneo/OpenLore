@@ -63,6 +63,19 @@ describe('validatePanicSignal — accuracy gate', () => {
     expect(r.recommendations.some((s) => s.includes('peaked at L3+'))).toBe(true);
   });
 
+  it('ignores triggers with no string name (malformed telemetry → no null/undefined trigger)', () => {
+    const events: PanicTelemetryEvent[] = [
+      lc(0, 2, 0),
+      sd(1, [{ delta: 7 } as { name: string; delta: number }, { name: 'oscillation_spike', delta: 10 }]),
+      lc(2, 0, 1000),
+    ];
+    const r = validatePanicSignal(events);
+    const triggers = r.false_positive.by_trigger.map((t) => t.trigger);
+    expect(triggers).toEqual(['oscillation_spike']);
+    expect(triggers).not.toContain(null);
+    expect(triggers).not.toContain(undefined);
+  });
+
   it('attributes triggers to false-positive episodes', () => {
     const events = [
       ...episode(0, 1000, { withOrient: false, triggers: ['oscillation_spike'] }),     // FP

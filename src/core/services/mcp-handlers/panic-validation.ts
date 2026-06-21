@@ -117,7 +117,8 @@ export function validatePanicSignal(events: PanicTelemetryEvent[]): PanicGateRep
     for (const sd of scoreDeltas) {
       if (!within(sd.ts)) continue;
       for (const t of sd.triggers ?? []) {
-        if (t.delta > 0) ep.triggers.add(t.name); // upward (panic-raising) triggers only
+        // upward (panic-raising) triggers only; ignore entries with no string name (malformed telemetry)
+        if (t.delta > 0 && typeof t.name === 'string' && t.name) ep.triggers.add(t.name);
       }
     }
     ep.resolvedViaOrient = orientResets.some((o) => within(o.ts));

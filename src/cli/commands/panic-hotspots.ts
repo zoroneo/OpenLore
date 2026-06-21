@@ -61,14 +61,19 @@ export const panicHotspotsCommand = new Command('panic-hotspots')
       const events = readLeaseEvents(options.directory);
       const report = computeBehavioralHotspots(events, options.top > 0 ? options.top : 0);
 
+      // Print the report FIRST — a --write failure must not swallow the computed output.
+      process.stdout.write(options.json ? JSON.stringify(report, null, 2) + '\n' : render(report) + '\n');
+
       if (options.write) {
         const path = join(options.directory, ARTIFACT_REL);
-        mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, JSON.stringify({ ...report, generatedAt: new Date().toISOString() }, null, 2) + '\n', 'utf-8');
+        try {
+          mkdirSync(dirname(path), { recursive: true });
+          writeFileSync(path, JSON.stringify({ ...report, generatedAt: new Date().toISOString() }, null, 2) + '\n', 'utf-8');
+          if (!options.json) process.stdout.write(`\nwrote ${ARTIFACT_REL}\n`);
+        } catch (e) {
+          process.stderr.write(`panic-hotspots: could not write ${ARTIFACT_REL}: ${e instanceof Error ? e.message : String(e)}\n`);
+        }
       }
-
-      process.stdout.write(options.json ? JSON.stringify(report, null, 2) + '\n' : render(report) + '\n');
-      if (options.write && !options.json) process.stdout.write(`\nwrote ${ARTIFACT_REL}\n`);
     } catch {
       // fail-open: never break the caller
     }
