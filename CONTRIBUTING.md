@@ -4,13 +4,18 @@ Thank you for your interest in contributing. This document covers how to set up 
 
 ## Development Setup
 
-**Requirements:** Node.js ≥ 20, npm ≥ 9
+**Requirements:** Node.js ≥ 22.5.0, npm ≥ 9
 
 ```bash
 git clone https://github.com/clay-good/openlore
 cd openlore
 npm install
 ```
+
+> **Windows (PowerShell):** if `npm install` fails with _"running scripts is disabled on this system"_, run this once to allow npm scripts for your user account:
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+> ```
 
 Build TypeScript (outputs to `dist/`):
 
@@ -25,6 +30,14 @@ npm run dev -- init
 npm run dev -- analyze
 npm run dev -- generate
 ```
+
+To use the `openlore` command directly (instead of `npm run dev --`), link the package globally after building:
+
+```bash
+npm link
+```
+
+After that, `openlore init`, `openlore analyze`, etc. all work. Re-run `npm run build` before using the linked binary when you change source files.
 
 ## Agent Context Setup (one-time, after cloning)
 
