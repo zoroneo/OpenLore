@@ -404,6 +404,18 @@ openlore telemetry --live        # stream events in real time as they occur
 
 Key metrics: **obstinacy index** (tool calls after stale before orient — measures whether agents act on warnings), **recovery efficiency** (stale→orient latency), **trajectory dynamics** (avg cross-module density, burst frequency). These turn EpistemicLease from a tuning-by-intuition system into an empirically measurable one.
 
+**Agent behavioral governance** (no API key, opt-in, **off by default — experimental**)
+
+An optional layer built on the same EpistemicLease tracker that detects behavioral *destabilization* (thrashing, oscillation, drift) distinct from context staleness, using pure deterministic heuristics (oscillation, trajectory density, command entropy, hysteresis) — **no LLM**. Opt in per project via `.openlore/config.json`:
+
+```json
+{ "panicResponse": { "mode": "observe" } }
+```
+
+Mode ladder, all **off by default**: `off` (zero overhead) · `observe` (score + record, no intervention) · `advisory` (surface a signal at L2+) · `experimental_blocking` (emit a runtime block signal at L4, `advisory:true` always present — the runtime decides; OpenLore never mandates). Commands: `panic-check` (PreToolUse hook consumer, always exits 0), `panic-level` (status line), `panic-validate` (the accuracy gate), `panic-hotspots` (per-module destabilization → memory), `panic-replay` / `panic-calibrate` (replay + accuracy measurement). Optional `gryph-watch` observes agents working purely via Bash/Edit/Read (fail-open when the `gryph` binary is absent).
+
+> **The gate**: a panic signal is a *judgment*, and a wrong one costs the tokens OpenLore exists to save. So **no interventional posture ships enabled-by-default until its accuracy is validated on data** — not asserted in code. `openlore panic-validate` reports the false-positive proxy, per-trigger attribution, and intervention follow-through from real `observe`-mode telemetry; `openlore panic-calibrate` measures discrimination against a labeled ground-truth corpus (and honestly documents where the signal is over-sensitive). The default is, and stays, `off`. See [`openspec/changes/adopt-agent-behavioral-governance/`](openspec/changes/adopt-agent-behavioral-governance/).
+
 ---
 
 ## Architecture

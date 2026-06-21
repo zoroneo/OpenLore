@@ -81,3 +81,26 @@ criteria — with a verdict of `INSUFFICIENT_DATA` or `REVIEW_REQUIRED`, never a
 - **WHEN** `orient()` runs for a task whose files are in the `auth` module
 - **THEN** the result includes a `behavioralHotspots` entry for `auth`; and the same call with
   `mode: 'off'`, a missing artifact, an unlabeled module, or `lean` mode SHALL omit it
+
+### Requirement: PanicSignalAccuracyValidation
+
+The system SHALL provide deterministic, in-code measurement of the panic signal's accuracy as the
+complement to real observe-mode telemetry. A replay capability SHALL drive the real behavioral engine
+(updateTracker / updatePanic / resetPanicOnOrient) over a recorded or synthetic trace of
+`(tool, filePath, gapMs)` steps under a virtual clock, producing the same result every run. A
+calibration capability SHALL measure the false-positive rate and sensitivity at the L2 intervention
+threshold against a labeled ground-truth corpus (coherent vs. confused traces). Known over/under-
+sensitivities SHALL be documented and regression-pinned rather than silently altered. The engine clock
+indirection SHALL default to `Date.now()` so production behavior is unchanged.
+
+`openlore panic-replay` and `openlore panic-calibrate` SHALL be read-only and exit 0 by default;
+`--strict` MAY exit non-zero when discrimination on the clear-cut corpus regresses (for CI). None of
+this lowers the gate: enabling an interventional posture by default remains a human decision grounded
+in real observe-mode data.
+
+#### Scenario: the engine discriminates coherent from confused behavior
+
+- **GIVEN** the labeled calibration corpus replayed through the real engine
+- **WHEN** discrimination is measured at the L2 threshold
+- **THEN** no coherent trace trips L2+ (0% false positives) and every confused trace does (full
+  sensitivity); a documented over-sensitivity is reported as evidence, not hidden

@@ -63,10 +63,23 @@
       `behavioralHotspots` block (fail-open, gated on mode != off, labeled-only, omitted in lean mode).
 - [x] **`panic-validate --strict`** — opt-in non-zero exit for CI/automation (gate as an actual gate).
 
-## 6. Still gated / remaining
-- [ ] **Validate accuracy (the gate).** The machinery is built but does NOT prove the signal is accurate.
-      No interventional posture ships **enabled-by-default** until `observe`-mode telemetry shows: (a) a
-      low false-positive rate (focused deep work must not trip L2+), (b) `panic_intervention_outcome`
-      trending positive, (c) episodes resolve rather than oscillate. Measure with `openlore panic-validate`
-      (use `--strict` to gate automation). This is a DATA/operations step, not a code stub — the feature
-      is fully built; what remains is running observe mode on real sessions and a maintainer's decision.
+## 6. Accuracy validation — the in-code half (built)
+- [x] **Deterministic replay** — injectable engine clock (behavior-preserving; full suite confirms)
+      + `replayBehavioralTrace()` drives the real engine over a `(tool, filePath, gapMs)` trace.
+      `openlore panic-replay <trace.jsonl>` replays a recorded/synthetic session → panic timeline.
+- [x] **Labeled-corpus calibration** — `computeCalibration()` measures false-positive rate + sensitivity
+      at the L2 threshold against a ground-truth corpus (coherent vs confused). `openlore panic-calibrate
+      [--json] [--strict]`. CI asserts 0% FP, 100% sensitivity on the clear-cut corpus.
+- [x] **Honest sensitivity disclosure** — the harness FOUND a real over-sensitivity
+      (`occasional-cross-check`: dwell-insensitive oscillation trips on long-dwell work with periodic
+      checks). Documented + regression-pinned, NOT silently changed (that's signal-design for the
+      author). This is the evidence the gate must weigh.
+
+## 7. Still gated / remaining (operations + data, not code)
+- [ ] **Clear the gate on real data.** The machinery and the in-code accuracy harness are built; what
+      remains is **not a code stub**: run `observe` mode on real sessions, then confirm with
+      `openlore panic-validate` (use `--strict`) that (a) the false-positive rate is low (focused deep
+      work doesn't trip L2+), (b) `panic_intervention_outcome` trends positive, (c) episodes resolve.
+      Only then may a maintainer enable an interventional posture by default — a human decision.
+- [ ] **(Optional follow-up) Dwell-aware oscillation.** The calibration documents a fix candidate for
+      the over-sensitivity; the calibration harness now exists to validate any such change safely.
