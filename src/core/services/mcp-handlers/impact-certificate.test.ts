@@ -80,6 +80,15 @@ describe('resolveSurfaces', () => {
     expect(findings).toHaveLength(0);
   });
 
+  it('resolves BOTH symbol and file when a single member declares both', () => {
+    const { resolved } = resolveSurfaces(
+      [{ name: 'mix', severity: 'critical', members: [{ symbol: 'send', file: 'src/util.ts' }] }],
+      cg,
+    );
+    // send (the symbol) + util.ts::log (the file) — the file is not silently dropped.
+    expect([...resolved[0].ids].sort()).toEqual(['src/client.ts::send', 'src/util.ts::log']);
+  });
+
   it('degrades an unresolved symbol member to exactly one finding (never throws)', () => {
     const { findings, views } = resolveSurfaces(
       [{ name: 'client', members: [{ symbol: 'doesNotExist' }] }],
@@ -118,6 +127,27 @@ describe('surfacesFromConfig', () => {
   it('returns [] for absent or non-array config', () => {
     expect(surfacesFromConfig(undefined)).toEqual([]);
     expect(surfacesFromConfig({ surfaces: 'nope' as unknown as [] })).toEqual([]);
+  });
+  it('coerces a wrong-typed severity to "warn" (else highestSurfaceSeverity goes NaN/undefined)', () => {
+    const out = surfacesFromConfig({ surfaces: [{ name: 's', severity: 'high' as never, members: [{ symbol: 'x' }] }] });
+    expect(out[0].severity).toBe('warn');
+    const valid = surfacesFromConfig({ surfaces: [{ name: 'c', severity: 'critical', members: [{ symbol: 'x' }] }] });
+    expect(valid[0].severity).toBe('critical');
+  });
+  it('drops duplicate surface names (they would collide in the per-surface findings map)', () => {
+    const out = surfacesFromConfig({ surfaces: [
+      { name: 'dup', severity: 'critical', members: [{ symbol: 'a' }] },
+      { name: 'dup', severity: 'info', members: [{ symbol: 'b' }] },
+    ] });
+    expect(out).toHaveLength(1);
+    expect(out[0].severity).toBe('critical'); // first wins
+  });
+  it('drops empty / whitespace-only surface names', () => {
+    const out = surfacesFromConfig({ surfaces: [
+      { name: '   ', members: [{ symbol: 'a' }] },
+      { name: 'real', members: [{ symbol: 'b' }] },
+    ] });
+    expect(out.map(s => s.name)).toEqual(['real']);
   });
 });
 
@@ -253,6 +283,20 @@ describe('certificate decay (freshness lease)', () => {
     mkdirSync(join(root, 'src'), { recursive: true });
   });
   afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it('a FILE-level anchor (as built for a new/unindexed file) decays when the file changes', () => {
+    // New files have no indexed symbol, so buildLeaseAnchors anchors them at file level.
+    // Verify that mechanism decays: a file anchor is fresh, then stale once the file moves.
+    buildStore(root, SRC_FRESH);
+    const fileAnchor: StructuralAnchor = { filePath: 'src/client.ts', contentHash: '' };
+    // Capture the current file hash via a real cert build is overkill; compute fresh by reading.
+    const ctx = AnchorContext.open(root)!;
+    try { fileAnchor.contentHash = ctx.fileContentHash('src/client.ts'); } finally { ctx.close(); }
+    const cert: ImpactCertificate = { ...makeBareCert('add-file'), lease: { anchors: [fileAnchor] } };
+    expect(recheckCertificate(root, cert).status).toBe('fresh');
+    writeFileSync(join(root, 'src', 'client.ts'), SRC_EDITED, 'utf-8'); // file content changes
+    expect(recheckCertificate(root, cert).status).toBe('stale');
+  });
 
   it('a certificate is fresh against the graph it was computed against, and stale after an anchored symbol changes', () => {
     buildStore(root, SRC_FRESH);
@@ -464,5 +508,36 @@ describe('changed-file plumbing (rename + untracked)', () => {
     const opened = detectNewlyOpenedPaths(cg, resolved, delta, delta.postNodes);
     expect(opened).toHaveLength(1);
     expect(opened[0].openingEdge).toEqual({ from: 'reachIt', to: 'boundary' });
+  });
+
+  it('reads old content from the MERGE-BASE, not the base-ref tip, when the base branch advanced', async () => {
+    // base: caller does NOT call surfaceFn. Branch off, then BOTH branch and base add the
+    // same call. getChangedFiles diffs vs the merge-base (three-dot), so the differential
+    // must read old content from the merge-base too — reading the base-ref TIP (which now
+    // has the call) would MISS the opening the branch genuinely introduced.
+    const base = execFileSync('git', ['branch', '--show-current'], { cwd: repo }).toString().trim();
+    write('src/caller.ts', 'export function caller() { return 0; }\n'); // base: no call
+    git('add', '-A'); git('commit', '-q', '-m', 'base-no-call');
+    git('branch', 'feature');
+    // the base branch advances: it ALSO adds the call (so its tip no longer matches the merge-base)
+    write('src/caller.ts', 'export function caller() { return surfaceFn(); }\n');
+    git('add', '-A'); git('commit', '-q', '-m', 'base-adds-call');
+    // feature adds the call independently — this is the change under assessment
+    git('checkout', '-q', 'feature');
+    write('src/caller.ts', 'export function caller() { return surfaceFn(); }\n');
+    git('add', '-A'); git('commit', '-q', '-m', 'feature-adds-call');
+
+    const entries = await collectChangedFiles(repo, base);
+    const mergeBase = execFileSync('git', ['merge-base', base, 'HEAD'], { cwd: repo }).toString().trim();
+
+    // Correct (merge-base): old caller had no call → the edge is newly added → opening detected.
+    const good = await computeEdgeDelta(repo, mergeBase, entries, cg);
+    expect(good.added).toContainEqual({ from: 'src/caller.ts::caller', to: SURFACE });
+    expect(detectNewlyOpenedPaths(cg, surfaces, good)).toHaveLength(1);
+
+    // Buggy baseline (the ref TIP) would read the base branch's caller — which already calls
+    // surfaceFn — so the edge looks pre-existing and the real opening is MISSED. Pin the divergence.
+    const bad = await computeEdgeDelta(repo, base, entries, cg);
+    expect(bad.added.some(e => e.to === SURFACE)).toBe(false);
   });
 });

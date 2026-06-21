@@ -190,6 +190,8 @@ export function resolveSurfaces(
     const ids = new Set<string>();
     const unresolved: string[] = [];
     for (const m of s.members ?? []) {
+      // A member may declare a `symbol`, a `file`, or BOTH — assess each independently
+      // so a member carrying both doesn't silently drop one.
       if (m.symbol) {
         const matches = byName.get(m.symbol) ?? [];
         if (matches.length === 1) ids.add(matches[0]);
@@ -206,7 +208,8 @@ export function resolveSurfaces(
               : `Disambiguate by adding a "file" to the member, or rename to a unique symbol.`,
           });
         }
-      } else if (m.file) {
+      }
+      if (m.file) {
         const fileIds = nodesByFile.get(m.file) ?? [];
         if (fileIds.length > 0) for (const id of fileIds) ids.add(id);
         else {
@@ -253,6 +256,25 @@ async function fileAtRef(rootPath: string, ref: string, path: string): Promise<s
 async function resolveDiffBase(rootPath: string, baseRef: string): Promise<string | undefined> {
   const { resolveBaseRef } = await import('../../drift/git-diff.js');
   try { return await resolveBaseRef(rootPath, baseRef); } catch { return undefined; }
+}
+
+/**
+ * The commit the OLD file content must be read from. `getChangedFiles` diffs against
+ * the MERGE-BASE (three-dot `base...HEAD`), so the differential has to read old
+ * content from that same point — not the base ref's TIP — or the two halves of the
+ * certificate (blast radius vs newly-opened paths) silently disagree on what "the
+ * change" is whenever the base branch has advanced past the branch point. Returns
+ * the merge-base SHA, or the resolved ref when no common ancestor exists (mirrors
+ * `getChangedFiles`' own three-dot → two-dot fallback).
+ */
+async function oldContentRef(rootPath: string, resolvedBase: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('git', ['merge-base', resolvedBase, 'HEAD'], { cwd: rootPath });
+    const sha = stdout.trim();
+    return sha.length > 0 ? sha : resolvedBase;
+  } catch {
+    return resolvedBase; // no common ancestor → fall back to the ref tip (as getChangedFiles does)
+  }
 }
 
 /**
@@ -556,20 +578,51 @@ export function detectNewlyOpenedPaths(
         reaches,
       });
     }
-    // Shortest paths first; bound per surface.
-    perSurface.sort((a, b) => a.path.length - b.path.length || a.openingEdge.from.localeCompare(b.openingEdge.from));
-    out.push(...perSurface.slice(0, MAX_PATHS_PER_SURFACE));
+    // Shortest paths first, then a TOTAL order so the result is byte-for-byte
+    // reproducible (a non-total comparator would let ties reorder run-to-run, and
+    // the presentation cap downstream could then keep a different subset each run).
+    perSurface.sort((a, b) =>
+      a.path.length - b.path.length ||
+      a.openingEdge.from.localeCompare(b.openingEdge.from) ||
+      a.openingEdge.to.localeCompare(b.openingEdge.to) ||
+      a.reaches.localeCompare(b.reaches) ||
+      a.path.join('\u0001').localeCompare(b.path.join('\u0001')));
+    // No per-surface cap here — the caller bounds for presentation and reports the
+    // true count + a truncation caveat (no-silent-truncation).
+    out.push(...perSurface);
   }
   return out;
 }
 
 // ── surfaces config ───────────────────────────────────────────────────────────
 
-/** Read declared covering surfaces from a repo's config (defensive against wrong-typed JSON). */
+const VALID_SEVERITIES = new Set<CoveringSurfaceSeverity>(['info', 'warn', 'critical']);
+
+/**
+ * Read declared covering surfaces from a repo's config, fully defensive against
+ * wrong-typed JSON (config arrives via raw JSON.parse, no schema):
+ *  - a non-string / empty / whitespace `name` is dropped (an empty name would emit
+ *    blank-subject findings and a "into 1 surface(s): " headline);
+ *  - a `severity` that is not exactly info/warn/critical is coerced to `warn` — an
+ *    unrecognized value would otherwise flow into SEVERITY_RANK and make the block
+ *    signal `highestSurfaceSeverity` come out `undefined` (NaN index);
+ *  - duplicate names are collapsed to the first (later they key `reachedBySurface`,
+ *    so a duplicate would fold two surfaces' findings into one and drop a severity).
+ */
 export function surfacesFromConfig(cfg: ImpactCertificateConfig | undefined): CoveringSurfaceConfig[] {
   if (!cfg || !Array.isArray(cfg.surfaces)) return [];
-  return cfg.surfaces.filter((s): s is CoveringSurfaceConfig =>
-    !!s && typeof s.name === 'string' && Array.isArray(s.members));
+  const out: CoveringSurfaceConfig[] = [];
+  const seen = new Set<string>();
+  for (const s of cfg.surfaces) {
+    if (!s || typeof s.name !== 'string' || !Array.isArray(s.members)) continue;
+    const name = s.name.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const severity: CoveringSurfaceSeverity = VALID_SEVERITIES.has(s.severity as CoveringSurfaceSeverity)
+      ? (s.severity as CoveringSurfaceSeverity) : 'warn';
+    out.push({ name, members: s.members, severity });
+  }
+  return out;
 }
 
 // ── certificate persistence + decay ─────────────────────────────────────────
@@ -657,19 +710,35 @@ export function recheckPersistedCertificates(absDir: string): StaleCertificate[]
 
 // ── certificate assembly ──────────────────────────────────────────────────────
 
-/** Build freshness-lease anchors over the changed files' touched symbols. */
-function buildLeaseAnchors(absDir: string, changedFiles: readonly string[]): StructuralAnchor[] {
+/**
+ * Build freshness-lease anchors over the changed files. Indexed files contribute
+ * SYMBOL anchors (one per touched function); a changed file with NO indexed symbol —
+ * a brand-new/untracked file the differential just assessed — contributes a FILE-level
+ * anchor instead, so the certificate still decays when that new code later changes
+ * (without it, the lease silently omits exactly the new symbols the change introduced,
+ * defeating the decay guarantee). `symbolCount` is the symbol-anchor count for the
+ * honest `changed.symbols`; file anchors are not symbols.
+ */
+function buildLeaseAnchors(absDir: string, changedFiles: readonly string[]): { anchors: StructuralAnchor[]; symbolCount: number } {
   const anchorCtx = AnchorContext.open(absDir);
-  if (!anchorCtx) return [];
+  if (!anchorCtx) return { anchors: [], symbolCount: 0 };
   try {
     const nodes = anchorCtx.anchorNodesForFiles(changedFiles);
-    return nodes.map(n => ({
+    const anchors: StructuralAnchor[] = nodes.map(n => ({
       nodeId: n.id,
       ...(n.stableId ? { stableId: n.stableId } : {}),
       symbolName: n.name,
       filePath: n.filePath,
       contentHash: n.contentHash,
     }));
+    const filesWithSymbols = new Set(nodes.map(n => n.filePath));
+    for (const file of new Set(changedFiles)) {
+      if (filesWithSymbols.has(file)) continue;
+      const hash = anchorCtx.fileContentHash(file);
+      if (hash === undefined) continue; // deleted file — nothing to anchor
+      anchors.push({ filePath: file, contentHash: hash });
+    }
+    return { anchors, symbolCount: nodes.length };
   } finally {
     anchorCtx.close();
   }
@@ -732,41 +801,55 @@ export async function computeImpactCertificate(
   const changedFiles = changedEntries.map(c => c.path);
 
   // Compute the delta first so its post-change nodes can resolve a surface member
-  // that was ADDED in this same diff (else such a member silently misses).
+  // that was ADDED in this same diff (else such a member silently misses). Old content
+  // is read from the MERGE-BASE — the same baseline `getChangedFiles` (and thus the
+  // blast radius) diffs against — so the certificate's two halves never disagree.
   let delta: EdgeDelta | null = null;
   if (!diffError && changedEntries.length > 0 && surfaceCfg.length > 0) {
-    try { delta = await computeEdgeDelta(absDir, resolvedBaseRef, changedEntries, cg); }
-    catch { delta = null; }
+    try {
+      const oldRef = await oldContentRef(absDir, resolvedBaseRef);
+      delta = await computeEdgeDelta(absDir, oldRef, changedEntries, cg);
+    } catch { delta = null; }
   }
 
   // ── 4. Resolve surfaces over canonical ∪ post-change nodes, then detect ──────
   const { resolved: surfaces, views: surfaceViews, findings: surfaceFindings } =
     resolveSurfaces(surfaceCfg, cg, delta?.postNodes ?? []);
 
-  let newlyOpenedPaths: NewlyOpenedPath[] = [];
+  let allOpenedPaths: NewlyOpenedPath[] = [];
   let unresolvedAdded: EdgeDelta['unresolved'] = [];
   if (delta && surfaces.some(s => s.ids.size > 0)) {
     unresolvedAdded = delta.unresolved;
-    try { newlyOpenedPaths = detectNewlyOpenedPaths(cg, surfaces, delta, delta.postNodes); }
-    catch { newlyOpenedPaths = []; }
+    try { allOpenedPaths = detectNewlyOpenedPaths(cg, surfaces, delta, delta.postNodes); }
+    catch { allOpenedPaths = []; }
   }
 
   // ── 4. Findings + severity + lease ───────────────────────────────────────────
   const findings: ImpactCertificateFinding[] = [...surfaceFindings];
-  let highestRank = 0;
-  for (const p of newlyOpenedPaths) {
-    highestRank = Math.max(highestRank, SEVERITY_RANK[p.surfaceSeverity]);
-  }
-  // One finding per (surface) that was newly reached, plus a critical escalation.
+  // True per-surface counts come from the UNCAPPED detection; the certificate then
+  // bounds the listed paths for presentation and discloses any truncation.
   const reachedBySurface = new Map<string, NewlyOpenedPath[]>();
-  for (const p of newlyOpenedPaths) (reachedBySurface.get(p.surface) ?? reachedBySurface.set(p.surface, []).get(p.surface)!).push(p);
+  for (const p of allOpenedPaths) (reachedBySurface.get(p.surface) ?? reachedBySurface.set(p.surface, []).get(p.surface)!).push(p);
+
+  // Severity from the uncapped set (`?? 0` so a stray non-enum severity can never make
+  // the block signal NaN/undefined — defense beyond surfacesFromConfig's coercion).
+  let highestRank = 0;
+  for (const p of allOpenedPaths) highestRank = Math.max(highestRank, SEVERITY_RANK[p.surfaceSeverity] ?? 0);
+
+  const newlyOpenedPaths: NewlyOpenedPath[] = [];
+  const truncatedSurfaces: Array<{ surface: string; shown: number; total: number }> = [];
   for (const [name, paths] of reachedBySurface) {
     const sev = paths[0].surfaceSeverity;
+    const shown = paths.slice(0, MAX_PATHS_PER_SURFACE);
+    newlyOpenedPaths.push(...shown);
+    if (paths.length > shown.length) truncatedSurfaces.push({ surface: name, shown: shown.length, total: paths.length });
     findings.push({
       code: sev === 'critical' ? 'surface-critical' : 'surface-newly-reached',
       severity: sev === 'critical' ? 'error' : 'warn',
       subject: name, surfaceSeverity: sev,
-      message: `Change opens ${paths.length} new path(s) into surface "${name}" (e.g. ${paths[0].path.join(' → ')}).`,
+      message: `Change opens ${paths.length} new path(s) into surface "${name}"` +
+        (paths.length > shown.length ? ` (showing ${shown.length})` : '') +
+        ` (e.g. ${paths[0].path.join(' → ')}).`,
       remediation: `Confirm the new reach into "${name}" is intended; if not, sever the opening edge ${paths[0].openingEdge.from} → ${paths[0].openingEdge.to}.`,
     });
   }
@@ -800,13 +883,21 @@ export async function computeImpactCertificate(
   if (diffError) caveats.push(`The change diff could not be read (base ${baseRef}): ${diffError}. Newly-opened paths were not computed.`);
   if (resolvedBaseRef !== baseRef) caveats.push(`Requested base ref "${baseRef}" did not resolve; diffed against "${resolvedBaseRef}".`);
   if (unresolvedAdded.length > 10) caveats.push(`${unresolvedAdded.length} added calls had ambiguous callees and were not assessed (first 10 listed as findings).`);
+  for (const t of truncatedSurfaces) {
+    caveats.push(`Surface "${t.surface}" had ${t.total} newly-opened paths; the certificate lists the ${t.shown} shortest (count is authoritative in the finding).`);
+  }
+  // A very large diff re-parses many files (the differential is bounded to changed
+  // files but not capped — capping would miss openings); flag the cost, never silently.
+  if (changedFiles.length > 200) {
+    caveats.push(`${changedFiles.length} changed files were parsed for the differential; on a very large diff this is the slow path (no opening is dropped).`);
+  }
 
-  const anchors = buildLeaseAnchors(absDir, changedFiles);
+  const { anchors, symbolCount } = buildLeaseAnchors(absDir, changedFiles);
 
   const cert: ImpactCertificate = {
     kind: 'impact-certificate', version: 1,
     baseRef, resolvedBaseRef, change,
-    changed: { files: changedFiles.length, symbols: anchors.length },
+    changed: { files: changedFiles.length, symbols: symbolCount },
     surfaces: surfaceViews,
     newlyOpenedPaths,
     impact: blast && !('error' in blast) ? blast.impact : { unavailable: ('error' in (blast ?? {}) ? (blast as { error: string }).error : 'blast radius unavailable') },

@@ -191,3 +191,52 @@ plain `grep` silently skipped it. Replaced with the `` escape sequence (identica
   malformed/throwing config), a `dispatchTool(change_impact_certificate)` MCP-path reachability test, and
   regression tests for the homonym and same-diff-surface bugs against a real temp git repo.
   Suite: **4,399 passed / 2 skipped**.
+
+
+---
+
+## Round 4 - third adversarial pass (2026-06-21, PR #181 review)
+
+A third adversarial round (fresh reviewer on scale/determinism/correctness + new real-input probes)
+found two HIGH correctness bugs and several MEDIUM integrity gaps. All fixed and regression-tested.
+
+### BUG 7 - base-ref divergence: the two halves of the certificate diffed against different commits (HIGH) - FIXED
+
+`getChangedFiles` diffs against the MERGE-BASE (three-dot `base...HEAD`), but `computeEdgeDelta` read old
+content from the base-ref TIP (`git show <ref>:path`). When the base branch advanced past the branch
+point, the differential read a wrong baseline -> phantom or missed surface openings, while the blast
+radius (which uses `getChangedFiles`) used the correct one. Reproduced in a temp git repo where both the
+branch and the base independently add the same call: reading the base tip MISSES the genuine opening;
+reading the merge-base detects it. Fix: `oldContentRef` resolves `git merge-base` and the differential
+reads from that SHA. (Decision recorded this round.)
+
+### BUG 8 - wrong-typed surface severity broke the block signal (HIGH) - FIXED
+
+`surfacesFromConfig` validated only `name` and `members`, so a wrong-typed `severity` (e.g. `"high"`)
+flowed through; `SEVERITY_RANK["high"]` is `undefined` -> `Math.max(rank, undefined)` is `NaN` ->
+`highestSurfaceSeverity` was emitted as `null`, breaking the `CoveringSurfaceSeverity | "none"` contract
+that an orchestrator's block check relies on. Reproduced e2e (`highestSurfaceSeverity: null`). Fix:
+coerce any out-of-enum severity to `warn` in `surfacesFromConfig`, plus a `?? 0` guard at the rank
+lookup. After e2e: severity coerced to `warn`, `highestSurfaceSeverity: "warn"`.
+
+### Also fixed (MEDIUM/LOW)
+
+- **Duplicate surface names** collided in the per-surface findings map (one severity silently dropped);
+  `surfacesFromConfig` now drops duplicates (first wins).
+- **Empty/whitespace surface names** are dropped (were emitting blank-subject findings).
+- **A member with both `symbol` and `file`** now resolves both (the file was silently ignored).
+- **Non-total sort** made the top-N paths non-deterministic on ties; the comparator is now a total order.
+- **Silent per-surface path truncation**: the cap moved to the caller, the finding reports the TRUE count
+  (`opens N (showing 12)`), and a truncation caveat is added (no-silent-truncation).
+- **Unbounded large-diff parse**: a caveat is emitted past 200 changed files (capping would miss
+  openings, so the work stays complete - only the cost is disclosed).
+- **Lease incompleteness**: a new/untracked file (no indexed symbol) now gets a FILE-level anchor, so the
+  certificate actually decays for the new code it certified; `changed.symbols` counts symbol anchors only.
+
+### Documentation + tests
+
+- `docs/configuration.md` now documents the `impactCertificate` config (surfaces, members, severity,
+  block) - the last doc surface that lacked it.
+- Regression tests added: merge-base baseline (real temp git repo), severity coercion / duplicate /
+  empty-name (`surfacesFromConfig`), both-member resolution, and file-level-anchor decay.
+  Full CI-equivalent suite: **4,405 passed / 2 skipped**.
