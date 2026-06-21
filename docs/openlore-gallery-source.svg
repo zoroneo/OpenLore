@@ -1,0 +1,330 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <radialGradient id="bgGrad" cx="55%" cy="48%" r="65%">
+      <stop offset="0%" stop-color="#141728"/>
+      <stop offset="100%" stop-color="#0B0D14"/>
+    </radialGradient>
+
+    <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#7C6AF7" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#7C6AF7" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="hubGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#A78BFA" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#A78BFA" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="edgePrimary" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7C6AF7" stop-opacity="0.1"/>
+      <stop offset="50%" stop-color="#A78BFA" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#7C6AF7" stop-opacity="0.1"/>
+    </linearGradient>
+
+    <linearGradient id="edgeSecondary" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366F1" stop-opacity="0.12"/>
+      <stop offset="50%" stop-color="#818CF8" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#6366F1" stop-opacity="0.08"/>
+    </linearGradient>
+
+    <linearGradient id="titleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#E8E6F0"/>
+      <stop offset="60%" stop-color="#C4B5FD"/>
+      <stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+
+    <filter id="blur6">  <feGaussianBlur stdDeviation="6"/></filter>
+    <filter id="blur14"> <feGaussianBlur stdDeviation="14"/></filter>
+    <filter id="blur24"> <feGaussianBlur stdDeviation="24"/></filter>
+    <filter id="blur3">  <feGaussianBlur stdDeviation="3"/></filter>
+
+    <clipPath id="card">
+      <rect width="1280" height="720" rx="0"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <!-- BG -->
+    <rect width="1280" height="720" fill="url(#bgGrad)"/>
+
+    <!-- Grid -->
+    <g stroke="#1C1F33" stroke-width="1" opacity="0.55">
+      <line x1="160" y1="0" x2="160" y2="720"/>
+      <line x1="320" y1="0" x2="320" y2="720"/>
+      <line x1="480" y1="0" x2="480" y2="720"/>
+      <line x1="640" y1="0" x2="640" y2="720"/>
+      <line x1="800" y1="0" x2="800" y2="720"/>
+      <line x1="960" y1="0" x2="960" y2="720"/>
+      <line x1="1120" y1="0" x2="1120" y2="720"/>
+      <line x1="0" y1="120" x2="1280" y2="120"/>
+      <line x1="0" y1="240" x2="1280" y2="240"/>
+      <line x1="0" y1="360" x2="1280" y2="360"/>
+      <line x1="0" y1="480" x2="1280" y2="480"/>
+      <line x1="0" y1="600" x2="1280" y2="600"/>
+    </g>
+
+    <!-- ══════════════════════════════════════════
+         GRAPH — right 58% of canvas
+         Tier 1 (highlighted hubs): C, H1, H2, H3
+         Tier 2 (active satellites): S1–S8
+         Tier 3 (dim peripheral): D1–D20
+         ══════════════════════════════════════════ -->
+
+    <!-- Ambient core glow -->
+    <ellipse cx="870" cy="355" rx="320" ry="270" fill="url(#coreGlow)" filter="url(#blur24)"/>
+    <!-- Secondary cluster glow -->
+    <ellipse cx="690" cy="235" rx="160" ry="130" fill="url(#hubGlow)" filter="url(#blur14)"/>
+    <ellipse cx="1055" cy="480" rx="120" ry="100" fill="#6366F1" fill-opacity="0.12" filter="url(#blur14)"/>
+
+    <!-- ── TIER-3 DIM EDGES (draw first, behind everything) ── -->
+    <g stroke="#3B3F6A" stroke-width="0.8" opacity="0.35">
+      <!-- dim peripheral web -->
+      <line x1="1155" y1="155" x2="1070" y2="195"/>
+      <line x1="1155" y1="155" x2="1100" y2="105"/>
+      <line x1="1070" y1="195" x2="1100" y2="105"/>
+      <line x1="1070" y1="195" x2="1040" y2="175"/>
+      <line x1="1185" y1="290" x2="1120" y2="370"/>
+      <line x1="1185" y1="290" x2="1155" y2="155"/>
+      <line x1="1185" y1="290" x2="1070" y2="195"/>
+      <line x1="1200" y1="445" x2="1185" y2="290"/>
+      <line x1="1200" y1="445" x2="1120" y2="370"/>
+      <line x1="1160" y1="570" x2="1200" y2="445"/>
+      <line x1="1160" y1="570" x2="1010" y2="530"/>
+      <line x1="1090" y1="635" x2="1160" y2="570"/>
+      <line x1="1090" y1="635" x2="1010" y2="530"/>
+      <line x1="950" y1="650" x2="1090" y2="635"/>
+      <line x1="950" y1="650" x2="860" y2="570"/>
+      <line x1="760" y1="640" x2="950" y2="650"/>
+      <line x1="760" y1="640" x2="665" y2="490"/>
+      <line x1="620" y1="590" x2="760" y2="640"/>
+      <line x1="620" y1="590" x2="665" y2="490"/>
+      <line x1="530" y1="430" x2="665" y2="490"/>
+      <line x1="460" y1="360" x2="530" y2="430"/>
+      <line x1="470" y1="230" x2="560" y2="148"/>
+      <line x1="470" y1="230" x2="460" y2="360"/>
+      <line x1="580" y1="88"  x2="560" y2="148"/>
+      <line x1="580" y1="88"  x2="680" y2="120"/>
+      <line x1="680" y1="120" x2="560" y2="148"/>
+      <line x1="680" y1="120" x2="690" y2="235"/>
+      <line x1="810" y1="100" x2="680" y2="120"/>
+      <line x1="810" y1="100" x2="870" y2="355"/>
+      <line x1="960" y1="88"  x2="810" y2="100"/>
+      <line x1="960" y1="88"  x2="1040" y2="175"/>
+      <line x1="740" y1="415" x2="665" y2="490"/>
+      <line x1="740" y1="415" x2="870" y2="355"/>
+    </g>
+
+    <!-- ── TIER-2 ACTIVE EDGES ── -->
+    <!-- Hub-to-hub -->
+    <line x1="870" y1="355" x2="690" y2="235" stroke="#818CF8" stroke-width="1.8" opacity="0.45"/>
+    <line x1="870" y1="355" x2="1040" y2="175" stroke="#A78BFA" stroke-width="2"   opacity="0.5"/>
+    <line x1="870" y1="355" x2="1055" y2="480" stroke="#7C6AF7" stroke-width="1.8" opacity="0.45"/>
+    <line x1="870" y1="355" x2="750" y2="490" stroke="#818CF8" stroke-width="1.6" opacity="0.38"/>
+
+    <!-- Hub C → satellites -->
+    <line x1="870" y1="355" x2="1120" y2="370" stroke="#7C6AF7" stroke-width="1.4" opacity="0.35"/>
+    <line x1="870" y1="355" x2="860"  y2="570" stroke="#7C6AF7" stroke-width="1.2" opacity="0.3"/>
+    <line x1="870" y1="355" x2="970"  y2="255" stroke="#A78BFA" stroke-width="1.4" opacity="0.38"/>
+    <line x1="870" y1="355" x2="775"  y2="290" stroke="#818CF8" stroke-width="1.2" opacity="0.32"/>
+
+    <!-- Hub H1 (690,235) → satellites -->
+    <line x1="690" y1="235" x2="560" y2="148" stroke="#818CF8" stroke-width="1.4" opacity="0.38"/>
+    <line x1="690" y1="235" x2="775" y2="290" stroke="#9F8BFF" stroke-width="1.2" opacity="0.3"/>
+    <line x1="690" y1="235" x2="750" y2="490" stroke="#6366F1" stroke-width="1.2" opacity="0.28"/>
+
+    <!-- Hub H2 (1040,175) → satellites -->
+    <line x1="1040" y1="175" x2="1120" y2="370" stroke="#7C6AF7" stroke-width="1.4" opacity="0.3"/>
+    <line x1="1040" y1="175" x2="970"  y2="255" stroke="#A78BFA" stroke-width="1.4" opacity="0.35"/>
+    <line x1="1040" y1="175" x2="1185" y2="290" stroke="#7C6AF7" stroke-width="1"   opacity="0.25"/>
+
+    <!-- Hub H3 (1055,480) → satellites -->
+    <line x1="1055" y1="480" x2="1010" y2="530" stroke="#7C6AF7" stroke-width="1.4" opacity="0.38"/>
+    <line x1="1055" y1="480" x2="1120" y2="370" stroke="#818CF8" stroke-width="1.2" opacity="0.28"/>
+    <line x1="1055" y1="480" x2="860"  y2="570" stroke="#6366F1" stroke-width="1.2" opacity="0.28"/>
+    <line x1="1055" y1="480" x2="750"  y2="490" stroke="#6366F1" stroke-width="1"   opacity="0.22"/>
+
+    <!-- Satellite cross-links -->
+    <line x1="970"  y1="255" x2="775" y2="290" stroke="#9F8BFF" stroke-width="1"   opacity="0.22"/>
+    <line x1="750"  y1="490" x2="860" y2="570" stroke="#7C6AF7" stroke-width="1"   opacity="0.22"/>
+    <line x1="1010" y1="530" x2="860" y2="570" stroke="#7C6AF7" stroke-width="1"   opacity="0.22"/>
+
+    <!-- ── TIER-3 DIM NODES ── -->
+    <g fill="#13152A" stroke="#2E3158" stroke-width="1">
+      <circle cx="1155" cy="155" r="5"/>
+      <circle cx="1100" cy="105" r="4"/>
+      <circle cx="1185" cy="290" r="5.5"/>
+      <circle cx="1200" cy="445" r="4.5"/>
+      <circle cx="1160" cy="570" r="5"/>
+      <circle cx="1090" cy="635" r="4.5"/>
+      <circle cx="950"  cy="650" r="5"/>
+      <circle cx="760"  cy="640" r="4.5"/>
+      <circle cx="620"  cy="590" r="4"/>
+      <circle cx="530"  cy="430" r="5"/>
+      <circle cx="460"  cy="360" r="4.5"/>
+      <circle cx="470"  cy="230" r="5"/>
+      <circle cx="580"  cy="88"  r="4"/>
+      <circle cx="680"  cy="120" r="5"/>
+      <circle cx="810"  cy="100" r="5.5"/>
+      <circle cx="960"  cy="88"  r="4.5"/>
+      <circle cx="740"  cy="415" r="5"/>
+    </g>
+    <!-- dim node inner dots -->
+    <g fill="#4B4E7A" opacity="0.7">
+      <circle cx="1155" cy="155" r="2"/>
+      <circle cx="1100" cy="105" r="1.5"/>
+      <circle cx="1185" cy="290" r="2.2"/>
+      <circle cx="1200" cy="445" r="1.8"/>
+      <circle cx="1160" cy="570" r="2"/>
+      <circle cx="1090" cy="635" r="1.8"/>
+      <circle cx="950"  cy="650" r="2"/>
+      <circle cx="760"  cy="640" r="1.8"/>
+      <circle cx="620"  cy="590" r="1.6"/>
+      <circle cx="530"  cy="430" r="2"/>
+      <circle cx="460"  cy="360" r="1.8"/>
+      <circle cx="470"  cy="230" r="2"/>
+      <circle cx="580"  cy="88"  r="1.6"/>
+      <circle cx="680"  cy="120" r="2"/>
+      <circle cx="810"  cy="100" r="2.2"/>
+      <circle cx="960"  cy="88"  r="1.8"/>
+      <circle cx="740"  cy="415" r="2"/>
+    </g>
+
+    <!-- ── TIER-2 SATELLITE NODE HALOS ── -->
+    <circle cx="970"  cy="255" r="22" fill="#A78BFA" fill-opacity="0.12" filter="url(#blur6)"/>
+    <circle cx="775"  cy="290" r="20" fill="#818CF8" fill-opacity="0.12" filter="url(#blur6)"/>
+    <circle cx="1120" cy="370" r="26" fill="#7C6AF7" fill-opacity="0.14" filter="url(#blur6)"/>
+    <circle cx="750"  cy="490" r="24" fill="#6366F1" fill-opacity="0.13" filter="url(#blur6)"/>
+    <circle cx="560"  cy="148" r="20" fill="#6366F1" fill-opacity="0.11" filter="url(#blur6)"/>
+    <circle cx="860"  cy="570" r="22" fill="#7C6AF7" fill-opacity="0.13" filter="url(#blur6)"/>
+    <circle cx="1010" cy="530" r="24" fill="#7C6AF7" fill-opacity="0.14" filter="url(#blur6)"/>
+
+    <!-- ── TIER-2 SATELLITE NODES ── -->
+    <!-- S1 (970,255) -->
+    <circle cx="970"  cy="255" r="12" fill="#13152A" stroke="#A78BFA" stroke-width="1.8"/>
+    <circle cx="970"  cy="255" r="5.5" fill="#A78BFA" opacity="0.88"/>
+    <!-- S2 (775,290) -->
+    <circle cx="775"  cy="290" r="11" fill="#13152A" stroke="#818CF8" stroke-width="1.6"/>
+    <circle cx="775"  cy="290" r="5"  fill="#818CF8" opacity="0.82"/>
+    <!-- S3 (1120,370) -->
+    <circle cx="1120" cy="370" r="13" fill="#13152A" stroke="#7C6AF7" stroke-width="1.8"/>
+    <circle cx="1120" cy="370" r="6"  fill="#7C6AF7" opacity="0.82"/>
+    <!-- S4 (750,490) -->
+    <circle cx="750"  cy="490" r="12" fill="#13152A" stroke="#6366F1" stroke-width="1.6"/>
+    <circle cx="750"  cy="490" r="5.5" fill="#818CF8" opacity="0.8"/>
+    <!-- S6 (560,148) -->
+    <circle cx="560"  cy="148" r="10" fill="#13152A" stroke="#818CF8" stroke-width="1.4"/>
+    <circle cx="560"  cy="148" r="4.5" fill="#818CF8" opacity="0.78"/>
+    <!-- S7 (860,570) -->
+    <circle cx="860"  cy="570" r="11" fill="#13152A" stroke="#7C6AF7" stroke-width="1.5"/>
+    <circle cx="860"  cy="570" r="5"  fill="#7C6AF7" opacity="0.78"/>
+    <!-- S8 (1010,530) -->
+    <circle cx="1010" cy="530" r="13" fill="#13152A" stroke="#7C6AF7" stroke-width="1.8"/>
+    <circle cx="1010" cy="530" r="6"  fill="#A78BFA" opacity="0.84"/>
+
+    <!-- ── TIER-1 HUB HALOS ── -->
+    <circle cx="870" cy="355" r="85"  fill="url(#coreGlow)" filter="url(#blur14)"/>
+    <circle cx="690" cy="235" r="50"  fill="url(#hubGlow)"  filter="url(#blur14)"/>
+    <circle cx="1040" cy="175" r="42" fill="#7C6AF7" fill-opacity="0.2" filter="url(#blur6)"/>
+    <circle cx="1055" cy="480" r="40" fill="#6366F1" fill-opacity="0.18" filter="url(#blur6)"/>
+
+    <!-- ── TIER-1 HUB NODES ── -->
+    <!-- C — central : north star spikes (polygones effilés) -->
+    <!-- Spike Nord -->
+    <polygon points="870,268 872,338 868,338" fill="#C4B5FD" opacity="0.7"/>
+    <!-- Spike Sud -->
+    <polygon points="870,442 872,372 868,372" fill="#C4B5FD" opacity="0.7"/>
+    <!-- Spike Est -->
+    <polygon points="942,355 902,357 902,353" fill="#C4B5FD" opacity="0.7"/>
+    <!-- Spike Ouest -->
+    <polygon points="798,355 838,357 838,353" fill="#C4B5FD" opacity="0.7"/>
+    <!-- Spikes diagonaux à 45° — pointe à ±50px sur x et y depuis (870,355) -->
+    <!-- NE: pointe (920,305), base centrée sur (898,333) ±2 perpendiculaire -->
+    <polygon points="920,305 900,335 896,331" fill="#A78BFA" opacity="0.45"/>
+    <!-- NO: pointe (820,305), base centrée sur (842,333) ±2 perpendiculaire -->
+    <polygon points="820,305 840,335 844,331" fill="#A78BFA" opacity="0.45"/>
+    <!-- SE: pointe (920,405), base centrée sur (898,377) ±2 perpendiculaire -->
+    <polygon points="920,405 900,375 896,379" fill="#A78BFA" opacity="0.45"/>
+    <!-- SO: pointe (820,405), base centrée sur (842,377) ±2 perpendiculaire -->
+    <polygon points="820,405 840,375 844,379" fill="#A78BFA" opacity="0.45"/>
+    <!-- Nœud -->
+    <circle cx="870" cy="355" r="30" fill="#15172A" stroke="#9F8BFF" stroke-width="2.8"/>
+    <circle cx="870" cy="355" r="17" fill="#7C6AF7" opacity="0.92"/>
+    <circle cx="870" cy="355" r="7.5" fill="#E8E6F0" opacity="0.97"/>
+
+    <!-- H1 — left hub -->
+    <circle cx="690" cy="235" r="22" fill="#14162A" stroke="#C4B5FD" stroke-width="2.4"/>
+    <circle cx="690" cy="235" r="12" fill="#A78BFA" opacity="0.9"/>
+    <circle cx="690" cy="235" r="5"  fill="#E8E6F0" opacity="0.9"/>
+
+    <!-- H2 — top-right hub -->
+    <circle cx="1040" cy="175" r="19" fill="#13152A" stroke="#9F8BFF" stroke-width="2.2"/>
+    <circle cx="1040" cy="175" r="10" fill="#818CF8" opacity="0.88"/>
+    <circle cx="1040" cy="175" r="4.5" fill="#E8E6F0" opacity="0.88"/>
+
+    <!-- H3 — bottom-right hub -->
+    <circle cx="1055" cy="480" r="18" fill="#13152A" stroke="#7C6AF7" stroke-width="2"/>
+    <circle cx="1055" cy="480" r="9"  fill="#7C6AF7" opacity="0.86"/>
+    <circle cx="1055" cy="480" r="4"  fill="#C4B5FD" opacity="0.85"/>
+
+    <!-- ── BITEMPORAL TIMELINE — signature ── -->
+    <!-- Dashed arc along bottom of graph area -->
+    <path d="M 490 620 Q 760 568 1060 615" stroke="#7C6AF7" stroke-width="1.5" fill="none" opacity="0.28" stroke-dasharray="6,8"/>
+    <!-- Tick marks on timeline -->
+    <line x1="540"  y1="611" x2="540"  y2="623" stroke="#7C6AF7" stroke-width="1.2" opacity="0.35"/>
+    <line x1="660"  y1="598" x2="660"  y2="610" stroke="#7C6AF7" stroke-width="1.2" opacity="0.35"/>
+    <line x1="780"  y1="590" x2="780"  y2="602" stroke="#A78BFA" stroke-width="1.2" opacity="0.4"/>
+    <line x1="900"  y1="592" x2="900"  y2="604" stroke="#A78BFA" stroke-width="1.2" opacity="0.4"/>
+    <line x1="1010" y1="601" x2="1010" y2="613" stroke="#7C6AF7" stroke-width="1.2" opacity="0.35"/>
+    <!-- Labels -->
+    <text x="540"  y="638" font-family="'SF Mono',monospace" font-size="16" fill="#7C6AF7" text-anchor="middle" opacity="0.38">t₀</text>
+    <text x="780"  y="626" font-family="'SF Mono',monospace" font-size="16" fill="#A78BFA" text-anchor="middle" opacity="0.42">tᵥ</text>
+    <text x="1010" y="634" font-family="'SF Mono',monospace" font-size="16" fill="#7C6AF7" text-anchor="middle" opacity="0.38">tₙ</text>
+
+    <!-- ── LEFT PANEL — text ── -->
+    <!-- Vertical accent rule -->
+    <rect x="88" y="160" width="4" height="400" rx="2" fill="#7C6AF7" opacity="0.75"/>
+
+    <!-- Eyebrow -->
+    <text x="112" y="200"
+      font-family="'SF Mono','Fira Mono','Consolas',monospace"
+      font-size="22" fill="#7C6AF7" letter-spacing="5" opacity="0.88">OPEN SOURCE · AGENTS</text>
+
+    <!-- Main logotype -->
+    <text x="108" y="318"
+      font-family="'SF Mono','Fira Mono','Consolas',monospace"
+      font-size="108" font-weight="700" fill="url(#titleGrad)"
+      letter-spacing="-3">OpenLore</text>
+
+    <!-- Tagline -->
+    <text x="114" y="375"
+      font-family="'Inter','Helvetica Neue',sans-serif"
+      font-size="30" fill="#9CA3AF" letter-spacing="0.5">Memory &amp; knowledge graph for AI agents</text>
+
+    <!-- Divider -->
+    <line x1="112" y1="408" x2="440" y2="408" stroke="#2A2D45" stroke-width="1"/>
+
+    <!-- Feature chips row -->
+    <!-- chip: bitemporal -->
+    <rect x="112" y="426" width="185" height="44" rx="22" fill="#17192E" stroke="#7C6AF7" stroke-width="1.5" opacity="0.92"/>
+    <text x="204" y="454" font-family="'SF Mono',monospace" font-size="20" fill="#A78BFA" text-anchor="middle" letter-spacing="0.5">bitemporal</text>
+
+    <!-- chip: GraphRAG -->
+    <rect x="308" y="426" width="155" height="44" rx="22" fill="#17192E" stroke="#6366F1" stroke-width="1.5" opacity="0.92"/>
+    <text x="385" y="454" font-family="'SF Mono',monospace" font-size="20" fill="#818CF8" text-anchor="middle" letter-spacing="0.5">GraphRAG</text>
+
+    <!-- chip: orient -->
+    <rect x="474" y="426" width="135" height="44" rx="22" fill="#17192E" stroke="#6366F1" stroke-width="1.2" opacity="0.85"/>
+    <text x="541" y="454" font-family="'SF Mono',monospace" font-size="20" fill="#818CF8" text-anchor="middle" letter-spacing="0.5">orient</text>
+
+    <!-- Description block -->
+    <text x="114" y="520"
+      font-family="'Inter','Helvetica Neue',sans-serif"
+      font-size="24" fill="#6B7280" letter-spacing="0.2">Persistent, queryable memory with confidence</text>
+    <text x="114" y="552"
+      font-family="'Inter','Helvetica Neue',sans-serif"
+      font-size="24" fill="#6B7280" letter-spacing="0.2">boundaries for long-running agent systems.</text>
+
+    <!-- Bottom border accent -->
+    <rect x="0" y="708" width="1280" height="12" rx="0" fill="#7C6AF7" opacity="0.18"/>
+  </g>
+</svg>

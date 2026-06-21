@@ -56,6 +56,7 @@
     "pi-package"
   ],
   "pi": {
+    "image": "https://raw.githubusercontent.com/clay-good/openlore/main/docs/openlore-gallery.png",
     "extensions": [
       "./dist/pi/extension.js"
     ],

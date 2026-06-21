@@ -20,6 +20,10 @@
 </p>
 
 <p align="center">
+  <img src="docs/openlore-gallery.png" alt="OpenLore — memory & knowledge graph for AI agents" width="640">
+</p>
+
+<p align="center">
   <img src="docs/openlore-demo.gif" alt="OpenLore on Django (7,066 files): onboard once, then one deterministic orient() call replaces grepping and reading 75 files to find a function's 160-caller blast radius" width="100%">
 </p>
 
