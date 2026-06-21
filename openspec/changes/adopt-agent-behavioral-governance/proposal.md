@@ -76,6 +76,29 @@ These are the parts that carry real cost, external dependencies, or unproven int
 | **Auto-installed hooks** (`setup --hooks` wiring PreToolUse panic-check + UserPromptSubmit gryph-watch) | Default install footprint. Users opt in manually until the core is validated. |
 | **The observe → memory feedback loop** | The piece that most directly serves the north star: turning "agents reliably get lost in module X on this repo" into a durable memory/orient signal. Designed as its own change once observe-mode data exists. |
 
+## The validation gate (the constraint that governs everything above)
+
+**This change lands the machinery green; it does NOT prove the panic signal is accurate.** That
+distinction is the most important thing in this proposal. A freshness signal is a fact ("the index
+moved") and is cheap to trust. A panic signal is a *judgment* ("you appear to be thrashing"), and a
+wrong judgment is negative value — it spends the tokens we exist to save and interrupts good work.
+
+Therefore: **`observe`-mode validation is a hard gate, not a nice-to-have.** No interventional behavior
+(`advisory` injection on by default, `experimental_blocking`, auto-installed hooks) ships *on by
+default* until `observe`-mode telemetry from real sessions demonstrates the signal is accurate enough
+to act on. Concretely, the gate the follow-up must clear:
+
+- A measured **false-positive rate** (panic raised during work a human judges coherent) low enough that
+  acting on the signal is net-positive. If focused deep work trips L2+, the signal is not ready.
+- Evidence that **interventions change behavior for the better** — the `panic_intervention_outcome`
+  telemetry (orient-after-intervention) trending the right way, not agents ignoring or fighting the nudge.
+- A defensible **recovery story** — episodes resolve (via orient or decay), they don't oscillate.
+
+Until that evidence exists, the layer's only sanctioned posture is `off` (default) or `observe`
+(silent measurement). Shipping intervention before the gate is cleared is explicitly out of scope and
+contrary to the north star. The order is: **land the substrate (this PR) → measure in `observe` →
+only then consider turning anything on.**
+
 ## North-star alignment (how the core actually helps agents)
 
 - **Saves labor/tokens only if accurate.** The core ships `observe` (silent) so we can measure

@@ -49,8 +49,12 @@
       `GRYPH_*` constants) — dormant, no build/behavior impact.
 
 ## 5. Deferred — follow-up PRs (NOT this PR)
-- [ ] **Validate accuracy** on `observe`-mode telemetry: false-positive rate on real sessions. Gate all
-      intervention on this.
+- [ ] **Validate accuracy (the gate).** This PR lands the machinery green but does NOT prove the panic
+      signal is accurate. Before any interventional posture ships on by default, `observe`-mode telemetry
+      from real sessions must show: (a) a false-positive rate low enough that acting is net-positive
+      (focused deep work must not trip L2+), (b) `panic_intervention_outcome` trending positive
+      (orient-after-intervention, not ignored/fought), (c) episodes resolve rather than oscillate.
+      Everything below is blocked on this gate.
 - [ ] **`experimental_blocking`** mode — only after accuracy is shown.
 - [ ] **Gryph** (`gryph-bridge.ts`, `gryph-watch.ts`, daemon, PID file, CAS, external binary) — evaluated
       on its own merits as a separate change.

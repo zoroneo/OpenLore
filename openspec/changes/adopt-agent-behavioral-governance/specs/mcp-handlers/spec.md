@@ -25,6 +25,20 @@ its background process, and any auto-installed agent hooks are OUT OF SCOPE for 
 SHALL NOT be enabled by default; they are deferred to follow-up changes gated on validated signal
 accuracy.
 
+No interventional posture (default `advisory` injection, `experimental_blocking`, or auto-installed
+hooks) SHALL ship enabled-by-default until the panic signal's accuracy is validated from `observe`-mode
+telemetry on real sessions — a measured false-positive rate low enough that acting on the signal is
+net-positive, plus evidence that interventions improve rather than disrupt behavior. Landing the
+scoring machinery does NOT satisfy this gate. Until it is cleared, the only sanctioned modes are `off`
+(default) and `observe` (silent measurement).
+
+#### Scenario: Intervention stays gated until accuracy is validated
+
+- **GIVEN** the behavioral governance machinery is integrated and green
+- **WHEN** a maintainer considers enabling an interventional posture by default
+- **THEN** it remains gated until `observe`-mode telemetry demonstrates an acceptable false-positive
+  rate and net-positive intervention outcomes — the machinery being present is not itself sufficient
+
 #### Scenario: Default off has zero behavioral footprint
 
 - **GIVEN** a project with no `panicResponse.mode` set (or `mode: 'off'`)
