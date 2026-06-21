@@ -91,20 +91,23 @@ export function validateSpecStoreConfig(
   homeDir: string,
 ): SpecStoreFinding[] {
   const findings: SpecStoreFinding[] = [];
-  const name = (binding.name ?? '').trim();
-  const path = (binding.path ?? '').trim();
+  // Config arrives via raw JSON.parse with no schema validation, so any field may
+  // be the wrong type. Coerce defensively — a non-string name/path must never make
+  // `.trim()` throw (the contract is no-throw); it is treated as missing/invalid.
+  const name = typeof binding.name === 'string' ? binding.name.trim() : '';
+  const path = typeof binding.path === 'string' ? binding.path.trim() : '';
 
   if (!name) {
     findings.push({
       code: 'binding-invalid', severity: 'error', subject: 'specStore.name',
-      message: 'Binding has no name.',
+      message: binding.name == null ? 'Binding has no name.' : 'Binding "name" is not a string.',
       remediation: 'Set "specStore.name" to a non-empty string in .openlore/config.json.',
     });
   }
   if (!path) {
     findings.push({
       code: 'binding-invalid', severity: 'error', subject: 'specStore.path',
-      message: 'Binding has no path.',
+      message: binding.path == null ? 'Binding has no path.' : 'Binding "path" is not a string.',
       remediation: 'Set "specStore.path" to the spec repository location in .openlore/config.json.',
     });
   } else if (canonicalize(path, homeDir) === canonicalize(homeDir, homeDir)) {
@@ -115,7 +118,16 @@ export function validateSpecStoreConfig(
     });
   }
 
-  const targets = Array.isArray(binding.targets) ? binding.targets : [];
+  // targets/references may contain non-string entries (wrong-typed JSON). Flag them
+  // and reduce to the string entries for the dup/cross-list checks below.
+  const targets = stringEntries(binding.targets);
+  if (Array.isArray(binding.targets) && binding.targets.some(t => typeof t !== 'string')) {
+    findings.push({
+      code: 'binding-invalid', severity: 'error', subject: 'specStore.targets',
+      message: '"specStore.targets" contains a non-string entry.',
+      remediation: 'Every entry in "specStore.targets" must be a repository name string.',
+    });
+  }
   const dupTargets = duplicates(targets);
   for (const d of dupTargets) {
     findings.push({
@@ -124,7 +136,14 @@ export function validateSpecStoreConfig(
       remediation: `Remove the duplicate "${d}" from "specStore.targets".`,
     });
   }
-  const references = Array.isArray(binding.references) ? binding.references : [];
+  const references = stringEntries(binding.references);
+  if (Array.isArray(binding.references) && binding.references.some(r => typeof r !== 'string')) {
+    findings.push({
+      code: 'binding-invalid', severity: 'error', subject: 'specStore.references',
+      message: '"specStore.references" contains a non-string entry.',
+      remediation: 'Every entry in "specStore.references" must be a repository name string.',
+    });
+  }
   const dupRefs = duplicates(references);
   for (const d of dupRefs) {
     findings.push({
@@ -157,6 +176,11 @@ function duplicates(names: string[]): string[] {
     else seen.add(n);
   }
   return [...dup];
+}
+
+/** The string entries of a possibly-wrong-typed JSON value (non-strings dropped). */
+function stringEntries(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
 /** Resolve one declared name against the registry and classify its index state. */
@@ -252,8 +276,8 @@ export async function handleSpecStoreStatus(directory: string): Promise<SpecStor
   const findings: SpecStoreFinding[] = [];
   findings.push(...validateSpecStoreConfig(binding, absDir));
 
-  const storeName = (binding.name ?? '').trim();
-  const storePath = (binding.path ?? '').trim();
+  const storeName = typeof binding.name === 'string' ? binding.name.trim() : '';
+  const storePath = typeof binding.path === 'string' ? binding.path.trim() : '';
 
   // Store path presence.
   if (storePath && !existsSync(resolve(absDir, storePath))) {
@@ -283,7 +307,7 @@ export async function handleSpecStoreStatus(directory: string): Promise<SpecStor
   }
 
   const targets: ResolvedRepoStatus[] = [];
-  for (const t of dedupePreserveOrder(Array.isArray(binding.targets) ? binding.targets : [])) {
+  for (const t of dedupePreserveOrder(stringEntries(binding.targets))) {
     if (!registryReadable) { targets.push({ name: t, resolved: false }); continue; }
     const { status, finding } = resolveTarget(t, byName);
     targets.push(status);
@@ -291,7 +315,7 @@ export async function handleSpecStoreStatus(directory: string): Promise<SpecStor
   }
 
   const references: ResolvedRepoStatus[] = [];
-  for (const r of dedupePreserveOrder(Array.isArray(binding.references) ? binding.references : [])) {
+  for (const r of dedupePreserveOrder(stringEntries(binding.references))) {
     if (!registryReadable) { references.push({ name: r, resolved: false }); continue; }
     const { status, finding } = resolveReference(r, byName);
     references.push(status);

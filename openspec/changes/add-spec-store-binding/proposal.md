@@ -110,6 +110,14 @@ and `openspec/specs/cli/spec.md` (SpecStoreStatusCommand).
   bound repo in the presence check — unified to the bound repo. The report now echoes the trimmed store
   name/path it actually validated. Regression tests cover all of these, including a `dispatchTool`
   route test (the surface the throw escaped through).
+- **Second adversarial pass (same PR).** A wrong-typed config field (`"name": 123`, `"path": 456`, or a
+  non-string entry in `targets`/`references`) made `.trim()` throw — the same no-throw contract
+  violation via a different door, since config arrives as unvalidated `JSON.parse`. Fixed with
+  type-safe coercion: a non-string `name`/`path` degrades to `binding-invalid` ("not a string"), and
+  non-string array entries are flagged and dropped from resolution (no numeric cascade). Also cleaned a
+  spec-categorization defect: the decision sync had appended this binding's requirement to the
+  unrelated `analyzer` and `drift` specs (over-inferred `affectedDomains`); removed from both, retained
+  in `config`/`mcp-handlers`/`cli` where it belongs.
 - **MCP tool**: `spec_store_status` — classified `conclusion` in `tool-contract.ts`; registered in
   `tool-dispatch.ts`, `TOOL_DEFINITIONS` (`mcp.ts`), and the live `tool-driver.ts` registry. Added to
   the opt-in `federation` preset (it resolves against the same registry, like `federation_status`);

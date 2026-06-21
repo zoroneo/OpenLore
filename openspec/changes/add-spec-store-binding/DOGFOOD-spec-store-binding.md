@@ -112,3 +112,24 @@ surface the throw escaped through).
   `openlore spec-store status` added to `docs/cli-reference.md`; the `specStore` block documented in
   `docs/configuration.md`; a spec-store binding subsection added to `docs/federation.md`. Tool count
   unchanged (61 — no new tool this pass).
+
+## Second adversarial pass (2026-06-21)
+
+A deeper sweep (two more reviewers + a malformed-type e2e battery) found one more throw vector and a
+spec-categorization defect; both fixed. An independent breadth review confirmed no other throw/block/
+miscount path remains (NUL bytes, symlink loops, huge paths, non-string/object inputs all verified safe).
+
+| # | Adversarial input | Before | After |
+|---|-------------------|--------|-------|
+| G | `"name": 123` / `"path": 456` (wrong-typed config) | **THREW** `(...).trim is not a function` → MCP `isError` | `binding-invalid` ("not a string"); no throw |
+| H | `"targets": [1, "ok", 2]` (non-string entries) | numeric entries resolved with numeric subjects | `binding-invalid` (non-string entry); numbers dropped from resolution; only `"ok"` resolves |
+| I | `"specStore": "not-an-object"` | (untested) | degrades to `binding-invalid`, no throw |
+| J | decision-sync polluted `analyzer` + `drift` specs with this binding's requirement | over-inferred `affectedDomains` | requirement removed from both; retained in `config`/`mcp-handlers`/`cli` |
+
+Root cause of G/H: `.openlore/config.json` is consumed as unvalidated `JSON.parse`, so any field can be
+the wrong type; `(binding.name ?? '').trim()` throws on a number. Fixed with `typeof`-guarded coercion
+and a `stringEntries()` helper. Live CLI run of the combined malformed binding:
+`codes: binding-invalid, binding-invalid, binding-invalid, target-unresolved | sound: false | exit 0`.
+
+- +3 regression tests (non-string name/path, non-string array entries, non-object `specStore`).
+- Full `src` suite after pass 2: **4307 pass, 2 skip**; `eslint src` clean; build clean.

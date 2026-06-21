@@ -291,4 +291,34 @@ describe('handleSpecStoreStatus — adversarial / hardening', () => {
     expect(result.bound).toBe(true);
     expect(result.findings.some(f => f.code === 'registry-unreadable')).toBe(true);
   });
+
+  // Config arrives via raw JSON.parse — a wrong-typed field must NOT throw on .trim().
+  it('does NOT throw on a non-string name/path — degrades to binding-invalid', async () => {
+    writeBinding({ name: 123, path: 456, targets: ['api'] } as unknown as SpecStoreConfig);
+
+    const report = await handleSpecStoreStatus(home);
+    expect(report.findings.filter(f => f.code === 'binding-invalid').length).toBeGreaterThanOrEqual(2);
+    expect(report.findings.some(f => /not a string/i.test(f.message))).toBe(true);
+    expect(report.sound).toBe(false);
+    expect(() => assertConclusionShape('spec_store_status', report)).not.toThrow();
+  });
+
+  it('does NOT throw on non-string entries in targets — flags binding-invalid and drops them from resolution', async () => {
+    const store = makeRepo('plans', null);
+    writeBinding({ name: 'plans', path: store, targets: [1, 2] } as unknown as SpecStoreConfig);
+
+    const report = await handleSpecStoreStatus(home);
+    expect(report.findings.some(f => f.code === 'binding-invalid' && /non-string/i.test(f.message))).toBe(true);
+    // The numeric entries are not resolved as targets (no numeric target-unresolved cascade).
+    expect(report.findings.filter(f => f.code === 'target-unresolved')).toHaveLength(0);
+    expect(report.targets).toHaveLength(0);
+  });
+
+  it('does NOT throw when specStore itself is not an object', async () => {
+    writeBinding('not-an-object' as unknown as SpecStoreConfig);
+    const report = await handleSpecStoreStatus(home);
+    // A primitive specStore has no name/path -> binding-invalid, but never throws.
+    expect(report.bound).toBe(true);
+    expect(() => assertConclusionShape('spec_store_status', report)).not.toThrow();
+  });
 });
