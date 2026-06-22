@@ -15,7 +15,7 @@
  */
 
 import { existsSync, realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, basename } from 'node:path';
 import { validateDirectory } from './utils.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { listRepos, evaluateRepoState } from '../../federation/registry.js';
@@ -266,7 +266,7 @@ export async function handleSpecStoreStatus(directory: string): Promise<SpecStor
       targets: [],
       references: [],
       findings: [{
-        code: 'no-binding', severity: 'info', subject: absDir,
+        code: 'no-binding', severity: 'info', subject: basename(absDir),
         message: 'No spec-store binding is configured; single-repository behavior is unchanged.',
         remediation: 'Add a "specStore" block to .openlore/config.json to bind an external spec store.',
       }],

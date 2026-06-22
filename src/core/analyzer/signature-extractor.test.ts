@@ -33,6 +33,11 @@ describe('detectLanguage', () => {
     ['view.tsx',  'TypeScript'],
     ['main.js',   'JavaScript'],
     ['comp.jsx',  'JavaScript'],
+    // Node ESM / CommonJS + TS module variants must not be dropped as 'unknown'.
+    ['esm.mjs',   'JavaScript'],
+    ['cjs.cjs',   'JavaScript'],
+    ['mod.mts',   'TypeScript'],
+    ['mod.cts',   'TypeScript'],
     ['server.go', 'Go'],
     ['lib.rs',    'Rust'],
     ['app.rb',    'Ruby'],

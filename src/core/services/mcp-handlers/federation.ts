@@ -4,6 +4,7 @@
  * only behind the opt-in `federation` preset (change: add-multi-repo-federation).
  */
 
+import { basename } from 'node:path';
 import { validateDirectory } from './utils.js';
 import { listRepos, evaluateRepoState, readRepoFingerprint } from '../../federation/registry.js';
 
@@ -23,7 +24,7 @@ export async function handleFederationStatus(directory: string): Promise<unknown
   });
   const indexed = entries.filter(e => e.state === 'indexed').length;
   return {
-    homeRepo: absDir,
+    homeRepo: basename(absDir),
     registered: entries.length,
     indexed,
     repos: entries,

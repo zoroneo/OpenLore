@@ -18,6 +18,7 @@ import {
   writePanicState,
   casWritePanicState,
   recordHookInterventionLocked,
+  mutatePanicStateLocked,
   buildPanicCheckOutput,
   getPanicSignalText,
 } from './panic-response.js';
@@ -142,6 +143,36 @@ describe('readPanicState', () => {
     expect(read.panicScore).toBe(55);
     expect(read.panicLevel).toBe(2);
     expect(read.triggers).toEqual(['oscillation']);
+  });
+
+  it('treats an unparseable updatedAt as expired (NaN age must not preserve zombie state)', async () => {
+    // new Date("oops").getTime() is NaN, so the old `age > EXPIRY` check was false
+    // and a corrupt file survived forever. It must now reset to default.
+    const bad = JSON.stringify({ schemaVersion: 1, panicScore: 90, panicLevel: 4, updatedAt: 'oops' });
+    await writeFile(join(dir, OPENLORE_DIR, 'panic-state.json'), bad, 'utf-8');
+    const state = readPanicState(dir);
+    expect(state.panicLevel).toBe(0);
+    expect(state.panicScore).toBe(0);
+  });
+
+  it('sanitizes garbage numeric fields rather than passing them into scoring', async () => {
+    const now = new Date().toISOString();
+    const garbage = JSON.stringify({
+      schemaVersion: 1,
+      updatedAt: now,
+      panicScore: 'abc',          // non-number → default 0
+      panicLevel: 99,             // out of range → clamped to 4
+      localityConfidence: 5,      // > 1 → clamped to 1
+      interventionCountSinceStable: -3, // negative → clamped to 0
+      triggers: ['ok', 42, null], // non-strings dropped
+    });
+    await writeFile(join(dir, OPENLORE_DIR, 'panic-state.json'), garbage, 'utf-8');
+    const state = readPanicState(dir);
+    expect(state.panicScore).toBe(0);
+    expect(state.panicLevel).toBe(4);
+    expect(state.localityConfidence).toBe(1);
+    expect(state.interventionCountSinceStable).toBe(0);
+    expect(state.triggers).toEqual(['ok']);
   });
 });
 
@@ -308,6 +339,47 @@ describe('recordHookInterventionLocked', () => {
     const bad = join(dir, 'nope');
     expect(() => recordHookInterventionLocked(bad, { lastHookInterventionAt: 'x' }, 7)).not.toThrow();
     expect(recordHookInterventionLocked(bad, { lastHookInterventionAt: 'x' }, 7)).toBe(7);
+  });
+});
+
+describe('mutatePanicStateLocked', () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'panic-mutate-'));
+    await mkdir(join(dir, '.openlore'), { recursive: true });
+  });
+
+  it('reads the FRESHEST on-disk state, applies the mutation, and bumps revision', () => {
+    const r0 = writePanicState(dir, { ...defaultPanicState(), interventionCountSinceStable: 5 });
+    const written = mutatePanicStateLocked(dir, (fresh) => ({
+      ...fresh,
+      interventionCountSinceStable: fresh.interventionCountSinceStable + 1,
+    }));
+    // Composed with the on-disk value (5 → 6), not a stale in-memory 0.
+    expect(written.interventionCountSinceStable).toBe(6);
+    expect(written.revision).toBe(r0 + 1);
+    expect(readPanicState(dir).interventionCountSinceStable).toBe(6);
+  });
+
+  it('does NOT clobber a concurrent writer\'s counter increment (the lost-update fix)', () => {
+    // Simulate the MCP path reading a stale tracker (count 0) while the panic-check hook
+    // has already pushed the on-disk counter to 4. The MCP injection must compose with
+    // disk (4 → 5), not overwrite it with the stale tracker value.
+    writePanicState(dir, { ...defaultPanicState(), panicLevel: 2, interventionCountSinceStable: 4 });
+    const staleTrackerCount = 0;
+    const written = mutatePanicStateLocked(dir, (fresh) => ({
+      ...fresh,
+      // a per-call score update that (buggily) carried the stale tracker count would write
+      // staleTrackerCount; the fix reads fresh.interventionCountSinceStable instead.
+      interventionCountSinceStable: fresh.interventionCountSinceStable + 1,
+      panicScore: 50 + staleTrackerCount, // tracker-owned field still applied
+    }));
+    expect(written.interventionCountSinceStable).toBe(5); // 4 (disk) + 1, NOT 1
+  });
+
+  it('fails open to a best-effort write when the lock dir is unwritable (never throws)', () => {
+    const bad = join(dir, 'nope'); // no .openlore → lock open fails
+    expect(() => mutatePanicStateLocked(bad, (s) => s)).not.toThrow();
   });
 });
 

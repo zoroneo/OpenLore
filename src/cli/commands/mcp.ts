@@ -36,7 +36,7 @@ import {
 import {
   validateToolArgs,
   withToolTimeout,
-  capOutput,
+  capStructuredResult,
   classifyToolError,
 } from '../../core/services/mcp-handlers/tool-guard.js';
 
@@ -44,7 +44,7 @@ import { sanitizeMcpError, validateDirectory } from '../../core/services/mcp-han
 import { createTracker, updateTracker, updatePanic, resetPanicOnOrient, getFreshnessSignal, trackerToPanicState } from '../../core/services/mcp-handlers/epistemic-lease.js';
 import type { EpistemicTracker } from '../../core/services/mcp-handlers/epistemic-lease.js';
 import type { PanicResponseMode } from '../../types/index.js';
-import { readPanicState, writePanicState, getPanicSignalText } from '../../core/services/mcp-handlers/panic-response.js';
+import { readPanicState, mutatePanicStateLocked, getPanicSignalText } from '../../core/services/mcp-handlers/panic-response.js';
 import { emit } from '../../core/services/telemetry.js';
 import { readOpenLoreConfig } from '../../core/services/config-manager.js';
 import { MCP_TOOL_MAX_BYTES } from '../../constants.js';
@@ -1973,17 +1973,22 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
               tool: name,
             });
           }
-          const stateToWrite = {
-            ...trackerToPanicState(tracker, agentName),
-            lastHookInterventionAt: diskState.lastHookInterventionAt,
-            gryphWindowStart: diskState.gryphWindowStart,
-            // Never regress the revision below what another writer (the panic-check hook)
-            // already persisted — a fresh in-memory tracker starts at revision 0, so seed
-            // the write from the highest revision seen on disk. Keeps the monotonic-revision
-            // invariant across writers (relied on by the deferred Gryph CAS path).
-            revision: Math.max(tracker.panicRevision, diskState.revision ?? 0),
-          };
-          tracker.panicRevision = writePanicState(directory, stateToWrite);
+          // Locked read-modify-write so this per-call score/level update cannot clobber a
+          // concurrent panic-check hook or gryph daemon write. The hook/daemon own the
+          // cross-process fields (interventionCountSinceStable, lastHookInterventionAt,
+          // gryphWindowStart), so they are carried over from the FRESHEST on-disk read, not
+          // from the in-memory tracker. The counter is preserved while panicLevel > 0 (so a
+          // concurrent hook increment survives) and reset to 0 at level 0 — matching the
+          // tracker's own invariant (level 0 ⟺ count 0; see updatePanic/resetPanicOnOrient).
+          const t = tracker; // capture non-null binding for the deferred closure
+          const written = mutatePanicStateLocked(directory, (fresh) => ({
+            ...trackerToPanicState(t, agentName),
+            lastHookInterventionAt: fresh.lastHookInterventionAt,
+            gryphWindowStart: fresh.gryphWindowStart,
+            interventionCountSinceStable: t.panicLevel === 0 ? 0 : fresh.interventionCountSinceStable,
+          }));
+          t.panicRevision = written.revision;
+          t.interventionCountSinceStable = written.interventionCountSinceStable;
 
           // Feedback loop: did orient() respond to a prior hook intervention?
           if (isOrient && diskState.lastHookInterventionAt) {
@@ -2052,11 +2057,11 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
         };
       }
 
-      const rawText =
-        typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-      // Output cap (spec-10): truncate deterministically with a how-to-narrow note
-      // rather than silently dropping data or blowing the agent's context.
-      const { text, truncated } = capOutput(rawText, MCP_TOOL_MAX_BYTES);
+      // Output cap (spec-10): bound the response to a byte budget rather than blowing
+      // the agent's context. capStructuredResult truncates at the STRUCTURED level so a
+      // JSON result stays valid+parseable (naive byte-truncation of serialized JSON cuts
+      // mid-string-literal — e.g. get_spec on a >256 KB spec — and is unusable).
+      const { text, truncated } = capStructuredResult(result, MCP_TOOL_MAX_BYTES);
 
       emit(directory, 'mcp', {
         event: 'tool_call', tool: name, ms: Date.now() - _t0, agent: agentName, agent_version: agentVersion,
@@ -2080,8 +2085,19 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
         const panicText = getPanicSignalText(panicState);
         if (panicText) {
           content.push({ type: 'text', text: panicText });
-          tracker.interventionCountSinceStable++;
-          tracker.panicRevision = writePanicState(directory, trackerToPanicState(tracker, agentName));
+          // An injected signal is itself an intervention. Increment the SHARED on-disk
+          // counter under the lock so it composes with concurrent panic-check hook
+          // increments rather than clobbering them (the advisory→directive escalation
+          // gate reads this unified count). Carry hook/daemon-owned fields from disk.
+          const t = tracker; // capture non-null binding for the deferred closure
+          const written = mutatePanicStateLocked(directory, (fresh) => ({
+            ...trackerToPanicState(t, agentName),
+            lastHookInterventionAt: fresh.lastHookInterventionAt,
+            gryphWindowStart: fresh.gryphWindowStart,
+            interventionCountSinceStable: fresh.interventionCountSinceStable + 1,
+          }));
+          t.panicRevision = written.revision;
+          t.interventionCountSinceStable = written.interventionCountSinceStable;
           emit(directory, 'panic', {
             event: 'panic_signal_injected',
             panic_level: tracker.panicLevel,

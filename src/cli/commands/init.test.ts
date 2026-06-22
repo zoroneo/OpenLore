@@ -42,6 +42,7 @@ vi.mock('../../core/services/gitignore-manager.js', () => ({
   gitignoreExists: vi.fn().mockResolvedValue(false),
   isInGitignore: vi.fn().mockResolvedValue(false),
   addToGitignore: vi.fn().mockResolvedValue(undefined),
+  ensureGitignored: vi.fn().mockResolvedValue('created'),
 }));
 
 vi.mock('@inquirer/prompts', () => ({
@@ -226,7 +227,7 @@ describe('init command', () => {
 
       try {
         await initCommand.parseAsync(['node', 'init'], { from: 'user' });
-        expect(gitignoreManager.addToGitignore).toHaveBeenCalled();
+        expect(gitignoreManager.ensureGitignored).toHaveBeenCalled();
       } finally {
         Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
       }
@@ -238,15 +239,28 @@ describe('init command', () => {
       vi.mocked(gitignoreManager.isInGitignore).mockResolvedValue(true);
 
       await initCommand.parseAsync(['node', 'init'], { from: 'user' });
-      expect(gitignoreManager.addToGitignore).not.toHaveBeenCalled();
+      expect(gitignoreManager.ensureGitignored).not.toHaveBeenCalled();
     });
 
-    it('should skip gitignore update when no .gitignore file exists', async () => {
+    it('should create .gitignore with .openlore/ when no .gitignore file exists', async () => {
       const gitignoreManager = await import('../../core/services/gitignore-manager.js');
       vi.mocked(gitignoreManager.gitignoreExists).mockResolvedValue(false);
+      vi.mocked(gitignoreManager.isInGitignore).mockResolvedValue(false);
 
-      await initCommand.parseAsync(['node', 'init'], { from: 'user' });
-      expect(gitignoreManager.addToGitignore).not.toHaveBeenCalled();
+      // Non-TTY: auto-add (no interactive prompt)
+      const originalIsTTY = process.stdin.isTTY;
+      Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+
+      try {
+        await initCommand.parseAsync(['node', 'init'], { from: 'user' });
+        expect(gitignoreManager.ensureGitignored).toHaveBeenCalledWith(
+          expect.any(String),
+          '.openlore/',
+          expect.any(String)
+        );
+      } finally {
+        Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
+      }
     });
   });
 

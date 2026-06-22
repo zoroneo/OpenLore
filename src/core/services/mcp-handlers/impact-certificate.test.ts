@@ -149,6 +149,15 @@ describe('surfacesFromConfig', () => {
     ] });
     expect(out.map(s => s.name)).toEqual(['real']);
   });
+  it('drops non-object members (null/string/number) that would crash resolveSurfaces', () => {
+    // Members arrive via raw JSON.parse; a `null` element passes the Array.isArray
+    // check but would throw at resolveSurfaces' `m.symbol` access — a no-throw violation.
+    const out = surfacesFromConfig({ surfaces: [
+      { name: 's', members: [null, 'str', 42, { symbol: 'keep' }] as never, severity: 'warn' },
+    ] });
+    expect(out).toHaveLength(1);
+    expect(out[0].members).toEqual([{ symbol: 'keep' }]);
+  });
 });
 
 // ── 2. newly-opened-path detection (the differential core) ─────────────────────

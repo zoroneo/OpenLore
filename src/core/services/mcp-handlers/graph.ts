@@ -1003,15 +1003,22 @@ export async function handleGetFileDependencies(
     return { error: 'No dependency graph found. Run "openlore analyze" first.' };
   }
 
-  // Resolve the file path to the same form used in the graph (relative or absolute)
+  // A valid-but-partial artifact (e.g. {} or an interrupted analyze) parses fine but has
+  // no nodes/edges arrays — guard the shape so .find()/.map() can't throw out of the handler.
+  if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
+    return { error: 'No dependency graph found. Run "openlore analyze" first.' };
+  }
+
+  // Resolve the file path to the same form used in the graph (relative or absolute).
+  // node.file may be absent on a malformed node — access it defensively.
   const node = graph.nodes.find(
-    n => n.file.path === filePath || n.file.absolutePath.endsWith('/' + filePath.replace(/^\//, ''))
+    n => n.file?.path === filePath || n.file?.absolutePath?.endsWith('/' + filePath.replace(/^\//, ''))
   );
   if (!node) {
     return { error: `File not found in dependency graph: ${filePath}`, hint: 'Use a relative path from the project root, e.g. "src/core/analyzer/vector-index.ts"' };
   }
 
-  const nodeIdToPath = new Map(graph.nodes.map(n => [n.id, n.file.path]));
+  const nodeIdToPath = new Map(graph.nodes.map(n => [n.id, n.file?.path ?? n.id]));
 
   const imports = (direction === 'imports' || direction === 'both')
     ? graph.edges

@@ -27,6 +27,7 @@ vi.mock('../core/services/gitignore-manager.js', () => ({
   gitignoreExists: vi.fn(),
   isInGitignore: vi.fn(),
   addToGitignore: vi.fn(),
+  ensureGitignored: vi.fn(),
 }));
 
 import {
@@ -44,6 +45,7 @@ import {
   gitignoreExists,
   isInGitignore,
   addToGitignore,
+  ensureGitignored,
 } from '../core/services/gitignore-manager.js';
 
 const mockDetectProjectType = vi.mocked(detectProjectType);
@@ -56,6 +58,7 @@ const mockCreateOpenSpecStructure = vi.mocked(createOpenSpecStructure);
 const mockGitignoreExists = vi.mocked(gitignoreExists);
 const mockIsInGitignore = vi.mocked(isInGitignore);
 const mockAddToGitignore = vi.mocked(addToGitignore);
+const mockEnsureGitignored = vi.mocked(ensureGitignored);
 
 // ============================================================================
 // SETUP
@@ -76,6 +79,7 @@ beforeEach(() => {
   mockGitignoreExists.mockResolvedValue(false);
   mockIsInGitignore.mockResolvedValue(false);
   mockAddToGitignore.mockResolvedValue(true);
+  mockEnsureGitignored.mockResolvedValue('created');
 });
 
 // ============================================================================
@@ -94,30 +98,12 @@ describe('openloreInit', () => {
       expect(mockCreateOpenSpecStructure).toHaveBeenCalledOnce();
     });
 
-    it('adds .openlore/ to .gitignore when gitignore exists', async () => {
-      mockGitignoreExists.mockResolvedValue(true);
-      mockIsInGitignore.mockResolvedValue(false);
-
+    it('delegates .openlore/ gitignore handling to ensureGitignored (which creates the file when absent)', async () => {
       await openloreInit({ rootPath: ROOT });
 
-      expect(mockAddToGitignore).toHaveBeenCalledWith(ROOT, '.openlore/', expect.any(String));
-    });
-
-    it('skips addToGitignore when .openlore/ already in gitignore', async () => {
-      mockGitignoreExists.mockResolvedValue(true);
-      mockIsInGitignore.mockResolvedValue(true);
-
-      await openloreInit({ rootPath: ROOT });
-
-      expect(mockAddToGitignore).not.toHaveBeenCalled();
-    });
-
-    it('skips addToGitignore when no .gitignore file', async () => {
-      mockGitignoreExists.mockResolvedValue(false);
-
-      await openloreInit({ rootPath: ROOT });
-
-      expect(mockAddToGitignore).not.toHaveBeenCalled();
+      // The create-or-append/skip decision lives in ensureGitignored (covered by its
+      // own tests); init just delegates so a fresh `git init` repo always gets ignored.
+      expect(mockEnsureGitignored).toHaveBeenCalledWith(ROOT, '.openlore/', expect.any(String));
     });
 
     it('skips createOpenSpecStructure when openspec dir already exists', async () => {

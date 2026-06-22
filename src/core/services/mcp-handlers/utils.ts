@@ -263,6 +263,22 @@ export async function readCachedContext(directory: string, timeout?: number): Pr
         return null;
       }
       const ctx = parsed as CachedContext;
+      // Normalize a present callGraph so `nodes`/`edges` are always arrays. A truncated
+      // or hand-edited artifact (`{"callGraph": {}}`) — or a minimal one carrying only
+      // entryPoints/hubFunctions — would otherwise throw when a handler does
+      // `cg.nodes.map(...)`. Coerce the missing/invalid arrays to [] (graceful empty)
+      // rather than dropping the whole graph: other handlers (architecture overview)
+      // legitimately read entryPoints/hubFunctions without touching nodes/edges. A
+      // callGraph that isn't even an object is unusable, so drop that.
+      if (ctx.callGraph !== undefined) {
+        if (typeof ctx.callGraph === 'object' && ctx.callGraph !== null) {
+          const cg = ctx.callGraph as { nodes?: unknown; edges?: unknown };
+          if (!Array.isArray(cg.nodes)) cg.nodes = [];
+          if (!Array.isArray(cg.edges)) cg.edges = [];
+        } else {
+          ctx.callGraph = undefined;
+        }
+      }
       if (EdgeStore.exists(analysisDir)) {
         const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
         // Schema-bump guard: opening a DB whose SCHEMA_VERSION is stale wipes it

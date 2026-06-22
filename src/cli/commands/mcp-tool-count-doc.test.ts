@@ -35,18 +35,24 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 // one match — the present-tense "not all <N> tools" decision claim — so the exact check
 // holds there too (verified: their only other count phrasing, "~45 MCP tool definitions",
 // is singular "tool" and is not matched).
-const GUARDED_DOCS = [
-  'README.md',
-  'docs/mcp-tools.md',
-  'docs/cli-reference.md',
-  'docs/governance-dogfooding.md',
-  'openspec/specs/cli/spec.md',
+// Most guarded docs mention ONLY the full surface, so every "<N> tools" match must equal
+// the live count. docs/agent-setup.md also documents the curated `openlore-core` always-
+// visible preset ("6 tools"), so that known preset size is allowlisted there — the file is
+// still guarded for its full-surface claims (it drifted to "61" while the surface was 62
+// precisely because nothing tied it to the code).
+const GUARDED_DOCS: Array<{ rel: string; allowPresetCounts?: number[] }> = [
+  { rel: 'README.md' },
+  { rel: 'docs/mcp-tools.md' },
+  { rel: 'docs/cli-reference.md' },
+  { rel: 'docs/governance-dogfooding.md' },
+  { rel: 'docs/agent-setup.md', allowPresetCounts: [6] },
+  { rel: 'openspec/specs/cli/spec.md' },
 ];
 
 describe('documented MCP tool count', () => {
   const expected = TOOL_DEFINITIONS.length;
 
-  it.each(GUARDED_DOCS)('the "N tools" full-surface count in %s matches TOOL_DEFINITIONS.length', (rel) => {
+  it.each(GUARDED_DOCS)('the "N tools" full-surface count in $rel matches TOOL_DEFINITIONS.length', ({ rel, allowPresetCounts = [] }) => {
     const text = readFileSync(join(repoRoot, rel), 'utf8');
     // "58 tools", and also "58 MCP tools" / "58 graph-native tools" — one optional
     // adjective word is allowed between the count and "tools" (those phrasings drifted
@@ -55,8 +61,12 @@ describe('documented MCP tool count', () => {
     const counts = [...text.matchAll(/(\d+)\s+(?:[A-Za-z][\w-]*\s+)?tools\b/g)].map(m => Number(m[1]));
     expect(counts.length, `expected at least one "N tools" mention in ${rel}`).toBeGreaterThan(0);
     for (const n of counts) {
+      if (allowPresetCounts.includes(n)) continue; // documented preset size, not the full surface
       expect(n, `${rel} cites "${n} tools" but the live surface is ${expected}; update the doc (and the byte/token figures) when the tool count changes`).toBe(expected);
     }
+    // The full surface must actually be stated — guard against a file that only ever
+    // mentions preset sizes (which would let the full-surface count vanish unnoticed).
+    expect(counts.includes(expected), `${rel} never states the full surface of ${expected} tools`).toBe(true);
   });
 });
 

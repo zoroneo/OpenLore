@@ -18,6 +18,7 @@ import {
   HOOK_COOLDOWN_MS,
   SEVERITY_MAP,
   PANIC_SESSION_EXPIRY_MS,
+  PANIC_SCORE_MAX,
 } from './panic-constants.js';
 
 // ============================================================================
@@ -106,9 +107,20 @@ export function defaultPanicState(): PanicState {
   };
 }
 
+/** Clamp an untrusted JSON value to a finite number in [min, max], or fall back. */
+function clampNum(v: unknown, min: number, max: number, fallback: number): number {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
+}
+
 /**
  * Reads panic state. Fails open on all error paths:
- * missing file, parse error, wrong schema version, expired session.
+ * missing file, parse error, wrong schema version, expired/invalid session.
+ *
+ * panic-state.json is a hand-editable on-disk file, so every field is treated as
+ * untrusted: numeric fields are coerced and clamped so a garbage value (NaN, a
+ * string, an out-of-range level) can't poison scoring or index off the end of
+ * SEVERITY_MAP/DIRECTIVE_MESSAGES, and a non-parseable `updatedAt` (NaN age) is
+ * treated as expired rather than letting a zombie state survive forever.
  */
 export function readPanicState(directory: string): PanicState {
   try {
@@ -120,13 +132,24 @@ export function readPanicState(directory: string): PanicState {
 
     if (parsed.schemaVersion !== 1) return defaultPanicState();
 
-    // Session hard reset: zombie state from a previous session must not leak
-    if (parsed.updatedAt) {
-      const age = Date.now() - new Date(parsed.updatedAt).getTime();
-      if (age > PANIC_SESSION_EXPIRY_MS) return defaultPanicState();
-    }
+    // Session hard reset: zombie state from a previous session must not leak. A
+    // missing OR unparseable updatedAt (age === NaN) is treated as expired.
+    const age = Date.now() - new Date(parsed.updatedAt ?? 0).getTime();
+    if (!Number.isFinite(age) || age > PANIC_SESSION_EXPIRY_MS) return defaultPanicState();
 
-    return { ...defaultPanicState(), ...parsed, schemaVersion: 1, revision: parsed.revision ?? 0 };
+    const base = defaultPanicState();
+    return {
+      ...base,
+      ...parsed,
+      schemaVersion: 1,
+      panicScore: clampNum(parsed.panicScore, 0, PANIC_SCORE_MAX, base.panicScore),
+      panicLevel: clampNum(Math.trunc(Number(parsed.panicLevel)), 0, 4, base.panicLevel) as PanicLevel,
+      recentOrientCount: clampNum(Math.trunc(Number(parsed.recentOrientCount)), 0, Number.MAX_SAFE_INTEGER, base.recentOrientCount),
+      localityConfidence: clampNum(parsed.localityConfidence, 0, 1, base.localityConfidence),
+      interventionCountSinceStable: clampNum(Math.trunc(Number(parsed.interventionCountSinceStable)), 0, Number.MAX_SAFE_INTEGER, base.interventionCountSinceStable),
+      triggers: Array.isArray(parsed.triggers) ? parsed.triggers.filter((t): t is string => typeof t === 'string') : base.triggers,
+      revision: clampNum(Math.trunc(Number(parsed.revision)), 0, Number.MAX_SAFE_INTEGER, 0),
+    };
   } catch {
     return defaultPanicState();
   }
@@ -260,6 +283,35 @@ export function recordHookInterventionLocked(
     },
     fallbackCount,
   );
+}
+
+/**
+ * Locked read-modify-write for panic-state.json: under the cross-process lock, read the
+ * FRESHEST on-disk state, apply `mutate(fresh)`, persist with a bumped revision, and return
+ * the written state. This is the serialization primitive the MCP writer uses so it cannot
+ * clobber a concurrent panic-check hook (`recordHookInterventionLocked`) or gryph daemon
+ * (`casWritePanicState`) write — in particular the cross-process `interventionCountSinceStable`
+ * counter stays monotonic (the MCP path previously read-then-wrote via an unlocked
+ * `writePanicState`, racing the hook's locked increment).
+ *
+ * Because the read and write happen under the same lock, no separate CAS retry is needed —
+ * the lock guarantees no other writer interleaves. Fails open: if the lock cannot be acquired
+ * the mutation is applied to a fresh read and written best-effort (unlocked), degrading to the
+ * prior behavior rather than blocking the hot path. Never throws.
+ */
+export function mutatePanicStateLocked(
+  directory: string,
+  mutate: (fresh: PanicState) => PanicState,
+): PanicState {
+  const apply = (): PanicState => {
+    const fresh = readPanicState(directory);
+    // Seed revision from the freshest disk read so writePanicState bumps to fresh+1
+    // (monotonic across all writers; under the lock there is no concurrent writer).
+    const next: PanicState = { ...mutate(fresh), revision: fresh.revision };
+    const revision = writePanicState(directory, next);
+    return { ...next, revision };
+  };
+  return withPanicStateLock<PanicState | null>(directory, apply, null) ?? apply();
 }
 
 // ============================================================================

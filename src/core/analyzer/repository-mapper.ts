@@ -592,8 +592,12 @@ export class RepositoryMapper {
     const extToLang: Record<string, string> = {
       '.ts': 'TypeScript',
       '.tsx': 'TypeScript (React)',
+      '.mts': 'TypeScript',
+      '.cts': 'TypeScript',
       '.js': 'JavaScript',
       '.jsx': 'JavaScript (React)',
+      '.mjs': 'JavaScript',
+      '.cjs': 'JavaScript',
       '.py': 'Python',
       '.rs': 'Rust',
       '.go': 'Go',

@@ -96,6 +96,31 @@ export async function addToGitignore(
 }
 
 /**
+ * Ensure `entry` is ignored, creating .gitignore when it does not exist.
+ *
+ * Idempotent. This is the single source of truth for the "make sure X is
+ * gitignored" intent — `init` and the `run` pipeline previously inlined this
+ * logic four times, and each copy guarded the write with `if (hasGitignore)`,
+ * so a fresh `git init` repo (no .gitignore yet) never got its entry added.
+ * Returns what happened so callers can choose their own user-facing message:
+ *  - `'present'`  — already ignored; no write
+ *  - `'appended'` — added to an existing .gitignore
+ *  - `'created'`  — .gitignore did not exist and was created with the entry
+ */
+export async function ensureGitignored(
+  rootPath: string,
+  entry: string,
+  comment?: string
+): Promise<'present' | 'appended' | 'created'> {
+  const existed = await gitignoreExists(rootPath);
+  if (existed && (await isInGitignore(rootPath, entry))) {
+    return 'present';
+  }
+  await addToGitignore(rootPath, entry, comment);
+  return existed ? 'appended' : 'created';
+}
+
+/**
  * Create .gitignore with initial entries
  */
 export async function createGitignore(

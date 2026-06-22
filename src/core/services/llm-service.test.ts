@@ -554,6 +554,31 @@ describe('LLMService', () => {
     });
   });
 
+  describe('Provider response robustness (malformed / usage-less responses)', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    it('AnthropicProvider does not crash when content/usage are absent', async () => {
+      // A malformed/error-shaped 200 (no content, no usage) must not throw.
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse({ model: 'm', stop_reason: 'end_turn' }));
+      const provider = new AnthropicProvider('test-key', 'claude-3-5-sonnet-20241022');
+      const r = await provider.generateCompletion({ systemPrompt: 'a', userPrompt: 'b' });
+      expect(r.content).toBe('');
+      expect(r.usage.totalTokens).toBe(0);
+      expect(Number.isNaN(r.usage.inputTokens)).toBe(false);
+    });
+
+    it('OpenAIProvider defaults usage to 0 (not NaN) when the gateway omits it', async () => {
+      // Ollama / LM Studio / some proxies return choices but no `usage`.
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        mockResponse({ choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }], model: 'gpt' }));
+      const provider = new OpenAIProvider('test-key', 'gpt-4o');
+      const r = await provider.generateCompletion({ systemPrompt: 'a', userPrompt: 'b' });
+      expect(r.content).toBe('hi');
+      expect(r.usage.totalTokens).toBe(0);
+      expect(Number.isNaN(r.usage.totalTokens)).toBe(false);
+    });
+  });
+
   describe('Cost Tracking', () => {
     it('should track costs across multiple requests', async () => {
       const { service } = createMockLLMService();

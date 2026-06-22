@@ -40,11 +40,7 @@ import {
   openspecDirExists,
   createOpenSpecStructure,
 } from '../../core/services/config-manager.js';
-import {
-  gitignoreExists,
-  isInGitignore,
-  addToGitignore,
-} from '../../core/services/gitignore-manager.js';
+import { ensureGitignored } from '../../core/services/gitignore-manager.js';
 import { runAnalysis } from './analyze.js';
 import {
   createLLMService,
@@ -337,14 +333,14 @@ The pipeline saves run metadata to .openlore/runs/ for tracking.
             console.log(`   ✓ OpenSpec directory exists (${DEFAULT_OPENSPEC_PATH})`);
           }
 
-          // Update gitignore
-          const hasGitignore = await gitignoreExists(rootPath);
-          if (hasGitignore) {
-            const alreadyIgnored = await isInGitignore(rootPath, `${OPENLORE_DIR}/`);
-            if (!alreadyIgnored) {
-              await addToGitignore(rootPath, `${OPENLORE_DIR}/`, 'openlore analysis artifacts');
-              console.log(`   ✓ Added ${OPENLORE_DIR}/ to .gitignore`);
-            }
+          // Ensure .openlore/ analysis artifacts (multi-MB lance binaries) are
+          // ignored, creating .gitignore when absent so a fresh `git init` repo
+          // doesn't leak them into git status and diff-based tools.
+          const gitignoreResult = await ensureGitignored(rootPath, `${OPENLORE_DIR}/`, 'openlore analysis artifacts');
+          if (gitignoreResult === 'created') {
+            console.log(`   ✓ Created .gitignore with ${OPENLORE_DIR}/`);
+          } else if (gitignoreResult === 'appended') {
+            console.log(`   ✓ Added ${OPENLORE_DIR}/ to .gitignore`);
           }
 
           metadata.steps.init = { status: 'completed' };

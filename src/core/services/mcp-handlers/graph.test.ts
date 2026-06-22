@@ -673,6 +673,25 @@ describe('handleGetFileDependencies — direction branches', () => {
     const result = await handleGetFileDependencies('/proj', 'src/nonexistent.ts') as { error: string };
     expect(result.error).toContain('File not found in dependency graph');
   });
+
+  it('returns the friendly error (not a TypeError) on a valid-but-partial graph artifact', async () => {
+    // {} parses fine but has no nodes array — must not crash on graph.nodes.find().
+    const fs = await import('node:fs/promises');
+    vi.mocked(fs.readFile).mockResolvedValue('{}' as never);
+    const result = await handleGetFileDependencies('/proj', 'src/a.ts') as { error: string };
+    expect(result.error).toContain('No dependency graph found');
+  });
+
+  it('does not throw on a node missing its file field', async () => {
+    const fs = await import('node:fs/promises');
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
+      nodes: [{ id: 'n1' }, { id: 'n2', file: { path: 'src/b.ts', absolutePath: '/proj/src/b.ts' } }],
+      edges: [],
+    }) as never);
+    const result = await handleGetFileDependencies('/proj', 'src/b.ts') as { imports: unknown[] };
+    // resolves the well-formed node without throwing on the malformed sibling
+    expect(Array.isArray(result.imports)).toBe(true);
+  });
 });
 
 // ============================================================================

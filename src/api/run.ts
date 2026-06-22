@@ -23,11 +23,7 @@ import {
   openspecDirExists,
   createOpenSpecStructure,
 } from '../core/services/config-manager.js';
-import {
-  gitignoreExists,
-  isInGitignore,
-  addToGitignore,
-} from '../core/services/gitignore-manager.js';
+import { ensureGitignored } from '../core/services/gitignore-manager.js';
 import { createLLMService } from '../core/services/llm-service.js';
 import type { LLMService } from '../core/services/llm-service.js';
 import { RepositoryMapper } from '../core/analyzer/repository-mapper.js';
@@ -112,13 +108,10 @@ export async function openloreRun(options: RunApiOptions = {}): Promise<RunResul
       await createOpenSpecStructure(fullOpenspecPath);
     }
 
-    const hasGitignore = await gitignoreExists(rootPath);
-    if (hasGitignore) {
-      const alreadyIgnored = await isInGitignore(rootPath, `${OPENLORE_DIR}/`);
-      if (!alreadyIgnored) {
-        await addToGitignore(rootPath, `${OPENLORE_DIR}/`, 'openlore analysis artifacts');
-      }
-    }
+    // Ensure .openlore/ analysis artifacts (multi-MB lance binaries) are ignored,
+    // creating .gitignore when absent so a fresh `git init` repo doesn't leak them
+    // into git status and diff-based tools.
+    await ensureGitignored(rootPath, `${OPENLORE_DIR}/`, 'openlore analysis artifacts');
 
     initResult = {
       configPath: OPENLORE_CONFIG_REL_PATH,

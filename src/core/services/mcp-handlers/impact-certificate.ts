@@ -28,7 +28,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { validateDirectory, readCachedContext, safeJoin } from './utils.js';
@@ -43,6 +43,7 @@ import type { SerializedCallGraph, FunctionNode, CallEdge } from '../../analyzer
 import type {
   StructuralAnchor,
   CoveringSurfaceConfig,
+  CoveringSurfaceMember,
   CoveringSurfaceSeverity,
   ImpactCertificateConfig,
 } from '../../../types/index.js';
@@ -620,7 +621,13 @@ export function surfacesFromConfig(cfg: ImpactCertificateConfig | undefined): Co
     seen.add(name);
     const severity: CoveringSurfaceSeverity = VALID_SEVERITIES.has(s.severity as CoveringSurfaceSeverity)
       ? (s.severity as CoveringSurfaceSeverity) : 'warn';
-    out.push({ name, members: s.members, severity });
+    // Members arrive via raw JSON.parse: a non-object entry (null, a bare string, a
+    // number) would make `resolveSurfaces`' `m.symbol`/`m.file` access throw out of
+    // the no-throw handler. Keep only object members.
+    const members = s.members.filter(
+      (m): m is CoveringSurfaceMember => !!m && typeof m === 'object',
+    );
+    out.push({ name, members, severity });
   }
   return out;
 }
@@ -720,7 +727,12 @@ export function recheckPersistedCertificates(absDir: string): StaleCertificate[]
  * honest `changed.symbols`; file anchors are not symbols.
  */
 function buildLeaseAnchors(absDir: string, changedFiles: readonly string[]): { anchors: StructuralAnchor[]; symbolCount: number } {
-  const anchorCtx = AnchorContext.open(absDir);
+  // Fully defensive: this is called from computeImpactCertificate without a try/catch
+  // at the call site or the handler, so a throw (AnchorContext.open or a corrupt/locked
+  // EdgeStore mid-read) would escape the no-throw handler. Degrade to no anchors instead
+  // — parity with recheckCertificate's anchor path.
+  let anchorCtx: ReturnType<typeof AnchorContext.open>;
+  try { anchorCtx = AnchorContext.open(absDir); } catch { return { anchors: [], symbolCount: 0 }; }
   if (!anchorCtx) return { anchors: [], symbolCount: 0 };
   try {
     const nodes = anchorCtx.anchorNodesForFiles(changedFiles);
@@ -739,8 +751,10 @@ function buildLeaseAnchors(absDir: string, changedFiles: readonly string[]): { a
       anchors.push({ filePath: file, contentHash: hash });
     }
     return { anchors, symbolCount: nodes.length };
+  } catch {
+    return { anchors: [], symbolCount: 0 };
   } finally {
-    anchorCtx.close();
+    try { anchorCtx.close(); } catch { /* ignore */ }
   }
 }
 
@@ -855,7 +869,7 @@ export async function computeImpactCertificate(
   }
   if (surfaceCfg.length === 0) {
     findings.push({
-      code: 'no-surfaces-declared', severity: 'info', subject: absDir,
+      code: 'no-surfaces-declared', severity: 'info', subject: basename(absDir),
       message: 'No covering surfaces are declared; the certificate reports blast radius, tests, and drift only.',
       remediation: 'Declare surfaces under "impactCertificate.surfaces" in .openlore/config.json to assess cross-boundary reach.',
     });

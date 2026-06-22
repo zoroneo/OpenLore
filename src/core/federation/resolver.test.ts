@@ -3,7 +3,7 @@
  * location, and cross-repo test selection over synthetic on-disk indexes.
  * (change: add-multi-repo-federation)
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -138,6 +138,27 @@ describe('findCrossRepoConsumers', () => {
     const batch = await findCrossRepoConsumersBatch(scope, ['greet', 'farewell']);
     expect(batch.bySymbol.get('greet')).toHaveLength(1);
     expect(batch.bySymbol.get('farewell')).toHaveLength(0);
+  });
+
+  // Resilience invariant: a repo whose store opens fine but throws mid-query
+  // (SQLite corruption, disk error, DB locked by a concurrent analyze) must be
+  // skipped with a reason — never abort the whole fleet query. A thrown federation
+  // lookup would otherwise drop find_dead_code's cross-repo liveness check.
+  it('skips a repo whose store throws mid-query instead of failing the query', async () => {
+    addRepo(producer, consumer, { name: 'consumer-b' });
+    const scope = resolveFederationScope(producer, { federation: true });
+    const spy = vi.spyOn(EdgeStore.prototype, 'getExternalConsumers').mockImplementation(() => {
+      throw new Error('SQLITE_CORRUPT: database disk image is malformed');
+    });
+    try {
+      const res = await findCrossRepoConsumers(scope, 'greet');
+      expect(res.consumers).toHaveLength(0);
+      expect(res.coverage.reposConsulted).toHaveLength(0);
+      expect(res.coverage.reposSkipped[0]).toMatchObject({ name: 'consumer-b' });
+      expect(res.coverage.reposSkipped[0].reason).toMatch(/unreadable mid-query/i);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   // Regression: the consumer cap bounds the returned LIST, but must never zero a

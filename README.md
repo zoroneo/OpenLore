@@ -14,7 +14,7 @@
   <br>
   <img src="https://img.shields.io/badge/MCP-ready-7c3aed?logo=anthropic&logoColor=white" alt="MCP ready">
   <img src="https://img.shields.io/badge/languages-18-f97316" alt="18 languages">
-  <img src="https://img.shields.io/badge/tests-3900%2B-success" alt="3900+ tests">
+  <img src="https://img.shields.io/badge/tests-4400%2B-success" alt="4400+ tests">
   <img src="https://img.shields.io/badge/API_key-not_required-0ea5e9" alt="No API key required">
   <a href="https://github.com/clay-good/OpenLore/stargazers"><img src="https://img.shields.io/github/stars/clay-good/OpenLore?style=social" alt="GitHub stars"></a>
 </p>
@@ -312,7 +312,7 @@ If you only install one thing, install `openlore-orient`. The workflow skills ar
 
 Continuously maintains a structural representation of your codebase using pure static analysis. Builds a full call graph persisted to SQLite, runs label-propagation community detection to cluster tightly coupled functions, computes McCabe cyclomatic complexity for every function, and extracts DB schemas, HTTP routes, UI components, middleware chains, and environment variables. Outputs `.openlore/analysis/CODEBASE.md` — a ~600-token structural digest that compresses the equivalent of tens of thousands of exploratory tokens into a small, queryable summary.
 
-With `--watch-auto`, the call graph updates incrementally on every file save: changed file and its direct callers are re-parsed and the graph is atomically swapped. Orient and BFS queries remain live between full analyze runs.
+With `--watch-auto`, the call graph updates incrementally on every file save: the changed file and its direct callers are re-parsed and the graph is atomically swapped. File creates and deletes are reconciled too, and `dependency-graph.json` import edges (including HTML asset edges) stay live. Orient and BFS queries remain live between full analyze runs.
 
 **Generate** (API key required)
 
@@ -524,6 +524,8 @@ openlore federation list                                     # ✓ indexed / ⚠
 ```
 
 Once peers are registered, `analyze_impact`, `find_dead_code`, `select_tests`, and `find_path` take an opt-in `federation` flag and answer across the fleet — who consumes a published symbol, whether an export is dead *everywhere*, which consumer tests a change touches — always naming the repos consulted vs skipped, never guessing for an unindexed one. The capability is opt-in: `openlore mcp --preset federation`. See [docs/cli-reference.md](docs/cli-reference.md#federation-multi-repo).
+
+The same `federation` preset also exposes a spec-store arc — binding OpenLore to an external spec store and reasoning about a change against it: `spec_store_status` (read-only health of a `.openlore/config.json` `specStore` binding and its indexed targets), `working_set_context` (one token-budgeted, per-target structural briefing for an active change across its targets), and `change_impact_certificate` (the paths a diff *newly opens* into declared covering surfaces, plus blast radius, drifted specs, and tests to run — also as `openlore impact-certificate`). All read-only, conclusion-shaped, and advisory.
 
 ---
 

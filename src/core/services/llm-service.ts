@@ -547,6 +547,16 @@ export function estimateTokens(text: string): number {
   return Math.ceil(regularCharCount / 4 + codeCharCount / 2);
 }
 
+/**
+ * Coerce an untrusted token count from a provider's `usage` block to a finite,
+ * non-negative number. Many OpenAI-compatible gateways (Ollama, LM Studio, some
+ * proxies) omit `usage` entirely; without this a missing field throws (object
+ * undefined) or poisons cost tracking with NaN (every later `+= NaN` stays NaN).
+ */
+function tokenCount(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
+}
+
 // ============================================================================
 // ANTHROPIC PROVIDER
 // ============================================================================
@@ -607,17 +617,20 @@ export class AnthropicProvider implements LLMProvider {
       stop_reason: string;
     };
 
-    const content = data.content
+    // `content` may be absent on a malformed/error-shaped 200 (some gateways do this).
+    const content = (Array.isArray(data.content) ? data.content : [])
       .filter(c => c.type === 'text')
       .map(c => c.text)
       .join('');
 
+    const inputTokens = tokenCount(data.usage?.input_tokens);
+    const outputTokens = tokenCount(data.usage?.output_tokens);
     return {
       content,
       usage: {
-        inputTokens: data.usage.input_tokens,
-        outputTokens: data.usage.output_tokens,
-        totalTokens: data.usage.input_tokens + data.usage.output_tokens,
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
       },
       model: data.model,
       finishReason: data.stop_reason === 'end_turn' ? 'stop' : data.stop_reason === 'max_tokens' ? 'length' : 'error',
@@ -810,12 +823,14 @@ export class OpenAIProvider implements LLMProvider {
       model: string;
     };
 
+    const inputTokens = tokenCount(data.usage?.prompt_tokens);
+    const outputTokens = tokenCount(data.usage?.completion_tokens);
     return {
       content: data.choices[0]?.message?.content ?? '',
       usage: {
-        inputTokens: data.usage.prompt_tokens,
-        outputTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens,
+        inputTokens,
+        outputTokens,
+        totalTokens: tokenCount(data.usage?.total_tokens) || inputTokens + outputTokens,
       },
       model: data.model,
       finishReason: data.choices[0]?.finish_reason === 'stop' ? 'stop' : data.choices[0]?.finish_reason === 'length' ? 'length' : 'error',
@@ -1022,10 +1037,12 @@ export class OpenAICompatibleProvider implements LLMProvider {
           if (fr) finishReason = fr === 'length' ? 'length' : 'stop';
           if (chunk.model) model = chunk.model;
           if (chunk.usage) {
+            const inputTokens = tokenCount(chunk.usage.prompt_tokens);
+            const outputTokens = tokenCount(chunk.usage.completion_tokens);
             usage = {
-              inputTokens: chunk.usage.prompt_tokens,
-              outputTokens: chunk.usage.completion_tokens,
-              totalTokens: chunk.usage.total_tokens,
+              inputTokens,
+              outputTokens,
+              totalTokens: tokenCount(chunk.usage.total_tokens) || inputTokens + outputTokens,
             };
           }
         } catch { /* ignore malformed SSE chunks */ }
@@ -1122,12 +1139,14 @@ export class CopilotProvider implements LLMProvider {
       model: string;
     };
 
+    const inputTokens = tokenCount(data.usage?.prompt_tokens);
+    const outputTokens = tokenCount(data.usage?.completion_tokens);
     return {
       content: data.choices[0]?.message?.content ?? '',
       usage: {
-        inputTokens: data.usage.prompt_tokens,
-        outputTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens,
+        inputTokens,
+        outputTokens,
+        totalTokens: tokenCount(data.usage?.total_tokens) || inputTokens + outputTokens,
       },
       model: data.model ?? this.model,
       finishReason: data.choices[0]?.finish_reason === 'stop' ? 'stop' : data.choices[0]?.finish_reason === 'length' ? 'length' : 'error',
@@ -1396,12 +1415,14 @@ export class GeminiProvider implements LLMProvider {
     const content = data.candidates[0]?.content?.parts?.map(p => p.text).join('') ?? '';
     const finishReason = data.candidates[0]?.finishReason;
 
+    const inputTokens = tokenCount(data.usageMetadata?.promptTokenCount);
+    const outputTokens = tokenCount(data.usageMetadata?.candidatesTokenCount);
     return {
       content,
       usage: {
-        inputTokens: data.usageMetadata.promptTokenCount,
-        outputTokens: data.usageMetadata.candidatesTokenCount,
-        totalTokens: data.usageMetadata.totalTokenCount,
+        inputTokens,
+        outputTokens,
+        totalTokens: tokenCount(data.usageMetadata?.totalTokenCount) || inputTokens + outputTokens,
       },
       model: this.model,
       finishReason: finishReason === 'STOP' ? 'stop' : finishReason === 'MAX_TOKENS' ? 'length' : 'error',

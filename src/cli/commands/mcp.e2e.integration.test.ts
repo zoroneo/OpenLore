@@ -30,6 +30,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
+
+interface RpcMessage { id?: number; method?: string; result?: { content: Array<{ type: string; text: string }>; isError?: boolean }; error?: unknown }
 
 // ============================================================================
 // CONFIG
@@ -53,40 +56,31 @@ const CACHE_FILE = join(REPO_ROOT, '.openlore/analysis/llm-context.json');
  */
 class McpClient {
   private buf = '';
-  private queue: string[]                      = [];
-  private waiting: Array<(line: string) => void> = [];
+  // StringDecoder buffers incomplete multibyte UTF-8 sequences across stdout chunks —
+  // a per-chunk `chunk.toString()` would corrupt a multibyte char split at a chunk boundary.
+  private decoder = new StringDecoder('utf8');
   private nextId = 1;
+  // Responses are correlated BY ID, not by arrival order: the server may complete
+  // concurrent tool calls in any order, so a FIFO waiter queue would mis-route
+  // out-of-order responses and deadlock. Each pending request owns a resolver keyed by id.
+  private pending = new Map<number, (msg: RpcMessage) => void>();
 
   constructor(private proc: ChildProcess) {
     proc.stdout!.on('data', (chunk: Buffer) => {
-      this.buf += chunk.toString();
+      this.buf += this.decoder.write(chunk);
       let nl: number;
       while ((nl = this.buf.indexOf('\n')) !== -1) {
         const line = this.buf.slice(0, nl).trim();
         this.buf   = this.buf.slice(nl + 1);
         if (!line) continue;
-        const waiter = this.waiting.shift();
-        if (waiter) waiter(line);
-        else        this.queue.push(line);
+        let msg: RpcMessage;
+        try { msg = JSON.parse(line) as RpcMessage; } catch { continue; } // skip non-JSON log noise
+        if (typeof msg.id === 'number') {
+          const resolve = this.pending.get(msg.id);
+          if (resolve) { this.pending.delete(msg.id); resolve(msg); }
+        }
+        // notifications (no id) and unmatched ids are ignored
       }
-    });
-  }
-
-  /** Receive the next response line (buffered or future). A cold MCP server spawn
-   *  loads tree-sitter grammars and reads the multi-MB analysis context, which can
-   *  exceed a few seconds on a busy machine; 30s avoids spurious timeouts while
-   *  still failing a genuine hang. */
-  private nextLine(timeoutMs = 30_000): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`MCP response timeout after ${timeoutMs}ms`)),
-        timeoutMs,
-      );
-      const done = (line: string): void => { clearTimeout(timer); resolve(line); };
-
-      const queued = this.queue.shift();
-      if (queued !== undefined) { done(queued); return; }
-      this.waiting.push(done);
     });
   }
 
@@ -99,18 +93,21 @@ class McpClient {
     });
   }
 
-  /** Send a request and await its response (matched by id). */
-  async request(method: string, params: object = {}): Promise<unknown> {
+  /** Send a request and await its response, correlated by id (robust to out-of-order
+   *  concurrent responses). A cold MCP server spawn loads tree-sitter grammars and reads
+   *  the multi-MB analysis context, which can exceed a few seconds on a busy machine; 30s
+   *  avoids spurious timeouts while still failing a genuine hang. */
+  async request(method: string, params: object = {}, timeoutMs = 30_000): Promise<RpcMessage> {
     const id = this.nextId++;
+    const response = new Promise<RpcMessage>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`MCP response timeout after ${timeoutMs}ms (id ${id}, ${method})`));
+      }, timeoutMs);
+      this.pending.set(id, (msg) => { clearTimeout(timer); resolve(msg); });
+    });
     await this.send({ jsonrpc: '2.0', id, method, params });
-    // The server may emit notifications before the response — keep reading
-    // until we see our id.
-    for (;;) {
-      const raw  = await this.nextLine();
-      const msg  = JSON.parse(raw) as { id?: number; method?: string; result?: unknown; error?: unknown };
-      if (msg.id === id) return msg;
-      // notification or out-of-order response — ignore and keep waiting
-    }
+    return response;
   }
 
   /** Convenience wrapper: call a tool and return the full response object. */

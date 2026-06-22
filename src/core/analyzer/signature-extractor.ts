@@ -46,8 +46,8 @@ export function detectLanguage(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
   switch (ext) {
     case 'py':           return 'Python';
-    case 'ts': case 'tsx': return 'TypeScript';
-    case 'js': case 'jsx': return 'JavaScript';
+    case 'ts': case 'tsx': case 'mts': case 'cts': return 'TypeScript';
+    case 'js': case 'jsx': case 'mjs': case 'cjs': return 'JavaScript';
     case 'go':           return 'Go';
     case 'rs':           return 'Rust';
     case 'rb':           return 'Ruby';

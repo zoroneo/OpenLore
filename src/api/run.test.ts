@@ -39,6 +39,7 @@ vi.mock('../core/services/gitignore-manager.js', () => ({
   gitignoreExists: vi.fn(),
   isInGitignore: vi.fn(),
   addToGitignore: vi.fn(),
+  ensureGitignored: vi.fn(),
 }));
 
 vi.mock('../core/services/llm-service.js', () => ({
@@ -110,7 +111,7 @@ import { access, stat, readFile } from 'node:fs/promises';
 import { isCacheFresh } from '../core/services/mcp-handlers/utils.js';
 import { detectProjectType, getProjectTypeName } from '../core/services/project-detector.js';
 import { getDefaultConfig, readOpenLoreConfig, writeOpenLoreConfig, openloreConfigExists, openspecDirExists, createOpenSpecStructure } from '../core/services/config-manager.js';
-import { gitignoreExists, isInGitignore, addToGitignore } from '../core/services/gitignore-manager.js';
+import { gitignoreExists, isInGitignore, addToGitignore, ensureGitignored } from '../core/services/gitignore-manager.js';
 import { createLLMService } from '../core/services/llm-service.js';
 import { RepositoryMapper } from '../core/analyzer/repository-mapper.js';
 import { DependencyGraphBuilder } from '../core/analyzer/dependency-graph.js';
@@ -133,6 +134,7 @@ const mockCreateOpenSpecStructure = vi.mocked(createOpenSpecStructure);
 const mockGitignoreExists = vi.mocked(gitignoreExists);
 const mockIsInGitignore = vi.mocked(isInGitignore);
 const mockAddToGitignore = vi.mocked(addToGitignore);
+const mockEnsureGitignored = vi.mocked(ensureGitignored);
 const mockCreateLLMService = vi.mocked(createLLMService);
 const mockIsCacheFresh = vi.mocked(isCacheFresh);
 
@@ -188,6 +190,7 @@ function setupMocks({ configExists = false, analysisRecent = false } = {}) {
   mockGitignoreExists.mockResolvedValue(false);
   mockIsInGitignore.mockResolvedValue(false);
   mockAddToGitignore.mockResolvedValue(true);
+  mockEnsureGitignored.mockResolvedValue('created');
 
   // Analysis mocks
   const mtime = analysisRecent ? RECENT_MTIME : OLD_MTIME;
@@ -252,6 +255,13 @@ describe('openloreRun', () => {
 
       expect(result.init.created).toBe(true);
       expect(mockWriteOpenLoreConfig).toHaveBeenCalled();
+    });
+
+    it('delegates .openlore/ gitignore handling to ensureGitignored when creating config', async () => {
+      setupMocks({ configExists: false, analysisRecent: true });
+      await openloreRun({ rootPath: ROOT });
+
+      expect(mockEnsureGitignored).toHaveBeenCalledWith(ROOT, '.openlore/', expect.any(String));
     });
 
     it('skips init when config exists and force=false', async () => {

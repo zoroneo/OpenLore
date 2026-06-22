@@ -517,56 +517,6 @@ describe('handleGetFunctionBody', () => {
 });
 
 // ============================================================================
-// handleGetDecisions
-// ============================================================================
-
-describe('handleGetDecisions', () => {
-  let tmpDir: string;
-
-  beforeEach(async () => {
-    tmpDir = await createTmpDir();
-  });
-
-  it('returns empty decisions when decisions directory does not exist', async () => {
-    const { handleGetDecisions } = await import('./analysis.js');
-    const result = await handleGetDecisions(tmpDir) as { decisions: unknown[]; note: string };
-    expect(result.decisions).toEqual([]);
-    expect(result.note).toContain('decisions');
-  });
-
-  it('returns list of ADR files from decisions directory', async () => {
-    const decisionsDir = join(tmpDir, 'openspec', 'decisions');
-    await mkdir(decisionsDir, { recursive: true });
-    await writeFile(
-      join(decisionsDir, 'adr-001-use-lancedb.md'),
-      '# Use LanceDB\n\n**Status**: Accepted\n\nWe chose LanceDB for vector storage.',
-      'utf-8'
-    );
-
-    const { handleGetDecisions } = await import('./analysis.js');
-    const result = await handleGetDecisions(tmpDir) as { count: number; decisions: Array<{ filename: string; title: string; status: string }> };
-
-    expect(result.count).toBe(1);
-    expect(result.decisions[0].filename).toBe('adr-001-use-lancedb.md');
-    expect(result.decisions[0].title).toBe('Use LanceDB');
-    expect(result.decisions[0].status).toBe('Accepted');
-  });
-
-  it('filters decisions by query text', async () => {
-    const decisionsDir = join(tmpDir, 'openspec', 'decisions');
-    await mkdir(decisionsDir, { recursive: true });
-    await writeFile(join(decisionsDir, 'adr-001.md'), '# Use LanceDB\n\n**Status**: Accepted\n\nVector storage.', 'utf-8');
-    await writeFile(join(decisionsDir, 'adr-002.md'), '# Use Vitest\n\n**Status**: Accepted\n\nTesting framework.', 'utf-8');
-
-    const { handleGetDecisions } = await import('./analysis.js');
-    const result = await handleGetDecisions(tmpDir, 'lancedb') as { count: number; decisions: unknown[] };
-
-    expect(result.count).toBe(1);
-    expect(result.decisions).toHaveLength(1);
-  });
-});
-
-// ============================================================================
 // handleGetRouteInventory
 // ============================================================================
 

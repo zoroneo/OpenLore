@@ -184,7 +184,6 @@ Most tools run on **pure static analysis** — no LLM quota consumed. Exceptions
 |------|-------------|:---:|
 | `get_spec` | Read the full content of an OpenSpec domain spec by domain name. | Yes (generate) |
 | `get_mapping` | Requirement->function mapping produced by `openlore generate`. Shows which functions implement which spec requirements, confidence level, and orphan functions with no spec coverage. | Yes (generate) |
-| `get_decisions` | List or search Architecture Decision Records (ADRs) stored in `openspec/decisions/`. Optional keyword query. | Yes (generate) |
 | `check_spec_drift` | Detect code changes not reflected in OpenSpec specs. Compares git-changed files against spec coverage maps. Issues: gap / stale / uncovered / orphaned-spec / adr-gap. | Yes (generate) |
 | `search_specs` | Semantic search over OpenSpec specifications to find requirements, design notes, and architecture decisions by meaning. Also searches ADR files (`openspec/decisions/adr-*.md`) indexed under domain `decisions`. Returns linked source files for graph highlighting. Use this when asked "which spec covers X?" or "where should we implement Z?" or "what decisions were made about Y?". Requires a spec index built with `openlore analyze` or `--reindex-specs`. | Yes (generate) |
 | `list_spec_domains` | List all OpenSpec domains available in this project. Use this to discover what domains exist before doing a targeted `search_specs` call. | Yes (generate) |
@@ -424,12 +423,6 @@ entryFunction   string   Name of the starting function (case-insensitive partial
 targetFunction  string   Name of the target function (case-insensitive partial match)
 maxDepth        number   Maximum path length in hops (default: 6)
 maxPaths        number   Maximum number of paths to return (default: 10, max: 50)
-```
-
-**`get_decisions`**
-```
-directory  string   Absolute path to the project directory
-query      string   Optional keyword to filter ADRs by title or content
 ```
 
 **`get_spec`**

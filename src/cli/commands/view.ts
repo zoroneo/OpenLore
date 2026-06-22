@@ -134,6 +134,13 @@ export const viewCommand = new Command('view')
             configureServer(devServer) {
               devServer.middlewares.use('/api/dependency-graph', async (_req, res) => {
                 try {
+                  // Friendly 404 (matching the sibling artifact endpoints) when the graph
+                  // was removed/renamed after server start, rather than a 500 on ENOENT.
+                  if (!(await fileExists(graphPath))) {
+                    res.statusCode = 404;
+                    res.end(JSON.stringify({ error: 'dependency-graph.json not found — run "openlore analyze"' }));
+                    return;
+                  }
                   const json = await readFile(graphPath, 'utf-8');
                   res.setHeader('Content-Type', 'application/json; charset=utf-8');
                   res.statusCode = 200;
@@ -533,6 +540,18 @@ export const viewCommand = new Command('view')
                       models = (data.data ?? []).map(m => m.id);
                     }
                   } else {
+                    // Unconfigured fallback (no key + the default OpenAI base) means the
+                    // user never set a provider — don't fire an unauthenticated request at
+                    // api.openai.com (which 401s and looks like "zero models"). A genuine
+                    // local provider has a custom baseUrl, so it still lists models keylessly.
+                    if (!cfg.apiKey && cfg.baseUrl === 'https://api.openai.com/v1') {
+                      res.statusCode = 200;
+                      res.end(JSON.stringify({
+                        provider: cfg.kind, currentModel: cfg.model, models: [],
+                        error: 'No LLM provider configured — set an API key (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY) or OPENAI_COMPAT_BASE_URL.',
+                      }));
+                      return;
+                    }
                     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
                     if (cfg.apiKey) headers['Authorization'] = `Bearer ${cfg.apiKey}`;
                     const r = await fetch(`${cfg.baseUrl}/models`, { headers, signal: modelTimeout });
@@ -545,9 +564,13 @@ export const viewCommand = new Command('view')
                   res.statusCode = 200;
                   res.end(JSON.stringify({ provider: cfg.kind, currentModel: cfg.model, models }));
                 } catch (err) {
-                  logger.error(`[chat/models] error: ${(err as Error).message}`);
+                  // Sanitize BEFORE logging: the gemini path puts the API key in the
+                  // request URL (?key=...), and fetch errors embed the URL — so the raw
+                  // message can carry the key into the server console/log.
+                  const safe = sanitizeErrorMessage((err as Error).message);
+                  logger.error(`[chat/models] error: ${safe}`);
                   res.statusCode = 500;
-                  res.end(JSON.stringify({ error: sanitizeErrorMessage((err as Error).message) }));
+                  res.end(JSON.stringify({ error: safe }));
                 }
               });
 
@@ -596,7 +619,18 @@ export const viewCommand = new Command('view')
         },
       });
 
-      await server.listen();
+      try {
+        await server.listen();
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (/EADDRINUSE|address already in use/i.test(msg)) {
+          logger.error(`Port ${port} is already in use. Start the viewer on another port: openlore view --port <n>`);
+        } else {
+          logger.error(`Failed to start the viewer: ${msg}`);
+        }
+        process.exitCode = 1;
+        return;
+      }
 
       const url = `http://${host}:${port}/`;
       logger.success(`Viewer running at ${url}`);

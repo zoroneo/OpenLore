@@ -293,6 +293,50 @@ describe('readCachedContext', () => {
     expect(result).not.toBeNull();
     expect(result!.edgeStore).toBeUndefined(); // withheld: empty store + JSON has prod nodes
   });
+
+  it('normalizes missing callGraph nodes/edges to [] so graph handlers degrade, not throw', async () => {
+    // A truncated/hand-edited artifact with `callGraph: {}` passes the handlers'
+    // `!ctx.callGraph` guard and then throws on `cg.nodes.map(...)`. Normalize the
+    // missing arrays to [] (preserving any other fields) so handlers return empty
+    // rather than crashing.
+    const dir = join(tmpDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+    await mkdir(dir, { recursive: true });
+    const ctx = {
+      phase1_survey: { purpose: '', files: [], totalTokens: 0 },
+      phase2_deep: { purpose: '', files: [], totalTokens: 0 },
+      phase3_validation: { purpose: '', files: [], totalTokens: 0 },
+      signatures: [{ path: 'a.ts', language: 'TypeScript', signatures: [] }],
+      // Minimal callGraph carrying only entryPoints (a shape architecture-overview
+      // reads) and NO nodes/edges arrays.
+      callGraph: { entryPoints: [{ name: 'main' }] },
+    };
+    await writeFile(join(dir, ARTIFACT_LLM_CONTEXT), JSON.stringify(ctx), 'utf-8');
+
+    const result = await readCachedContext(tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.callGraph).toBeDefined();             // graph preserved (not dropped)
+    expect(Array.isArray(result!.callGraph!.nodes)).toBe(true);  // missing nodes → []
+    expect(result!.callGraph!.nodes).toHaveLength(0);
+    expect(Array.isArray(result!.callGraph!.edges)).toBe(true);  // missing edges → []
+    expect((result!.callGraph as { entryPoints?: unknown[] }).entryPoints).toHaveLength(1); // other fields kept
+    expect(result!.signatures).toHaveLength(1);
+  });
+
+  it('drops a callGraph that is not even an object (scalar/array)', async () => {
+    const dir = join(tmpDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+    await mkdir(dir, { recursive: true });
+    const ctx = {
+      phase1_survey: { purpose: '', files: [], totalTokens: 0 },
+      phase2_deep: { purpose: '', files: [], totalTokens: 0 },
+      phase3_validation: { purpose: '', files: [], totalTokens: 0 },
+      callGraph: 'corrupt-scalar',
+    };
+    await writeFile(join(dir, ARTIFACT_LLM_CONTEXT), JSON.stringify(ctx), 'utf-8');
+
+    const result = await readCachedContext(tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.callGraph).toBeUndefined();
+  });
 });
 
 // ============================================================================

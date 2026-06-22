@@ -11,6 +11,7 @@ import {
   readGitignore,
   isInGitignore,
   addToGitignore,
+  ensureGitignored,
   createGitignore,
 } from './gitignore-manager.js';
 
@@ -142,6 +143,45 @@ describe('gitignore-manager', () => {
       const content = await readFile(join(testDir, '.gitignore'), 'utf-8');
       expect(content).toContain('node_modules/\n');
       expect(content).toContain('.openlore/\n');
+    });
+  });
+
+  describe('ensureGitignored', () => {
+    it("returns 'created' and writes .gitignore when none exists (the fresh `git init` case)", async () => {
+      const result = await ensureGitignored(testDir, '.openlore/', 'openlore analysis artifacts');
+      expect(result).toBe('created');
+
+      const content = await readFile(join(testDir, '.gitignore'), 'utf-8');
+      expect(content).toContain('# openlore analysis artifacts');
+      expect(content).toContain('.openlore/');
+    });
+
+    it("returns 'appended' when adding to an existing .gitignore", async () => {
+      await writeFile(join(testDir, '.gitignore'), 'node_modules/\n');
+
+      const result = await ensureGitignored(testDir, '.openlore/');
+      expect(result).toBe('appended');
+
+      const content = await readFile(join(testDir, '.gitignore'), 'utf-8');
+      expect(content).toContain('node_modules/');
+      expect(content).toContain('.openlore/');
+    });
+
+    it("returns 'present' and does not rewrite when the entry already exists", async () => {
+      await writeFile(join(testDir, '.gitignore'), '.openlore/\n');
+
+      const result = await ensureGitignored(testDir, '.openlore/');
+      expect(result).toBe('present');
+    });
+
+    it('is idempotent across repeated calls', async () => {
+      expect(await ensureGitignored(testDir, '.openlore/')).toBe('created');
+      expect(await ensureGitignored(testDir, '.openlore/')).toBe('present');
+      expect(await ensureGitignored(testDir, '.openlore/')).toBe('present');
+
+      const content = await readFile(join(testDir, '.gitignore'), 'utf-8');
+      // Exactly one occurrence — no duplicate lines.
+      expect(content.match(/\.openlore\//g)?.length).toBe(1);
     });
   });
 

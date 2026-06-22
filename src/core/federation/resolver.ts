@@ -113,44 +113,57 @@ export async function findCrossRepoConsumersBatch(
       reposSkipped.push(status);
       continue;
     }
-    const ctx = await readCachedContext(resolve(entry.path));
-    if (!ctx?.edgeStore) {
+    // Per-repo isolation: a store that opens fine but throws mid-query (SQLite
+    // corruption on an untouched page, disk error, DB locked by a concurrent
+    // analyze) must NOT abort the whole fleet query — skip that repo with a reason.
+    // Critical for find_dead_code: a thrown federation lookup would otherwise drop
+    // the cross-repo liveness check and risk a confidently-wrong "safe to delete".
+    try {
+      const ctx = await readCachedContext(resolve(entry.path));
+      if (!ctx?.edgeStore) {
+        reposSkipped.push({
+          ...status,
+          consulted: false,
+          reason: 'index present but has no edge store (call-graph.db) — re-run "openlore analyze"',
+        });
+        continue;
+      }
+      for (const symbol of wanted) {
+        const edges = ctx.edgeStore.getExternalConsumers(symbol);
+        const seenCallers = new Set<string>();
+        const list = bySymbol.get(symbol)!;
+        for (const edge of edges) {
+          if (seenCallers.has(edge.callerId)) continue;
+          seenCallers.add(edge.callerId);
+          // The cap bounds the consumer *list*, but must never zero a symbol's
+          // liveness signal: always keep at least one consumer per symbol-with-edges
+          // even past the cap, then truncate the rest. Without this, a multi-symbol
+          // batch (e.g. find_dead_code over many candidates) where an earlier symbol
+          // exhausts the shared cap would leave a later, genuinely-consumed symbol
+          // with an empty list — and find_dead_code would flip it to a false-positive
+          // "dead" (a confidently-wrong "safe to delete"). See decision 67ca60fe.
+          if (list.length >= 1 && total >= cap) { truncated++; continue; }
+          total++;
+          const node = ctx.edgeStore.getNode(edge.callerId);
+          list.push({
+            repo: entry.name,
+            repoPath: entry.path,
+            caller: {
+              id: edge.callerId,
+              name: node?.name ?? edge.callerId.split('::').pop() ?? edge.callerId,
+              file: node?.filePath ?? edge.callerId.split('::')[0] ?? '',
+            },
+            symbol,
+          });
+        }
+      }
+      reposConsulted.push(status); // only after a full, successful read
+    } catch (err) {
       reposSkipped.push({
         ...status,
         consulted: false,
-        reason: 'index present but has no edge store (call-graph.db) — re-run "openlore analyze"',
+        reason: `index unreadable mid-query — skipped: ${(err as Error).message}`,
       });
-      continue;
-    }
-    reposConsulted.push(status);
-    for (const symbol of wanted) {
-      const edges = ctx.edgeStore.getExternalConsumers(symbol);
-      const seenCallers = new Set<string>();
-      const list = bySymbol.get(symbol)!;
-      for (const edge of edges) {
-        if (seenCallers.has(edge.callerId)) continue;
-        seenCallers.add(edge.callerId);
-        // The cap bounds the consumer *list*, but must never zero a symbol's
-        // liveness signal: always keep at least one consumer per symbol-with-edges
-        // even past the cap, then truncate the rest. Without this, a multi-symbol
-        // batch (e.g. find_dead_code over many candidates) where an earlier symbol
-        // exhausts the shared cap would leave a later, genuinely-consumed symbol
-        // with an empty list — and find_dead_code would flip it to a false-positive
-        // "dead" (a confidently-wrong "safe to delete"). See decision 67ca60fe.
-        if (list.length >= 1 && total >= cap) { truncated++; continue; }
-        total++;
-        const node = ctx.edgeStore.getNode(edge.callerId);
-        list.push({
-          repo: entry.name,
-          repoPath: entry.path,
-          caller: {
-            id: edge.callerId,
-            name: node?.name ?? edge.callerId.split('::').pop() ?? edge.callerId,
-            file: node?.filePath ?? edge.callerId.split('::')[0] ?? '',
-          },
-          symbol,
-        });
-      }
     }
   }
 
@@ -210,20 +223,25 @@ export async function locateSymbolProducers(
   for (const entry of scope.repos) {
     const status = repoStatus(entry, true);
     if (status.state !== 'indexed') { reposSkipped.push(status); continue; }
-    const ctx = await readCachedContext(resolve(entry.path));
-    if (!ctx?.edgeStore) {
-      reposSkipped.push({ ...status, consulted: false, reason: 'no edge store — re-run "openlore analyze"' });
-      continue;
-    }
-    reposConsulted.push(status);
-    for (const node of ctx.edgeStore.searchNodes(symbolName, 50)) {
-      if (node.name === symbolName && !node.isExternal && !node.isTest) {
-        producers.push({
-          repo: entry.name,
-          repoPath: entry.path,
-          node: { id: node.id, name: node.name, file: node.filePath, stableId: node.stableId },
-        });
+    // Per-repo isolation: a mid-query store throw must not abort the fleet query.
+    try {
+      const ctx = await readCachedContext(resolve(entry.path));
+      if (!ctx?.edgeStore) {
+        reposSkipped.push({ ...status, consulted: false, reason: 'no edge store — re-run "openlore analyze"' });
+        continue;
       }
+      for (const node of ctx.edgeStore.searchNodes(symbolName, 50)) {
+        if (node.name === symbolName && !node.isExternal && !node.isTest) {
+          producers.push({
+            repo: entry.name,
+            repoPath: entry.path,
+            node: { id: node.id, name: node.name, file: node.filePath, stableId: node.stableId },
+          });
+        }
+      }
+      reposConsulted.push(status);
+    } catch (err) {
+      reposSkipped.push({ ...status, consulted: false, reason: `index unreadable mid-query — skipped: ${(err as Error).message}` });
     }
   }
   return { producers, coverage: { applied: true, reposConsulted, reposSkipped, caveats: [] } };
@@ -348,30 +366,37 @@ export async function findCrossRepoTests(
   for (const entry of scope.repos) {
     const status = repoStatus(entry, true);
     if (status.state !== 'indexed') { reposSkipped.push(status); continue; }
-    const ctx = await readCachedContext(resolve(entry.path));
-    const cg = ctx?.callGraph as SerializedCallGraph | undefined;
-    if (!cg) {
-      reposSkipped.push({ ...status, consulted: false, reason: 'no call graph — re-run "openlore analyze"' });
-      continue;
-    }
-    reposConsulted.push(status);
-    // Consumer seeds, grouped by the published symbol they consume: each external
-    // call site in this repo to a wanted symbol. Walking each symbol's seeds
-    // separately attributes every reached test to the *specific* symbol whose
-    // consumer reached it — not a blanket join of all symbols this repo touches.
-    const seedsBySymbol = new Map<string, string[]>();
-    for (const edge of cg.edges) {
-      if (edge.confidence !== 'external' || !wantedSet.has(edge.calleeName)) continue;
-      const seeds = seedsBySymbol.get(edge.calleeName) ?? [];
-      if (!seeds.includes(edge.callerId)) seeds.push(edge.callerId);
-      seedsBySymbol.set(edge.calleeName, seeds);
-    }
-    if (seedsBySymbol.size === 0) continue;
-    for (const [viaSymbol, seedIds] of seedsBySymbol) {
-      const reached = findReachingTests(cg, seedIds, maxDepth, { directResolvedOnly: opts.directResolvedOnly });
-      for (const t of reached) {
-        tests.push({ repo: entry.name, repoPath: entry.path, test: { name: t.name, file: t.file }, viaSymbol, depth: t.depth });
+    // Per-repo isolation: a malformed index / mid-query throw must not abort the
+    // whole fleet query — skip that repo with a reason.
+    try {
+      const ctx = await readCachedContext(resolve(entry.path));
+      const cg = ctx?.callGraph as SerializedCallGraph | undefined;
+      if (!cg) {
+        reposSkipped.push({ ...status, consulted: false, reason: 'no call graph — re-run "openlore analyze"' });
+        continue;
       }
+      // Consumer seeds, grouped by the published symbol they consume: each external
+      // call site in this repo to a wanted symbol. Walking each symbol's seeds
+      // separately attributes every reached test to the *specific* symbol whose
+      // consumer reached it — not a blanket join of all symbols this repo touches.
+      const seedsBySymbol = new Map<string, string[]>();
+      for (const edge of cg.edges) {
+        if (edge.confidence !== 'external' || !wantedSet.has(edge.calleeName)) continue;
+        const seeds = seedsBySymbol.get(edge.calleeName) ?? [];
+        if (!seeds.includes(edge.callerId)) seeds.push(edge.callerId);
+        seedsBySymbol.set(edge.calleeName, seeds);
+      }
+      // (no early-out for empty seeds — the loop below is simply a no-op, and the
+      // repo is still correctly counted as consulted.)
+      for (const [viaSymbol, seedIds] of seedsBySymbol) {
+        const reached = findReachingTests(cg, seedIds, maxDepth, { directResolvedOnly: opts.directResolvedOnly });
+        for (const t of reached) {
+          tests.push({ repo: entry.name, repoPath: entry.path, test: { name: t.name, file: t.file }, viaSymbol, depth: t.depth });
+        }
+      }
+      reposConsulted.push(status);
+    } catch (err) {
+      reposSkipped.push({ ...status, consulted: false, reason: `index unreadable mid-query — skipped: ${(err as Error).message}` });
     }
   }
 

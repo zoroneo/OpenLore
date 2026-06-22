@@ -26,7 +26,7 @@
 
 import { existsSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { resolve, join, basename } from 'node:path';
 import { validateDirectory, safeJoin } from './utils.js';
 import { handleSpecStoreStatus, type SpecStoreStatusReport } from './spec-store.js';
 import { handleOrient } from './orient.js';
@@ -340,7 +340,7 @@ export async function handleWorkingSetContext(
       targets: [],
       items: [],
       findings: [{
-        code: 'no-binding', severity: 'info', subject: absDir,
+        code: 'no-binding', severity: 'info', subject: basename(absDir),
         message: 'No spec-store binding is configured; there is no external change to brief.',
         remediation: 'Add a "specStore" block to .openlore/config.json (see add-spec-store-binding).',
       }],
