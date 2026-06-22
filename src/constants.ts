@@ -32,6 +32,12 @@ export const OPENLORE_GENERATION_SUBDIR = 'generation';
 /** Run metadata sub-directory */
 export const OPENLORE_RUNS_SUBDIR = 'runs';
 
+/** Persisted `openlore prove` scorecards sub-directory */
+export const OPENLORE_PROVE_SUBDIR = 'prove';
+
+/** Relative path to the persisted prove-scorecards directory */
+export const OPENLORE_PROVE_REL_PATH = `${OPENLORE_DIR}/${OPENLORE_PROVE_SUBDIR}`;
+
 /** Config file name inside OPENLORE_DIR */
 export const OPENLORE_CONFIG_FILENAME = 'config.json';
 

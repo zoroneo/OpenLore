@@ -7,22 +7,33 @@
  * The substrate needs no API key; this command's agent arm does (it shells out
  * to `claude`). When `claude` is absent it fails fast with guidance; `--dry-run`
  * exercises the whole pipeline with clearly-labelled synthetic numbers.
+ *
+ * Output + sharing (add-prove-shareable-scorecard):
+ *   --json       stable, CI-consumable scorecard (decision 581a90bf)
+ *   --markdown   paste-ready block + shields.io badge for a README
+ *   --save       persist a dated scorecard under .openlore/prove/ (decision 670b5f0b)
+ *   --estimate   deterministic, no-API graph projection of the orientation tax (decision 66feae62)
  */
 
 import { Command } from 'commander';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../../utils/logger.js';
 import { readCachedContext } from '../../core/services/mcp-handlers/utils.js';
+import { OPENLORE_PROVE_REL_PATH } from '../../constants.js';
 import { deriveTasks, scoreAnswer, type GraphFact, type ProveTask } from '../../core/agent-eval/tasks.js';
 import {
   claudeRunner, writeProveMcpConfigs, summarize, parseAgentJson,
   type AgentRunner, type Condition, type Metrics, type Cell,
 } from '../../core/agent-eval/measure.js';
-import { computeScorecard, renderScorecard } from '../../core/agent-eval/scorecard.js';
+import { estimateCells } from '../../core/agent-eval/estimate.js';
+import {
+  computeScorecard, renderScorecard, serializeScorecard, renderScorecardMarkdown,
+  type Scorecard, type ScorecardMeta, type ProveMode,
+} from '../../core/agent-eval/scorecard.js';
 
 interface ProveOptions {
   directory?: string;
@@ -30,6 +41,10 @@ interface ProveOptions {
   model?: string;
   maxBudgetUsd?: string;
   dryRun?: boolean;
+  estimate?: boolean;
+  json?: boolean;
+  markdown?: boolean;
+  save?: boolean;
 }
 
 /** Locate this CLI's own entry so the spawned MCP server is the same build. */
@@ -56,6 +71,15 @@ async function loadGraphFacts(absDir: string): Promise<GraphFact[] | null> {
 
 function claudeAvailable(): boolean {
   try { execFileSync('claude', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
+}
+
+/** Best-effort short repo SHA for scorecard provenance; null when unavailable. */
+function gitShortSha(cwd: string): string | null {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd, encoding: 'utf-8' }).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Synthetic metrics for --dry-run: WITH is cheaper + fewer turns, both correct. */
@@ -100,9 +124,29 @@ function runOne(
   }
 }
 
+/** Raw metrics carried alongside a scorecard, for persistence (`--save`). */
+export interface ProveRaw {
+  withoutCell: Cell;
+  withCell: Cell;
+  /** Per-run metrics (measured / dry-run only; absent for an estimate). */
+  withoutRuns?: Metrics[];
+  withRuns?: Metrics[];
+}
+
+export interface ProveResult {
+  ok: boolean;
+  message: string;
+  scorecard?: Scorecard;
+  meta?: ScorecardMeta;
+  raw?: ProveRaw;
+}
+
 /**
- * Core (testable) prove run: derive tasks, run both arms N times, return the
- * scorecard text. `runner` is injectable so tests never call a real agent.
+ * Core (testable) prove run: derive tasks, then either run both agent arms N
+ * times (measured / dry-run) or compute the deterministic estimate. Returns the
+ * scorecard + provenance so the command can render any output form. `runner` is
+ * injectable so tests never call a real agent; `generatedAt`/`repoSha` are passed
+ * in so the core stays deterministic.
  */
 export async function runProve(opts: {
   directory: string;
@@ -110,8 +154,11 @@ export async function runProve(opts: {
   model: string;
   maxBudgetUsd: number;
   dryRun: boolean;
+  estimate?: boolean;
+  generatedAt: string;
+  repoSha: string | null;
   runner?: AgentRunner;
-}): Promise<{ ok: boolean; message: string }> {
+}): Promise<ProveResult> {
   const absDir = resolve(opts.directory);
   const facts = await loadGraphFacts(absDir);
   if (!facts) {
@@ -122,6 +169,28 @@ export async function runProve(opts: {
     return { ok: false, message: 'Could not derive orientation tasks — the call graph is too sparse (need functions with ≥2 callers). Try a larger repo.' };
   }
 
+  const mode: ProveMode = opts.estimate ? 'estimate' : opts.dryRun ? 'dry-run' : 'measured';
+
+  // ── Estimate arm: deterministic, no agent, no API key ──────────────────────
+  if (mode === 'estimate') {
+    const cells = estimateCells(facts, tasks);
+    if (!cells) {
+      return { ok: false, message: 'Could not estimate — no oracle-able tasks for this graph.' };
+    }
+    const sc = computeScorecard(cells.without, cells.with);
+    const meta: ScorecardMeta = {
+      mode, generatedAt: opts.generatedAt, repoSha: opts.repoSha, model: null, tasks: tasks.length,
+    };
+    return {
+      ok: true,
+      message: renderScorecard(sc, { tasks: tasks.length, mode }),
+      scorecard: sc,
+      meta,
+      raw: { withoutCell: cells.without, withCell: cells.with },
+    };
+  }
+
+  // ── Measured / dry-run arms: WITH vs WITHOUT agent passes ───────────────────
   const work = mkdtempSync(join(tmpdir(), 'openlore-prove-'));
   const cfg = writeProveMcpConfigs(work, localCliEntry());
   const runner = opts.runner ?? claudeRunner;
@@ -138,7 +207,34 @@ export async function runProve(opts: {
   const withoutCell: Cell = summarize(withoutRuns);
   const withCell: Cell = summarize(withRuns);
   const sc = computeScorecard(withoutCell, withCell);
-  return { ok: true, message: renderScorecard(sc, { tasks: tasks.length, mock: opts.dryRun }) };
+  const meta: ScorecardMeta = {
+    mode, generatedAt: opts.generatedAt, repoSha: opts.repoSha, model: opts.model, tasks: tasks.length,
+  };
+  return {
+    ok: true,
+    message: renderScorecard(sc, { tasks: tasks.length, mode }),
+    scorecard: sc,
+    meta,
+    raw: { withoutCell, withCell, withoutRuns, withRuns },
+  };
+}
+
+/**
+ * Persist a scorecard to a dated, non-clobbering file under .openlore/prove/.
+ * Returns the absolute path written. Same-day repeats get a numeric suffix so a
+ * prior run is never overwritten (decision 670b5f0b).
+ */
+export function saveScorecard(absDir: string, result: ProveResult): string {
+  const sc = result.scorecard!;
+  const meta = result.meta!;
+  const dir = join(absDir, OPENLORE_PROVE_REL_PATH);
+  mkdirSync(dir, { recursive: true });
+  const day = meta.generatedAt.slice(0, 10); // YYYY-MM-DD
+  let path = join(dir, `prove-${day}.json`);
+  for (let n = 2; existsSync(path); n++) path = join(dir, `prove-${day}-${n}.json`);
+  const payload = { ...serializeScorecard(sc, meta), raw: result.raw };
+  writeFileSync(path, JSON.stringify(payload, null, 2) + '\n', 'utf-8');
+  return path;
 }
 
 export const proveCommand = new Command('prove')
@@ -147,15 +243,21 @@ export const proveCommand = new Command('prove')
   .option('--runs <n>', 'Runs per arm per task — more = less noise (default: 2)')
   .option('--model <name>', 'Agent model (default: sonnet)')
   .option('--max-budget-usd <n>', 'Per-agent-call USD ceiling (default: 0.5)')
+  .option('--estimate', 'Deterministic graph projection of the orientation tax — no agent, no API key', false)
   .option('--dry-run', 'Exercise the pipeline with synthetic numbers (no agent, no API key)', false)
+  .option('--json', 'Emit the scorecard as stable JSON (CI-consumable) instead of the human view', false)
+  .option('--markdown', 'Emit a paste-ready markdown block + badge for a README', false)
+  .option('--save', 'Persist a dated scorecard under .openlore/prove/', false)
   .addHelpText('after', `
 Measures fewer-round-trips / lower-cost at equal correctness over a few tasks
 auto-derived from your call graph. The agent arm shells out to \`claude\` (needs
 an API key); the openlore substrate itself needs none.
 
 Examples:
+  $ openlore prove --estimate        Honest estimate, no API key (great first look)
   $ openlore prove --dry-run         See the scorecard shape with synthetic data
   $ openlore prove --runs 4          Real measurement (needs claude + API key)
+  $ openlore prove --estimate --markdown --save   Shareable badge + a saved record
 `)
   .action(async (opts: ProveOptions) => {
     const directory = opts.directory ?? process.cwd();
@@ -163,23 +265,47 @@ Examples:
     const model = opts.model ?? 'sonnet';
     const maxBudgetUsd = opts.maxBudgetUsd ? parseFloat(opts.maxBudgetUsd) : 0.5;
     const dryRun = opts.dryRun ?? false;
+    const estimate = opts.estimate ?? false;
+    const json = opts.json ?? false;
+    const markdown = opts.markdown ?? false;
+    // Machine output owns stdout — suppress the human log chrome so it stays parseable.
+    const machine = json || markdown;
 
-    if (!dryRun && !claudeAvailable()) {
+    // The agent arm needs `claude`; the estimate + dry-run arms do not.
+    if (!dryRun && !estimate && !claudeAvailable()) {
       logger.error('`claude` CLI not found on PATH — the prove agent arm needs it (plus an API key).');
-      logger.info('Try', 'Install the Claude CLI, or run `openlore prove --dry-run` to preview the scorecard shape.');
+      logger.info('Try', 'Run `openlore prove --estimate` for a no-API-key projection, or `--dry-run` to preview the shape.');
       process.exitCode = 1;
       return;
     }
 
-    logger.section('openlore prove');
-    if (!dryRun) {
-      logger.discovery(`Running ${runs} run(s)/arm over graph-derived tasks (this calls \`claude\` and costs money)…`);
+    if (!machine) {
+      logger.section('openlore prove');
+      if (!dryRun && !estimate) {
+        logger.discovery(`Running ${runs} run(s)/arm over graph-derived tasks (this calls \`claude\` and costs money)…`);
+      }
     }
-    const result = await runProve({ directory, runs, model, maxBudgetUsd, dryRun });
+
+    const generatedAt = new Date().toISOString();
+    const repoSha = gitShortSha(resolve(directory));
+    const result = await runProve({ directory, runs, model, maxBudgetUsd, dryRun, estimate, generatedAt, repoSha });
     if (!result.ok) {
       logger.error(result.message);
       process.exitCode = 1;
       return;
     }
-    console.log(result.message);
+
+    if (opts.save) {
+      const path = saveScorecard(resolve(directory), result);
+      // Written to stderr directly so it never pollutes --json / --markdown stdout.
+      process.stderr.write(`Saved scorecard → ${path}\n`);
+    }
+
+    if (json) {
+      console.log(JSON.stringify(serializeScorecard(result.scorecard!, result.meta!), null, 2));
+    } else if (markdown) {
+      console.log(renderScorecardMarkdown(result.scorecard!, result.meta!));
+    } else {
+      console.log(result.message);
+    }
   });

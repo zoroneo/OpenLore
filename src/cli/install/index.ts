@@ -256,6 +256,9 @@ function printSummary(
     logger.discovery('Dry run — no files were written.');
   } else if (!uninstall) {
     logger.success('OpenLore install complete.');
+    // Point the user at the value-proof command. --estimate needs no API key, so
+    // it works as an immediate first look right after install.
+    logger.info('Does it pay off?', 'Run "openlore prove --estimate" for a no-API-key projection on this repo (or "openlore prove" for a measured pass).');
   } else {
     logger.success('OpenLore uninstall complete.');
   }
