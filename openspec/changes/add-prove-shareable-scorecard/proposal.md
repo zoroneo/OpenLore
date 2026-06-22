@@ -24,6 +24,15 @@
 > leaks `git` stderr; (6) the persisted `raw` block is rounded. README + `docs/cli-reference.md` now
 > surface the no-API-key `--estimate` path and the badge. +8 tests (44 in the prove suites; 4428 total).
 >
+> **Second adversarial round (2026-06-22):** a direct failure-injection probe (fake runner via the
+> injectable `runProve` runner) found that a fully-failed *measured* run — every agent call throwing —
+> emitted `ok:true` with a confident `verdict:"break-even"` and all-zero metrics, which a CI consumer
+> reading the new `--json` contract would misread as a neutral result. Fixed: errored runs are now
+> dropped from the medians (no $0/0-turn pollution) via the pure exported `summarizeArms`, and if either
+> arm has no successful sample the run **fails loudly** (`ok:false` → exit 1) with an actionable message
+> instead of a verdict over no data. +4 tests (48 in the prove suites). Documented in the prove section
+> of `docs/AGENT-BENCHMARKS.md`.
+>
 > Third of three changes that close the loss case in OpenLore's own agent benchmark (siblings:
 > `add-task-scoped-context-injection`, `default-to-lean-tool-surface` — both still PROPOSED). Builds
 > directly on the existing `openlore prove` command (Spec 25 Q2, `src/cli/commands/prove.ts`,

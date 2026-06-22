@@ -160,6 +160,33 @@ export interface ProveResult {
 }
 
 /**
+ * Summarize the two measured arms into comparable cells — but only over
+ * SUCCESSFUL runs. An errored run (agent threw / unparseable output) is not a
+ * valid cost/turn sample: including its zeros pollutes the medians, and if EVERY
+ * run failed the all-zero cells would emit a confident-looking but meaningless
+ * "break-even" verdict through the JSON contract. So errored runs are dropped,
+ * and if either arm has no successful sample we fail loudly rather than report a
+ * verdict over no data. Pure + exported for unit testing without a graph.
+ */
+export function summarizeArms(
+  withoutRuns: Metrics[], withRuns: Metrics[],
+): { ok: true; withoutCell: Cell; withCell: Cell } | { ok: false; message: string } {
+  const okWithout = withoutRuns.filter(r => !r.error);
+  const okWith = withRuns.filter(r => !r.error);
+  if (okWithout.length === 0 || okWith.length === 0) {
+    const total = withoutRuns.length + withRuns.length;
+    const failed = total - okWithout.length - okWith.length;
+    const firstErr = [...withoutRuns, ...withRuns].find(r => r.error)?.error ?? 'unknown error';
+    return {
+      ok: false,
+      message: `prove produced no usable measurement — ${failed}/${total} agent runs failed (e.g. "${firstErr}"). ` +
+        'Check that `claude` works here (auth, API key, budget), then retry; or use `--estimate` for a no-agent projection.',
+    };
+  }
+  return { ok: true, withoutCell: summarize(okWithout), withCell: summarize(okWith) };
+}
+
+/**
  * Core (testable) prove run: derive tasks, then either run both agent arms N
  * times (measured / dry-run) or compute the deterministic estimate. Returns the
  * scorecard + provenance so the command can render any output form. `runner` is
@@ -222,8 +249,9 @@ export async function runProve(opts: {
     }
   }
 
-  const withoutCell: Cell = summarize(withoutRuns);
-  const withCell: Cell = summarize(withRuns);
+  const arms = summarizeArms(withoutRuns, withRuns);
+  if (!arms.ok) return { ok: false, message: arms.message };
+  const { withoutCell, withCell } = arms;
   const sc = computeScorecard(withoutCell, withCell);
   const meta: ScorecardMeta = {
     mode, generatedAt: opts.generatedAt, repoSha: opts.repoSha, model: opts.model, tasks: tasks.length,

@@ -8,9 +8,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { saveScorecard, parseNumericFlag, type ProveResult } from './prove.js';
+import { saveScorecard, parseNumericFlag, summarizeArms, type ProveResult } from './prove.js';
 import { OPENLORE_PROVE_REL_PATH } from '../../constants.js';
+import type { Metrics } from '../../core/agent-eval/measure.js';
 import type { Scorecard, ScorecardMeta } from '../../core/agent-eval/scorecard.js';
+
+const ok = (cost: number, turns: number, correct: boolean): Metrics =>
+  ({ freshInputTokens: 1000, cacheReadTokens: 0, outputTokens: 100, costUsd: cost, numTurns: turns, durationMs: 1000, answer: 'a', correct });
+const errored = (): Metrics =>
+  ({ freshInputTokens: 0, cacheReadTokens: 0, outputTokens: 0, costUsd: 0, numTurns: 0, durationMs: 0, answer: '', correct: false, error: 'boom' });
 
 const scorecard: Scorecard = {
   costWithout: 0.2, costWith: 0.16, costDeltaPct: -20,
@@ -70,6 +76,41 @@ describe('saveScorecard', () => {
     const saved = JSON.parse(readFileSync(saveScorecard(dir, noisy), 'utf-8'));
     expect(saved.raw.withoutCell.costUsd).toBe(0.058);
     expect(saved.raw.withCell.costUsd).toBe(0.043);
+  });
+});
+
+describe('summarizeArms — failed runs never become a confident verdict', () => {
+  it('fails loudly when EVERY run errored (no usable measurement)', () => {
+    const r = summarizeArms([errored(), errored()], [errored(), errored()]);
+    expect(r.ok).toBe(false);
+    expect((r as { message: string }).message).toContain('no usable measurement');
+    expect((r as { message: string }).message).toContain('4/4 agent runs failed');
+    expect((r as { message: string }).message).toContain('boom');
+  });
+
+  it('fails loudly when one whole arm errored (asymmetric total failure)', () => {
+    const r = summarizeArms([ok(0.05, 6, true), ok(0.05, 6, true)], [errored(), errored()]);
+    expect(r.ok).toBe(false); // the WITH arm produced nothing comparable
+  });
+
+  it('drops errored runs from the medians on a partial failure (no zero pollution)', () => {
+    // One real $0.20/20-turn sample + one errored zero: the cell must reflect the
+    // real sample, NOT a median dragged toward 0 by the failed run.
+    const r = summarizeArms([ok(0.20, 20, true), errored()], [ok(0.10, 8, true), errored()]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.withoutCell.costUsd).toBe(0.20);
+      expect(r.withoutCell.numTurns).toBe(20);
+      expect(r.withoutCell.runs).toBe(1);   // only the successful sample counted
+      expect(r.withCell.costUsd).toBe(0.10);
+      expect(r.withCell.correctRate).toBe(1);
+    }
+  });
+
+  it('summarizes normally when nothing errored', () => {
+    const r = summarizeArms([ok(0.2, 20, true), ok(0.2, 20, true)], [ok(0.1, 10, true), ok(0.1, 10, true)]);
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.withoutCell.runs).toBe(2); expect(r.withCell.runs).toBe(2); }
   });
 });
 
