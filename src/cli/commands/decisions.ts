@@ -953,6 +953,11 @@ Examples:
       });
       emit(rootPath, 'decisions', { event: 'decisions_synced', count: result.synced.length, dry_run: options.dryRun, transport: 'cli' });
 
+      // A partial sync must exit non-zero: the documented gate workflow ("run
+      // `openlore decisions --sync`, then retry `git commit`") relies on this to not
+      // proceed on a failed sync. Applies to both json and text output.
+      if (result.errors.length > 0) process.exitCode = 1;
+
       if (options.json) {
         process.stdout.write(JSON.stringify(result, null, 2) + '\n');
         return;

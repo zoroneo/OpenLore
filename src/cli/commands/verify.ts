@@ -463,14 +463,16 @@ A score >= threshold indicates specs are production-ready.
         logger.info('Total time', formatDuration(duration));
         logger.blank();
 
-        // Exit status based on recommendation
-        if (report.recommendation === 'regenerate') {
-          process.exitCode = 1;
-        } else if (report.recommendation === 'needs-review') {
-          process.exitCode = 0; // Warning but not failure
-        } else {
+        if (report.recommendation !== 'regenerate' && report.recommendation !== 'needs-review') {
           logger.success('Verification passed!');
         }
+      }
+
+      // Exit status based on recommendation — applied for BOTH json and text output
+      // so `verify --json` is usable as a CI gate (it previously always exited 0).
+      // 'needs-review' is a warning, not a failure (exit 0).
+      if (report.recommendation === 'regenerate') {
+        process.exitCode = 1;
       }
 
       // Save LLM logs
