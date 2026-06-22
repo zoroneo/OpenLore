@@ -112,12 +112,13 @@ export async function openloreRun(options: RunApiOptions = {}): Promise<RunResul
       await createOpenSpecStructure(fullOpenspecPath);
     }
 
+    // Create .gitignore when absent so a fresh `git init` repo still ignores
+    // .openlore/ analysis artifacts (multi-MB lance binaries) rather than
+    // leaking them into git status and diff-based tools.
     const hasGitignore = await gitignoreExists(rootPath);
-    if (hasGitignore) {
-      const alreadyIgnored = await isInGitignore(rootPath, `${OPENLORE_DIR}/`);
-      if (!alreadyIgnored) {
-        await addToGitignore(rootPath, `${OPENLORE_DIR}/`, 'openlore analysis artifacts');
-      }
+    const alreadyIgnored = hasGitignore && (await isInGitignore(rootPath, `${OPENLORE_DIR}/`));
+    if (!alreadyIgnored) {
+      await addToGitignore(rootPath, `${OPENLORE_DIR}/`, 'openlore analysis artifacts');
     }
 
     initResult = {

@@ -337,14 +337,17 @@ The pipeline saves run metadata to .openlore/runs/ for tracking.
             console.log(`   ✓ OpenSpec directory exists (${DEFAULT_OPENSPEC_PATH})`);
           }
 
-          // Update gitignore
+          // Update gitignore — create it when absent so a fresh `git init` repo
+          // still ignores .openlore/ analysis artifacts (multi-MB lance binaries).
           const hasGitignore = await gitignoreExists(rootPath);
-          if (hasGitignore) {
-            const alreadyIgnored = await isInGitignore(rootPath, `${OPENLORE_DIR}/`);
-            if (!alreadyIgnored) {
-              await addToGitignore(rootPath, `${OPENLORE_DIR}/`, 'openlore analysis artifacts');
-              console.log(`   ✓ Added ${OPENLORE_DIR}/ to .gitignore`);
-            }
+          const alreadyIgnored = hasGitignore && (await isInGitignore(rootPath, `${OPENLORE_DIR}/`));
+          if (!alreadyIgnored) {
+            await addToGitignore(rootPath, `${OPENLORE_DIR}/`, 'openlore analysis artifacts');
+            console.log(
+              hasGitignore
+                ? `   ✓ Added ${OPENLORE_DIR}/ to .gitignore`
+                : `   ✓ Created .gitignore with ${OPENLORE_DIR}/`
+            );
           }
 
           metadata.steps.init = { status: 'completed' };

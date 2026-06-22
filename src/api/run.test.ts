@@ -254,6 +254,14 @@ describe('openloreRun', () => {
       expect(mockWriteOpenLoreConfig).toHaveBeenCalled();
     });
 
+    it('creates .gitignore with .openlore/ when none exists', async () => {
+      setupMocks({ configExists: false, analysisRecent: true });
+      mockGitignoreExists.mockResolvedValue(false);
+      await openloreRun({ rootPath: ROOT });
+
+      expect(mockAddToGitignore).toHaveBeenCalledWith(ROOT, '.openlore/', expect.any(String));
+    });
+
     it('skips init when config exists and force=false', async () => {
       setupMocks({ configExists: true, analysisRecent: true });
       const result = await openloreRun({ rootPath: ROOT });
