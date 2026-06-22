@@ -74,7 +74,6 @@ import {
   handleCheckSpecDrift,
   handleGetFunctionSkeleton,
   handleGetFunctionBody,
-  handleGetDecisions,
   handleGetRouteInventory,
   handleGetMiddlewareInventory,
   handleGetSchemaInventory,
@@ -233,9 +232,6 @@ export async function dispatchTool(
     const { directory, storyFilePath, description } =
       args as { directory: string; storyFilePath: string; description: string };
     return handleAnnotateStory(directory, storyFilePath, description);
-  } else if (name === 'get_decisions') {
-    const { directory, query } = args as { directory: string; query?: string };
-    return handleGetDecisions(directory, query);
   } else if (name === 'get_route_inventory') {
     const { directory } = args as { directory: string };
     return handleGetRouteInventory(directory);

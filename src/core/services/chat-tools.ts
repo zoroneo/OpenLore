@@ -33,7 +33,6 @@ import {
 import {
   handleGetArchitectureOverview,
   handleGetRefactorReport,
-  handleGetDecisions,
 } from './mcp-handlers/analysis.js';
 
 import { handleOrient } from './mcp-handlers/orient.js';
@@ -553,29 +552,6 @@ export const CHAT_TOOLS: ChatTool[] = [
     },
   },
 
-  // ── Architecture Decision Records ────────────────────────────────────────
-  {
-    name: 'get_decisions',
-    description:
-      'USE THIS WHEN: the user asks "why was X decided?", "is there an ADR about Y?", ' +
-      'or "what\'s the rationale behind Z?". Lists documented architectural decisions — ' +
-      'gives the "why" that is not visible in the code itself.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        directory: { type: 'string', description: 'Absolute path to the project directory' },
-        query: { type: 'string', description: 'Optional text filter on title or content' },
-      },
-      required: ['directory'],
-    },
-    async execute(directory, args) {
-      const result = await handleGetDecisions(
-        (args.directory as string) ?? directory,
-        args.query as string | undefined
-      );
-      return { result, filePaths: [] };
-    },
-  },
 
   // ── Refactor report ──────────────────────────────────────────────────────
   {

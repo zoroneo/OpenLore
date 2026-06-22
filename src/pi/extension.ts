@@ -637,15 +637,6 @@ const NAV_TOOLS: NavToolSpec[] = [
       direction: Type.Optional(StringEnum(['imports', 'importedBy', 'both'] as const)),
     }),
   },
-  {
-    name: 'get_decisions',
-    label: 'openlore get_decisions',
-    description: 'List or search architectural decision records (ADRs) — the documented "why" behind design choices.',
-    guideline: 'When you wonder why a pattern exists or need to check if a decision is already documented, call openlore_get_decisions.',
-    parameters: Type.Object({
-      query: Type.Optional(Type.String({ description: 'Optional text filter — returns only ADRs whose title or content contains this string' })),
-    }),
-  },
 ];
 
 function toolResult(text: string, details: unknown = null): AgentToolResult<unknown> {

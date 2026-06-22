@@ -170,7 +170,6 @@ const TOOL_WEIGHTS: Record<string, number> = {
   check_spec_drift: 3,
   detect_changes: 3,
   audit_spec_coverage: 3,
-  get_decisions: 3,
   get_minimal_context: 3,
 
   // Graph traversal / cross-module

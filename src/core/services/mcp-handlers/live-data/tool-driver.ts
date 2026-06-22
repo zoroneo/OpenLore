@@ -81,7 +81,6 @@ export const TOOL_REGISTRY: Record<string, ToolPlan> = {
   get_env_vars: { kind: 'read', buildArgs: dirOnly },
   get_external_packages: { kind: 'read', buildArgs: dirOnly },
   list_spec_domains: { kind: 'read', buildArgs: dirOnly },
-  get_decisions: { kind: 'read', buildArgs: dirOnly },
   list_decisions: { kind: 'read', buildArgs: dirOnly },
   get_landmarks: { kind: 'read', buildArgs: dirOnly },
   get_map: { kind: 'read', buildArgs: dirOnly },
