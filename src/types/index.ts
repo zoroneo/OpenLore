@@ -65,6 +65,39 @@ export interface OpenLoreConfig {
    * surface severities into failing a commit. Absent = no surfaces declared.
    */
   impactCertificate?: ImpactCertificateConfig;
+  /**
+   * Optional task-scoped context injection settings
+   * (change: add-task-scoped-context-injection). When enabled (the default),
+   * `openlore orient --inject` — wired by `openlore install` as a per-task
+   * pre-turn hook — emits a bounded, attributed, ignorable orientation block so
+   * the agent's first turn begins already oriented to the task, amortizing the
+   * per-task `orient` round-trip to zero. Absent = task-scoped injection enabled
+   * with documented defaults.
+   */
+  contextInjection?: ContextInjectionConfig;
+}
+
+/** Whether task-scoped context injection is active (change: add-task-scoped-context-injection). */
+export type ContextInjectionMode = 'off' | 'task-scoped';
+
+/**
+ * Task-scoped context-injection settings. All fields optional; the documented
+ * defaults are applied when absent (mode `task-scoped`, ~600-token budget, and
+ * the relevance-gate thresholds below). The gate is deterministic and never
+ * learned: `orient --inject` emits the full block only when the task's graph
+ * match clears the threshold, otherwise it degrades to a single pointer line.
+ */
+export interface ContextInjectionConfig {
+  /** `off` makes `orient --inject` a no-op (exit 0); does not affect SessionStart/MCP. Default `task-scoped`. */
+  mode?: ContextInjectionMode;
+  /** Hard cap on the injected block size, in estimated tokens. Default 600. */
+  tokenBudget?: number;
+  /** Relevance gate: minimum matched-function count to emit a full block. Default 2. */
+  relevanceMinMatches?: number;
+  /** Relevance gate: a match with at least this fan-in (or a hub) clears the gate structurally. Default 2. */
+  relevanceMinFanIn?: number;
+  /** Relevance gate: minimum top match score (semantic/hybrid scale only) to clear the gate. Default 0.3. */
+  relevanceMinScore?: number;
 }
 
 /** Named high-risk patterns the blast-radius hook may block on (opt-in). */

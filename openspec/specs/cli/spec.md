@@ -697,3 +697,114 @@ infrastructure failure (no graph, no binding) SHALL never block.
   critical
 - **WHEN** a change opens a new path into a critical surface
 - **THEN** the hook blocks; and for a newly-opened path into any non-critical surface it remains advisory
+
+### Requirement: OrientInjectMode
+
+The system SHALL provide an `--inject` mode on the `openlore orient` command that emits an
+injection-shaped orientation block for a single task. The task SHALL be taken from `--task` when
+present, otherwise read from the command's stdin (the prompt payload a pre-turn agent hook supplies).
+The emitted block SHALL reuse the lean orientation output (Spec 27), SHALL be bounded by a documented
+token budget, SHALL be clearly attributed to OpenLore, and SHALL open with a one-line statement that
+it is informational and may be ignored (the same facts-not-coercion posture as the Epistemic Lease,
+decision `8e95746d`). The mode SHALL be deterministic with no LLM. Any failure — missing graph, parse
+error, empty match, or empty prompt — SHALL degrade to a single pointer line and exit 0, so a hook
+that invokes it can never break the user's turn.
+
+> Implemented by `add-task-scoped-context-injection` (2026-06-22). `orient --inject` reuses
+> `handleOrient(lean=true)`; stdin is parsed for a Claude Code `UserPromptSubmit` JSON payload
+> (`.prompt`) or treated as raw text. stdout is kept clean (diagnostics → stderr) so only the block
+> is injected. Default budget 600 tokens. Verified e2e on this repo: strong match emits the block at
+> exit 0, no-graph/empty prompt emit the pointer line at exit 0. Adds no MCP tool. Decisions:
+> `27c4bb53`, `0fc964d3`.
+
+#### Scenario: Inject emits a budgeted, ignorable block for a real task
+
+- **GIVEN** an analyzed repository and a task supplied via `--task`
+- **WHEN** `openlore orient --inject` runs
+- **THEN** it emits a lean, OpenLore-attributed orientation block that opens with an
+  informational/ignorable framing line and does not exceed the configured token budget
+
+#### Scenario: Inject never breaks the turn
+
+- **GIVEN** a repository with no analysis graph
+- **WHEN** `openlore orient --inject` runs from a hook
+- **THEN** it emits a single pointer line indicating OpenLore is available and exits 0, emitting no
+  error to the harness
+
+### Requirement: OrientationRelevanceGate
+
+The `--inject` mode SHALL compute a deterministic, local orientation-relevance signal from the
+orientation result and the call graph (such as matched-function count, fan-in of matches, match
+score, and graph size/density) and SHALL compare it to a documented threshold. When the signal is at
+or above the threshold, `--inject` SHALL emit the full orientation block; when below it, `--inject`
+SHALL emit only a single pointer line. The threshold and its inputs SHALL be documented and
+overridable in repository configuration, and SHALL never be learned or LLM-derived.
+
+> Implemented by `add-task-scoped-context-injection` (2026-06-22). The gate passes when matched-count
+> ≥ `relevanceMinMatches` (default 2) AND there is structural centrality (a match with fan-in ≥
+> `relevanceMinFanIn` (default 2), or a hub) — or, only on the bounded semantic/hybrid score scale, a
+> top score ≥ `relevanceMinScore` (default 0.3). BM25-fallback scores are corpus-relative and
+> unbounded, so the score path is disabled there and the gate relies on count + centrality. Decision:
+> `0fc964d3`.
+
+#### Scenario: A weak-orientation task gates down to a pointer
+
+- **GIVEN** a task whose graph match is sparse or low-scoring (the small/familiar/shallow case)
+- **WHEN** `openlore orient --inject` runs
+- **THEN** it emits only the single pointer line, not a full orientation block
+
+#### Scenario: A strong-orientation task emits the full block
+
+- **GIVEN** a deep task with a strong, high-fan-in graph match
+- **WHEN** `openlore orient --inject` runs
+- **THEN** it emits the full lean orientation block within budget
+
+### Requirement: TaskScopedInjectionInstallWiring
+
+`openlore install` SHALL wire, in addition to the existing whole-repo `SessionStart` orientation hook,
+a task-scoped first-prompt injection hook for each agent adapter that exposes a pre-turn hook
+mechanism (for Claude Code, a `UserPromptSubmit` hook running `openlore orient --inject`). The wired
+group SHALL be marker-identified so re-running install replaces only the OpenLore group, hand-edits in
+managed paths are detected and refused without `--force`, and `--uninstall` removes it cleanly,
+deleting now-empty parent objects and the file when it was OpenLore-only. `--dry-run` SHALL preview
+the change. Adapters with no pre-turn hook mechanism SHALL fall back to the existing instruction block
+without error. The wiring SHALL preserve the user's other configuration byte-for-byte (merge-not-
+clobber, decision `df27e8ef`).
+
+> Implemented by `add-task-scoped-context-injection` (2026-06-22). The claude-code adapter generalizes
+> its SessionStart merge/strip helpers over both hook keys (`SessionStart`, `UserPromptSubmit`).
+> Cursor/Cline/Continue/AGENTS.md have no settings/hook channel and keep the instruction-block
+> fallback. Verified e2e: install wires both marker-identified groups, re-install is byte-identical,
+> uninstall removes both and deletes an OpenLore-only file. Decision: `1d35a27b`.
+
+#### Scenario: Install wires task-scoped injection idempotently
+
+- **GIVEN** a project with Claude Code present
+- **WHEN** `openlore install` runs, then runs again
+- **THEN** a single marker-identified `UserPromptSubmit` OpenLore group is present after both runs, and
+  any user-authored hooks are left byte-identical
+
+#### Scenario: Uninstall removes task-scoped injection
+
+- **GIVEN** a project where `openlore install` wired the task-scoped injection hook
+- **WHEN** `openlore install --uninstall` runs
+- **THEN** the OpenLore `UserPromptSubmit` group is removed, empty parents are pruned, and the file is
+  deleted only if it held nothing but OpenLore entries
+
+### Requirement: ContextInjectionOptOut
+
+The system SHALL read a repository configuration switch controlling task-scoped context injection
+(default: enabled), and when injection is disabled `openlore orient --inject` SHALL emit nothing and
+exit 0. Disabling injection SHALL NOT affect the MCP server registration or the `SessionStart` primer.
+The injected block SHALL never exceed the configured token budget regardless of match size.
+
+> Implemented by `add-task-scoped-context-injection` (2026-06-22). Read from
+> `.openlore/config.json` `contextInjection.mode` (`task-scoped` default | `off`); `tokenBudget`
+> caps the block. Verified e2e: `mode: "off"` yields empty stdout at exit 0; a custom small budget
+> drops lower-priority detail to stay within cap. Decision: `27c4bb53`.
+
+#### Scenario: Injection can be turned off without disabling the rest
+
+- **GIVEN** a repository configured with context injection disabled
+- **WHEN** `openlore orient --inject` runs
+- **THEN** it emits nothing and exits 0, while the MCP server and SessionStart primer remain wired

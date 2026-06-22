@@ -40,7 +40,7 @@ describe('orient command', () => {
     // orientCommand is a module-level singleton; commander retains option
     // values between parseAsync() calls, so reset them so one test's flags
     // (e.g. --limit 0) don't bleed into the next.
-    for (const opt of ['task', 'directory', 'limit', 'json', 'lean', 'tokenBudget', 'metrics']) {
+    for (const opt of ['task', 'directory', 'limit', 'json', 'lean', 'tokenBudget', 'metrics', 'inject']) {
       orientCommand.setOptionValue(opt, undefined);
     }
   });
@@ -68,6 +68,35 @@ describe('orient command', () => {
       expect(longs).toContain('--directory');
       expect(longs).toContain('--limit');
       expect(longs).toContain('--metrics');
+      expect(longs).toContain('--inject');
+    });
+  });
+
+  describe('--inject (task-scoped injection hook)', () => {
+    it('emits an attributed, ignorable block for a strong match and never errors', async () => {
+      mockHandleOrient.mockResolvedValue({
+        task: 'auth flow',
+        searchMode: 'hybrid',
+        relevantFiles: ['src/auth/mw.ts'],
+        relevantFunctions: [
+          { name: 'authMiddleware', filePath: 'src/auth/mw.ts', score: 0.8, fanIn: 5 },
+          { name: 'verify', filePath: 'src/auth/mw.ts', score: 0.6, fanIn: 2 },
+        ],
+        specDomains: ['auth'],
+        callPaths: [],
+        suggestedTools: ['orient'],
+      });
+      await orientCommand.parseAsync(['--inject', '--task', 'auth flow'], { from: 'user' });
+      expect(output()).toContain('[OpenLore]');
+      expect(output().toLowerCase()).toContain('ignore');
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it('emits the pointer line (never throws) when handleOrient returns an error result', async () => {
+      mockHandleOrient.mockResolvedValue({ error: 'No analysis found.' });
+      await orientCommand.parseAsync(['--inject', '--task', 'whatever'], { from: 'user' });
+      expect(output()).toContain('Structural context is available');
+      expect(process.exitCode).toBeUndefined();
     });
   });
 

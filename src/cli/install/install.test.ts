@@ -199,6 +199,50 @@ describe('openlore install (end-to-end)', () => {
     expect(after._openlore).toBeUndefined();
   });
 
+  it('claude-code install wires a marker-identified UserPromptSubmit injection hook', async () => {
+    await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
+    const code = await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
+    expect(code).toBe(0);
+    const settings = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
+    // Both managed hook groups are present, each marker-identified.
+    expect(settings.hooks.SessionStart[0]._openlore).toBe(true);
+    expect(settings.hooks.UserPromptSubmit).toHaveLength(1);
+    expect(settings.hooks.UserPromptSubmit[0]._openlore).toBe(true);
+    expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toBe(
+      'npx --yes openlore orient --inject'
+    );
+  });
+
+  it('re-running install keeps a single UserPromptSubmit group (idempotent)', async () => {
+    await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
+    await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
+    await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
+    const settings = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
+    expect(settings.hooks.UserPromptSubmit.filter((e: { _openlore?: boolean }) => e._openlore)).toHaveLength(1);
+  });
+
+  it('uninstall removes both hook groups and preserves user-defined UserPromptSubmit hooks', async () => {
+    await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
+    await mkdir(join(dir, '.claude'), { recursive: true });
+    const userHook = { matcher: 'foo', hooks: [{ type: 'command', command: 'echo bar' }] };
+    await writeFile(
+      join(dir, '.claude/settings.json'),
+      JSON.stringify({ hooks: { UserPromptSubmit: [userHook] } }, null, 2),
+      'utf8'
+    );
+
+    await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
+    const settings = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
+    expect(settings.hooks.UserPromptSubmit).toHaveLength(2);
+    expect(settings.hooks.UserPromptSubmit[0]).toEqual(userHook);
+    expect(settings.hooks.UserPromptSubmit[1]._openlore).toBe(true);
+
+    await runInstall({ cwd: dir, agent: 'claude-code', uninstall: true });
+    const after = JSON.parse(await readFile(join(dir, '.claude/settings.json'), 'utf8'));
+    expect(after.hooks.UserPromptSubmit).toEqual([userHook]);
+    expect(after.hooks.SessionStart).toBeUndefined();
+  });
+
   it('cursor install writes .cursor/mcp.json with mcpServers.openlore', async () => {
     await mkdir(join(dir, '.cursor'), { recursive: true });
     const code = await runInstall({ cwd: dir, agent: 'cursor', analyze: false });

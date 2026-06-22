@@ -18,6 +18,7 @@ import { logger } from '../../utils/logger.js';
 import { handleOrient } from '../../core/services/mcp-handlers/orient.js';
 import { estimateTokens } from '../../core/services/llm-service.js';
 import { OPENLORE_ANALYSIS_REL_PATH } from '../../constants.js';
+import { buildInjection, extractPrompt } from './orient-inject.js';
 
 interface OrientCliOptions {
   task?: string;
@@ -27,6 +28,56 @@ interface OrientCliOptions {
   lean?: boolean;
   json?: boolean;
   metrics?: boolean;
+  inject?: boolean;
+}
+
+/** Read all of stdin (the hook prompt payload). Resolves '' when no stdin is piped. */
+function readStdin(): Promise<string> {
+  return new Promise(resolve => {
+    if (process.stdin.isTTY) return resolve('');
+    let data = '';
+    let settled = false;
+    const done = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve(data);
+    };
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', chunk => (data += chunk));
+    process.stdin.on('end', done);
+    process.stdin.on('error', done);
+    // A hook must never hang the user's turn: if stdin neither closes nor errors,
+    // proceed with whatever arrived (typically '' → pointer line).
+    setTimeout(done, 2000).unref?.();
+  });
+}
+
+/**
+ * `orient --inject` — task-scoped context injection
+ * (change: add-task-scoped-context-injection). Emits a bounded, attributed,
+ * ignorable orientation block (or a single pointer line) to stdout for a
+ * pre-turn agent hook. Reads the task from --task or the hook's stdin payload.
+ * Always exits 0: a hook must never break the user's turn.
+ */
+async function runInject(directory: string, taskOpt: string | undefined): Promise<void> {
+  let prompt = taskOpt ?? '';
+  if (!prompt) {
+    try {
+      prompt = extractPrompt(await readStdin());
+    } catch {
+      prompt = '';
+    }
+  }
+  try {
+    // Keep stdout clean: handleOrient → validateDirectory writes a "[ok] …"
+    // success line via console.log, which would otherwise pollute the injected
+    // context. Redirect diagnostics to stderr (same discipline as --json mode)
+    // so stdout carries only the orientation block.
+    const block = await withQuietStdout(() => buildInjection(directory, prompt));
+    if (block) console.log(block);
+  } catch {
+    // buildInjection is fail-open, but guard the print path too: never throw.
+  }
 }
 
 /**
@@ -141,6 +192,7 @@ export const orientCommand = new Command('orient')
   .option('--lean', 'Return only the navigation core — drop provenance/change-coupling/insertion-points/specs/decisions enrichment (Spec 27)', false)
   .option('--json', 'Emit the full result as JSON instead of a human-readable summary', false)
   .option('--metrics', 'Report wall time and output size to stderr (opt-in; off by default)', false)
+  .option('--inject', 'Emit a bounded, ignorable task-scoped orientation block for a pre-turn agent hook (reads the task from --task or stdin); always exits 0', false)
   .addHelpText(
     'after',
     `
@@ -158,6 +210,14 @@ prints a short session-start primer (used by the install SessionStart hook).
     const directory = opts.directory ?? process.cwd();
     const asJson = opts.json ?? false;
     const task = opts.task?.trim();
+
+    // Task-scoped injection hook mode: emit a bounded orientation block (or a
+    // pointer line) to stdout and always exit 0 — a pre-turn hook must never
+    // break the user's turn. Reads the task from --task or stdin.
+    if (opts.inject) {
+      await runInject(directory, task);
+      return;
+    }
 
     // No task → session-start primer (keeps the install hook from erroring).
     if (!task) {
