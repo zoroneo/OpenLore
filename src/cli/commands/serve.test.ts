@@ -222,6 +222,17 @@ describe('openlore serve', () => {
     expect(body.tools).toContain('get_env_vars');
   });
 
+  // change: default-to-lean-tool-surface — serve accepts `full` as an alias of
+  // `all` so its selector vocabulary matches `openlore mcp --preset full`.
+  it('preset "full" is accepted as a full-surface alias of "all"', async () => {
+    const h = await boot({ preset: 'full' });
+    const res = await fetch(`${h.baseUrl}/health`);
+    const body = await jsonOf(res);
+    expect(body.preset).toBe('full');
+    expect(body.tools).toContain('get_env_vars');
+    expect(body.tools).toContain('record_decision'); // full surface incl. governance
+  });
+
   it('enforces the token gate on /tool but not /health', async () => {
     const h = await boot({ token: 'sekret' });
 

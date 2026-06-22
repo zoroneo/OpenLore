@@ -18,9 +18,17 @@ the universal `AGENTS.md` fallback) and writes the minimal config needed for eac
 | Flag | Effect |
 |------|--------|
 | `--agent <name>` | Install only for one surface. Names: `claude-code`, `cursor`, `cline`, `continue`, `agents-md`. |
+| `--preset <name>` | Wire the MCP server to a tool preset: `navigation` (the lean default), `minimal`, `memory`, `verify`, `federation`, or `full`. Omit it for the lean navigation surface; pass `--preset full` to wire all 62 tools (the prior default). |
 | `--dry-run` | Print the planned changes; write nothing. |
 | `--force` | Overwrite OpenLore-managed blocks even when hand-edited. |
 | `--uninstall` | Remove every OpenLore-managed block / entry. Files OpenLore created (and never had non-OpenLore content) are deleted. |
+
+> **Default tool surface (since `default-to-lean-tool-surface`).** A plain `openlore install` wires the
+> MCP server to the lean **`navigation`** preset — 10 graph-traversal tools, the Spec 14 benchmark
+> winner — not all 62. This is per-session token savings with no capability loss: every tool stays one
+> opt-in away. Note the lean default does **not** include the governance tools the decisions pre-commit
+> gate uses (`record_decision`, `check_spec_drift`, `detect_changes`); on a repo that gates commits,
+> install with **`--preset full`** (all 62) or **`--preset minimal`** (the governance core) to wire them.
 
 ## What it actually writes
 

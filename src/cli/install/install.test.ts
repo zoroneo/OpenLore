@@ -126,6 +126,43 @@ describe('openlore install (end-to-end)', () => {
     expect(await runInstall({ cwd: dir, agent: 'claude-code', preset: 'navigation', analyze: false, force: true })).toBe(0);
   });
 
+  // change: default-to-lean-tool-surface — --all-tools is the convenience full
+  // selector on install/connect (matching `openlore mcp --all-tools`), and the
+  // `all` alias normalizes to the canonical `full` so the wired arg is never two
+  // strings for one surface.
+  it('--all-tools and --preset all both wire the canonical --preset full', async () => {
+    await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
+    await runInstall({ cwd: dir, agent: 'claude-code', allTools: true, analyze: false });
+    let mcp = JSON.parse(await readFile(join(dir, '.mcp.json'), 'utf8'));
+    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'full']);
+
+    await runInstall({ cwd: dir, agent: 'claude-code', preset: 'all', analyze: false, force: true });
+    mcp = JSON.parse(await readFile(join(dir, '.mcp.json'), 'utf8'));
+    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'full']); // 'all' normalized
+  });
+
+  // change: default-to-lean-tool-surface — REGRESSION: the cursor adapter
+  // early-returned when its .mdc was unchanged, skipping the .cursor/mcp.json
+  // registration and FREEZING the wired preset, so a re-install with a different
+  // --preset was silently ignored. A preset switch must now take effect on cursor.
+  it('cursor: switching --preset on re-install updates .cursor/mcp.json (not frozen by an unchanged .mdc)', async () => {
+    const mcpPath = join(dir, '.cursor/mcp.json');
+    await runInstall({ cwd: dir, agent: 'cursor', analyze: false });
+    let mcp = JSON.parse(await readFile(mcpPath, 'utf8'));
+    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'navigation']);
+
+    // The .mdc body is preset-independent → unchanged on this re-install. The MCP
+    // entry must STILL switch to full (the bug left it stale at navigation).
+    await runInstall({ cwd: dir, agent: 'cursor', preset: 'full', analyze: false });
+    mcp = JSON.parse(await readFile(mcpPath, 'utf8'));
+    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'full']);
+
+    // …and back to the lean default.
+    await runInstall({ cwd: dir, agent: 'cursor', analyze: false });
+    mcp = JSON.parse(await readFile(mcpPath, 'utf8'));
+    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'navigation']);
+  });
+
   it('re-running install is a no-op (no writes, exit 0)', async () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
     await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });

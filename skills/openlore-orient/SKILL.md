@@ -25,7 +25,7 @@ If you are reading source files without having called `orient` first, you are pr
 
 ### Preferred: via the OpenLore MCP server
 
-If `openlore` is registered as an MCP server in this project (look for `.mcp.json` → `mcpServers.openlore` — the project-scope file Claude Code reads; **not** `.claude/settings.json`, which it ignores for MCP), call the `orient` tool directly through the MCP interface. This is the lowest-latency path and gives the model access to the full openlore tool surface (~50 tools), not just `orient`.
+If `openlore` is registered as an MCP server in this project (look for `.mcp.json` → `mcpServers.openlore` — the project-scope file Claude Code reads; **not** `.claude/settings.json`, which it ignores for MCP), call the `orient` tool directly through the MCP interface. This is the lowest-latency path and gives the model access to whatever tool surface the server was wired with — the lean 10-tool `navigation` preset by default (`openlore install --preset full` wires all 62), not just `orient`.
 
 ### Fallback: via the shell wrapper
 

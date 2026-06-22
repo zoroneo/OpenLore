@@ -1778,28 +1778,43 @@ export const TOOL_PRESETS: Record<string, Set<string>> = {
 };
 
 /**
+ * Resolve a tool-selector option set to its canonical preset name (change:
+ * default-to-lean-tool-surface). Precedence: `--all-tools`/`--preset full`/`all`
+ * → `full`; `--preset <name>` → that name; legacy `--minimal` → `minimal`; no
+ * selector → the lean default (`navigation`). Pure; the single source of truth
+ * both `selectActiveTools` and `leanDefaultActive` resolve through, so the active
+ * surface and the breadth-pointer decision can never disagree.
+ */
+export function resolvePresetName(opts: { minimal?: boolean; preset?: string; allTools?: boolean }): string {
+  if (opts.allTools) return FULL_PRESET;
+  if (opts.preset) return opts.preset === FULL_PRESET_ALIAS ? FULL_PRESET : opts.preset;
+  if (opts.minimal) return 'minimal';
+  return LEAN_DEFAULT_PRESET;
+}
+
+/**
  * Resolve which tools an MCP session exposes (Spec 14; change:
- * default-to-lean-tool-surface). Precedence: `--all-tools`/`--preset full` →
- * the full registry; `--preset <name>` → that preset; legacy `--minimal` → the
- * 'minimal' preset; **no selector → the lean default surface** (the benchmark-
- * winning `navigation` preset), NOT the full registry. Breadth is opt-in because
- * schemas for tools the agent never calls are pure per-request overhead
- * (mcp-quality: MinimizeToolSurface). An unknown preset throws so a typo fails
- * loudly instead of silently exposing all tools. Pure + exported for unit testing.
+ * default-to-lean-tool-surface). `--all-tools`/`--preset full` → the full
+ * registry; `--preset <name>` → that preset; legacy `--minimal` → the 'minimal'
+ * preset; **no selector → the lean default surface** (the benchmark-winning
+ * `navigation` preset), NOT the full registry. Breadth is opt-in because schemas
+ * for tools the agent never calls are pure per-request overhead (mcp-quality:
+ * MinimizeToolSurface). An unknown preset throws so a typo fails loudly instead of
+ * silently exposing all tools. Pure + exported for unit testing.
  */
 export function selectActiveTools<T extends { name: string }>(
   allTools: T[],
   opts: { minimal?: boolean; preset?: string; allTools?: boolean },
 ): T[] {
-  const presetName = opts.allTools
-    ? FULL_PRESET
-    : (opts.preset ?? (opts.minimal ? 'minimal' : LEAN_DEFAULT_PRESET));
+  const presetName = resolvePresetName(opts);
   // The full surface is the registry itself — no Set to maintain, so adding a
   // tool never needs a `full` membership edit (and it can't drift out of sync).
-  if (presetName === FULL_PRESET || presetName === FULL_PRESET_ALIAS) return allTools;
+  if (presetName === FULL_PRESET) return allTools;
   const preset = TOOL_PRESETS[presetName];
   if (!preset) {
-    throw new Error(`Unknown --preset "${presetName}". Known presets: ${[...Object.keys(TOOL_PRESETS), FULL_PRESET].join(', ')}.`);
+    // Echo the raw user input (untrimmed/cased) so a near-miss like "Full" or
+    // "full " is legible; the caller catches this and exits cleanly (no stack).
+    throw new Error(`Unknown --preset "${opts.preset ?? presetName}". Known presets: ${[...Object.keys(TOOL_PRESETS), FULL_PRESET].join(', ')}.`);
   }
   return allTools.filter(t => preset.has(t.name));
 }
@@ -1821,24 +1836,29 @@ interface McpServerOptions {
  * One-line breadth pointer emitted via the MCP `instructions` channel (server
  * info, NOT a tool schema) when the lean default surface is active, so an agent
  * that needs governance/memory/verify/federation tools learns the opt-in exists
- * rather than concluding the capability is absent. Suppressed on any explicit
- * selector. Adds zero tool schemas (change: default-to-lean-tool-surface).
+ * rather than concluding the capability is absent. Every opt-in is named in the
+ * `--preset <name>` form so it is copy-pasteable into both `openlore mcp` and
+ * `openlore install`. Adds zero tool schemas (change: default-to-lean-tool-surface).
  */
 export const BREADTH_POINTER =
   'OpenLore is running its lean default tool surface (the navigation core). ' +
-  'More tools are available behind named presets — governance (`--minimal`), ' +
+  'More tools are available behind named presets — governance (`--preset minimal`), ' +
   'memory (`--preset memory`), claim verification (`--preset verify`), ' +
   'multi-repo federation (`--preset federation`), or the full surface ' +
   '(`--preset full`). Re-wire with `openlore install --preset <name>`.';
 
 /**
- * True only when no tool selector was given — i.e. the lean default surface is
- * active. Any explicit selector (a named preset, `--minimal`, or the full
- * surface) means the agent already chose, so the breadth pointer would be noise.
- * Exported + pure for unit testing.
+ * True when the active surface IS the lean default (the `navigation` preset) —
+ * whether reached by no selector at all OR by an explicit `--preset navigation`
+ * (which is how `openlore install` wires the default). The server cannot tell the
+ * two apart and shouldn't: an agent on the lean surface should learn breadth
+ * exists regardless of how it got there. Any OTHER surface (`minimal`, `memory`,
+ * `verify`, `federation`, or `full`) is a deliberate different choice, so the
+ * pointer would be noise and is suppressed. Resolves through resolvePresetName so
+ * it can never disagree with the active tool set. Exported + pure for unit testing.
  */
 export function leanDefaultActive(opts: { minimal?: boolean; preset?: string; allTools?: boolean }): boolean {
-  return !opts.minimal && !opts.preset && !opts.allTools;
+  return resolvePresetName(opts) === LEAN_DEFAULT_PRESET;
 }
 
 async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
@@ -1858,9 +1878,20 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
   console.debug = toStderr;
 
   const selectorOpts = { minimal: options.minimal, preset: options.preset, allTools: options.allTools };
-  const activeTools = selectActiveTools(TOOL_DEFINITIONS, selectorOpts);
-  // Advertise breadth once via server instructions only when the lean default
-  // surface is active (no selector). This adds no tool schemas.
+  // A bad `--preset` must fail like a CLI usage error (clean message, exit 2),
+  // not an uncaught throw that dumps a Node stack trace — mirroring how
+  // `openlore install` validates its preset (install/index.ts). stdout is the
+  // JSON-RPC channel, so the message goes to stderr.
+  let activeTools: typeof TOOL_DEFINITIONS;
+  try {
+    activeTools = selectActiveTools(TOOL_DEFINITIONS, selectorOpts);
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n`);
+    process.exit(2);
+  }
+  // Advertise breadth once via server instructions only when the active surface
+  // IS the lean default (navigation) — whether reached by no selector or an
+  // explicit `--preset navigation` (how install wires it). This adds no tool schemas.
   const instructions = leanDefaultActive(selectorOpts) ? BREADTH_POINTER : undefined;
 
   // Report the real package version in the MCP initialize handshake rather

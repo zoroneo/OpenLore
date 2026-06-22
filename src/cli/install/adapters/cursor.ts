@@ -76,20 +76,18 @@ export const cursorAdapter: Adapter = {
       existing = null;
     }
 
-    if (existing === desired) {
-      rulesResult.changes.push({
-        path: mdcPath,
-        kind: 'noop',
-        summary: `${MDC_FILE}: already up to date`,
-      });
-      return rulesResult;
-    }
-
+    // The .mdc body is independent of --preset, so it is often unchanged on a
+    // re-install that only switches the tool preset. Earlier this short-circuited
+    // with `return`, which SKIPPED the .cursor/mcp.json registration below and
+    // froze the wired preset (a re-install with a new --preset was silently
+    // ignored). Record the .mdc outcome but always fall through to MCP wiring so a
+    // preset switch takes effect (change: default-to-lean-tool-surface).
+    const mdcUnchanged = existing === desired;
     const isOurs =
       existing === null ||
       /^openlore-fingerprint:/m.test(existing);
 
-    if (existing !== null && !isOurs && !ctx.force) {
+    if (!mdcUnchanged && existing !== null && !isOurs && !ctx.force) {
       rulesResult.changes.push({
         path: mdcPath,
         kind: 'noop',
@@ -100,20 +98,28 @@ export const cursorAdapter: Adapter = {
       return rulesResult;
     }
 
-    const change: PlannedChange = {
-      path: mdcPath,
-      kind: existing === null ? 'create' : 'update',
-      summary: existing === null ? `create ${MDC_FILE}` : `update ${MDC_FILE}`,
-      preview:
-        existing === null
-          ? previewCreate(mdcPath, desired)
-          : previewDiff(mdcPath, existing, desired),
-    };
-    if (!ctx.dryRun) {
-      await mkdir(dirname(mdcPath), { recursive: true });
-      await writeFile(mdcPath, desired, 'utf8');
+    if (mdcUnchanged) {
+      rulesResult.changes.push({
+        path: mdcPath,
+        kind: 'noop',
+        summary: `${MDC_FILE}: already up to date`,
+      });
+    } else {
+      const change: PlannedChange = {
+        path: mdcPath,
+        kind: existing === null ? 'create' : 'update',
+        summary: existing === null ? `create ${MDC_FILE}` : `update ${MDC_FILE}`,
+        preview:
+          existing === null
+            ? previewCreate(mdcPath, desired)
+            : previewDiff(mdcPath, existing, desired),
+      };
+      if (!ctx.dryRun) {
+        await mkdir(dirname(mdcPath), { recursive: true });
+        await writeFile(mdcPath, desired, 'utf8');
+      }
+      rulesResult.changes.push(change);
     }
-    rulesResult.changes.push(change);
 
     // MCP server registration via .cursor/mcp.json (standard Cursor path).
     const mcpPath = join(ctx.root, MCP_FILE);

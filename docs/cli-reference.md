@@ -266,7 +266,7 @@ openlore serve --stop                   # stop the daemon serving this directory
 | `-d, --directory <path>` | Project root to serve; discovery file written here (default: cwd) |
 | `-p, --port <number>` | Port to bind (default: ephemeral free port) |
 | `--host <host>` | Host to bind (default: `127.0.0.1`) |
-| `--preset <name>` | Advisory surface reported by `/health`: `minimal`, `navigation` (default), or `all`. The daemon dispatches any known tool regardless; clients curate their own surface |
+| `--preset <name>` | Advisory surface reported by `/health`: `minimal`, `navigation` (default), or `all`/`full` (the full surface — `full` matches the `openlore mcp` selector name). The daemon dispatches any known tool regardless; clients curate their own surface |
 | `--token <token>` | Require this token as the `x-openlore-token` header (default: `$OPENLORE_SERVE_TOKEN`) |
 | `--no-watch` | Disable the freshness watcher + re-analyze lane |
 | `--stop` | Stop a running daemon for `--directory` and exit |

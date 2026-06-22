@@ -9,10 +9,23 @@
 > **Implementation note (2026-06-22).** Shipped on branch `feat/default-lean-tool-surface`. The lean
 > default = the `navigation` preset verbatim (10 tools); the full 62-tool surface is opt-in via
 > `--preset full` / `--all-tools`. `openlore install`/`connect` now wire `--preset navigation` by
-> default. A breadth pointer is emitted once via the MCP `initialize` `instructions` channel on the
-> lean default only (no tool schemas added). Verified end-to-end against the live server (default → 10
-> tools + pointer; `--preset full`/`--all-tools` → 62, no pointer; explicit `--preset navigation` → 10,
-> no pointer since the agent already chose).
+> default. A breadth pointer is emitted once via the MCP `initialize` `instructions` channel whenever
+> the active surface IS the lean default (no tool schemas added).
+>
+> **Adversarial-review hardening (decision `5fdc9da7`).** A multi-agent adversarial e2e pass found and
+> fixed four contract gaps after the initial implementation: (1) the breadth pointer was gated on "no
+> selector at all," so `openlore install` — which wires `--preset navigation` explicitly — suppressed
+> the very pointer this change added; both the tool selection and the pointer decision now resolve
+> through one `resolvePresetName()` helper, and the pointer fires whenever the resolved surface IS the
+> lean default (navigation), however it was reached, while every other deliberately-chosen surface
+> suppresses it. (2) `openlore mcp --preset <bad>` threw an uncaught stack trace (exit 1); it now exits
+> 2 with a clean message, mirroring install. (3) the `cursor` install adapter froze the wired preset on
+> re-install (an early-return on an unchanged `.mdc` skipped MCP registration), so preset switching was
+> silently ignored on Cursor — now fixed. (4) selector parity: `serve` accepts `full` as an alias of
+> `all`; `install`/`connect` accept `--all-tools`; and the `all` alias normalizes to canonical `full` in
+> the wired arg. Verified end-to-end on the live server and via real install/connect/serve lifecycles
+> (default → 10 tools + pointer; explicit `--preset navigation` → 10 + pointer; `--minimal`/`memory` →
+> no pointer; `--preset full`/`--all-tools` → 62, no pointer; cursor default↔full switching tracks).
 >
 > **Explicitly reverses a prior sub-decision.** Decision `d54af0d3` (Spec 28, "Lean MCP tool surface
 > via lossless trim…") recorded that *"forcing the navigation preset as install default was rejected

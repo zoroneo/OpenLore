@@ -20,6 +20,7 @@ import { type AgentName } from '../install/detect.js';
 
 interface ConnectOpts {
   preset?: string;
+  allTools?: boolean;
   dryRun?: boolean;
   force?: boolean;
   analyze?: boolean;
@@ -65,6 +66,7 @@ export const connectCommand = new Command('connect')
   )
   .argument('[agent]', 'Agent to connect (claude-code, cursor, cline, continue, agents-md)')
   .option('--preset <name>', 'Wire the MCP server to a tool preset (minimal, navigation, memory, verify, federation, or full). Default (no preset) wires the lean navigation surface; pass "full" to wire all 62 tools (the prior default).')
+  .option('--all-tools', 'Wire the full surface (alias of --preset full). Matches `openlore mcp --all-tools`.')
   .option('--dry-run', 'Print the planned changes without writing any files', false)
   .option('--force', 'Overwrite OpenLore-managed blocks even if hand-edited', false)
   .option('--no-analyze', 'Configure surfaces only; do not build the index')

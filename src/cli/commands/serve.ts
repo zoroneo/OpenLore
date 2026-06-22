@@ -35,7 +35,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { writeFile, readFile, unlink, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { logger } from '../../utils/logger.js';
-import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR } from '../../constants.js';
+import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, FULL_PRESET, FULL_PRESET_ALIAS } from '../../constants.js';
 import { dispatchTool, UnknownToolError } from '../../core/services/tool-dispatch.js';
 import { validateDirectory, waitForGraphRebuild } from '../../core/services/mcp-handlers/utils.js';
 import { EdgeStore } from '../../core/services/edge-store.js';
@@ -344,14 +344,18 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
   }
 
   const presetName = options.preset ?? 'navigation';
-  if (presetName !== 'all' && !TOOL_PRESETS[presetName]) {
-    logger.error(`Unknown --preset "${presetName}". Known: ${Object.keys(TOOL_PRESETS).join(', ')}, all.`);
+  // Full-surface selectors: serve historically used `all`; accept `full` too so
+  // the selector vocabulary matches `openlore mcp` (change: default-to-lean-tool-
+  // surface added `full`/`all` there). Both mean every tool.
+  const isFullSurface = presetName === FULL_PRESET_ALIAS || presetName === FULL_PRESET;
+  if (!isFullSurface && !TOOL_PRESETS[presetName]) {
+    logger.error(`Unknown --preset "${presetName}". Known: ${Object.keys(TOOL_PRESETS).join(', ')}, ${FULL_PRESET_ALIAS}, ${FULL_PRESET}.`);
     process.exitCode = 1;
     return;
   }
-  // Active tool surface: 'all' = every tool, otherwise the named preset.
+  // Active tool surface: 'all'/'full' = every tool, otherwise the named preset.
   const activeNames = new Set(
-    (presetName === 'all'
+    (isFullSurface
       ? TOOL_DEFINITIONS
       : selectActiveTools(TOOL_DEFINITIONS, { preset: presetName })
     ).map((t) => t.name),
@@ -696,7 +700,7 @@ export const serveCommand = new Command('serve')
   .option('--host <host>', 'Host to bind', '127.0.0.1')
   .option(
     '--preset <name>',
-    'Advisory tool surface reported by /health (minimal, navigation, or all). The daemon still ' +
+    'Advisory tool surface reported by /health (minimal, navigation, or all/full). The daemon still ' +
       'dispatches any known tool; clients curate their own surface. Default: navigation',
     'navigation',
   )

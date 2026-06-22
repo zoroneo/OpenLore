@@ -80,9 +80,12 @@ Three concrete fixes followed, all now in the harness:
 search_code + **3 governance tools** (record_decision / detect_changes / check_spec_drift), omitting
 exactly the graph-traversal tools a trace question needs. Full mode (~45 tools) *had* them and cut
 round-trips, but its schema overhead erased the saving. So we built a **navigation preset** (`openlore
-mcp --preset navigation`, 7 graph tools: orient, search_code, get_subgraph, trace_execution_path,
-analyze_impact, suggest_insertion_points, get_function_skeleton — CodeGraph parity): the right tools
-*without* the overhead.
+mcp --preset navigation`, the 7 graph tools measured here: orient, search_code, get_subgraph,
+trace_execution_path, analyze_impact, suggest_insertion_points, get_function_skeleton — CodeGraph
+parity): the right tools *without* the overhead. *(The shipped preset has since grown to 10 — it added
+the structural-navigation primitives get_landmarks, get_map, find_path — and, as of the
+`default-to-lean-tool-surface` change, is now the **default** MCP surface; full surface is opt-in via
+`--preset full`.)*
 
 **N=4 result on the deep-trace tasks (the decisive run — see the auto-generated table below).** With
 the navigation preset, openlore **flips from a loss to a win**:

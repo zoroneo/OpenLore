@@ -7,7 +7,7 @@
  * surface), and the selector's precedence/error behaviour must hold.
  */
 import { describe, it, expect } from 'vitest';
-import { selectActiveTools, TOOL_PRESETS, TOOL_DEFINITIONS, mcpCommand, BREADTH_POINTER, leanDefaultActive } from './mcp.js';
+import { selectActiveTools, TOOL_PRESETS, TOOL_DEFINITIONS, mcpCommand, BREADTH_POINTER, leanDefaultActive, resolvePresetName } from './mcp.js';
 import { LEAN_DEFAULT_PRESET } from '../../constants.js';
 
 const NAV = [
@@ -126,25 +126,63 @@ describe('MCP tool presets', () => {
 });
 
 // ============================================================================
-// change: default-to-lean-tool-surface — breadth discoverability. When the lean
-// default surface is active, the server advertises (once, via the MCP instructions
-// channel — NOT a tool schema) that more tools exist behind named presets. Any
-// explicit selector suppresses the pointer, and it adds zero tool schemas.
+// change: default-to-lean-tool-surface — selector → canonical preset resolution.
+// One source of truth (resolvePresetName) drives both the active tool set and the
+// breadth-pointer decision, so they can never disagree.
+// ============================================================================
+describe('resolvePresetName (canonical selector resolution)', () => {
+  it('no selector resolves to the lean default (navigation)', () => {
+    expect(resolvePresetName({})).toBe('navigation');
+    expect(resolvePresetName({})).toBe(LEAN_DEFAULT_PRESET);
+  });
+  it('full-surface selectors all resolve to "full"', () => {
+    expect(resolvePresetName({ allTools: true })).toBe('full');
+    expect(resolvePresetName({ preset: 'full' })).toBe('full');
+    expect(resolvePresetName({ preset: 'all' })).toBe('full'); // alias normalizes
+  });
+  it('--minimal resolves to "minimal"; a named preset resolves to itself', () => {
+    expect(resolvePresetName({ minimal: true })).toBe('minimal');
+    expect(resolvePresetName({ preset: 'memory' })).toBe('memory');
+    expect(resolvePresetName({ preset: 'navigation' })).toBe('navigation');
+  });
+  it('full-surface selectors win over --preset and --minimal', () => {
+    expect(resolvePresetName({ allTools: true, preset: 'navigation' })).toBe('full');
+    expect(resolvePresetName({ allTools: true, minimal: true })).toBe('full');
+  });
+});
+
+// ============================================================================
+// change: default-to-lean-tool-surface — breadth discoverability. The pointer
+// fires when the ACTIVE surface IS the lean default (navigation) — whether reached
+// by no selector OR by an explicit `--preset navigation` (how `openlore install`
+// wires the default). Any other surface is a deliberate different choice → no
+// pointer. It rides the MCP instructions channel and adds zero tool schemas.
 // ============================================================================
 describe('breadth discoverability on the lean default surface', () => {
-  it('the breadth pointer is active only when no selector is given', () => {
-    expect(leanDefaultActive({})).toBe(true);
-    // every explicit selector means the agent already chose → no pointer
+  it('the pointer fires for the lean default surface, however it was selected', () => {
+    expect(leanDefaultActive({})).toBe(true);                       // bare `openlore mcp`
+    expect(leanDefaultActive({ preset: 'navigation' })).toBe(true); // how install wires it
+  });
+
+  it('the pointer is suppressed on every other (deliberately chosen) surface', () => {
     expect(leanDefaultActive({ minimal: true })).toBe(false);
-    expect(leanDefaultActive({ preset: 'navigation' })).toBe(false);
+    expect(leanDefaultActive({ preset: 'memory' })).toBe(false);
+    expect(leanDefaultActive({ preset: 'verify' })).toBe(false);
+    expect(leanDefaultActive({ preset: 'federation' })).toBe(false);
     expect(leanDefaultActive({ preset: 'full' })).toBe(false);
+    expect(leanDefaultActive({ preset: 'all' })).toBe(false);
     expect(leanDefaultActive({ allTools: true })).toBe(false);
   });
 
-  it('the pointer names how to opt into breadth (full + the opt-in presets)', () => {
+  it('the pointer names how to opt into breadth, every option in copy-pasteable --preset form', () => {
     expect(BREADTH_POINTER).toMatch(/--preset full/);
     expect(BREADTH_POINTER).toMatch(/--preset memory/);
+    expect(BREADTH_POINTER).toMatch(/--preset minimal/); // governance, not the bare --minimal flag
     expect(BREADTH_POINTER).toMatch(/openlore install --preset/);
+    // Every `--preset <name>` the pointer advertises must resolve to a real surface.
+    for (const m of BREADTH_POINTER.matchAll(/--preset (\w+)/g)) {
+      expect(() => selectActiveTools(TOOL_DEFINITIONS, { preset: m[1] })).not.toThrow();
+    }
   });
 
   it('the pointer adds no tool schemas — the lean default surface size is unchanged by it', () => {

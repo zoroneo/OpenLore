@@ -56,6 +56,17 @@ describe('install --preset (PresetAwareConnect)', () => {
     ]);
   });
 
+  // change: default-to-lean-tool-surface — connect accepts --all-tools (alias of
+  // --preset full), matching `openlore mcp --all-tools`; it was previously an
+  // unknown-option error on connect/install while mcp accepted it.
+  it('wires the full surface on --all-tools (alias of --preset full)', async () => {
+    await runInstall({ agent: 'claude-code', allTools: true, analyze: false, cwd: dir });
+    const mcp = await readJson('.mcp.json');
+    expect((mcp.mcpServers as Record<string, { args: string[] }>).openlore.args).toEqual([
+      '--yes', 'openlore', 'mcp', '--preset', 'full',
+    ]);
+  });
+
   it('rejects an unknown preset with exit 2 and writes nothing', async () => {
     const code = await runInstall({ agent: 'claude-code', preset: 'bogus', analyze: false, cwd: dir });
     expect(code).toBe(2);
