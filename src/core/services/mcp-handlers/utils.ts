@@ -263,6 +263,16 @@ export async function readCachedContext(directory: string, timeout?: number): Pr
         return null;
       }
       const ctx = parsed as CachedContext;
+      // A present-but-malformed callGraph (a truncated or hand-edited artifact, e.g.
+      // `{"callGraph": {}}`) would pass each graph handler's `!ctx.callGraph` guard and
+      // then throw on `cg.nodes.map(...)`. Normalize it away so those handlers return
+      // their friendly "re-run analyze_codebase" instead, while signature-only tools
+      // (which don't touch callGraph) keep working — parity with the inventory-artifact
+      // shape guards.
+      const cg = ctx.callGraph as { nodes?: unknown; edges?: unknown } | undefined;
+      if (cg !== undefined && (typeof cg !== 'object' || cg === null || !Array.isArray(cg.nodes) || !Array.isArray(cg.edges))) {
+        ctx.callGraph = undefined;
+      }
       if (EdgeStore.exists(analysisDir)) {
         const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
         // Schema-bump guard: opening a DB whose SCHEMA_VERSION is stale wipes it

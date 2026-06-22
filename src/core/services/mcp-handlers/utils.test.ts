@@ -293,6 +293,27 @@ describe('readCachedContext', () => {
     expect(result).not.toBeNull();
     expect(result!.edgeStore).toBeUndefined(); // withheld: empty store + JSON has prod nodes
   });
+
+  it('normalizes a present-but-malformed callGraph to undefined (graph handlers degrade, not throw)', async () => {
+    // A truncated/hand-edited artifact with `callGraph: {}` passes the handlers'
+    // `!ctx.callGraph` guard and then throws on `cg.nodes.map(...)`. It must be
+    // dropped so those handlers return "re-run analyze" instead.
+    const dir = join(tmpDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+    await mkdir(dir, { recursive: true });
+    const ctx = {
+      phase1_survey: { purpose: '', files: [], totalTokens: 0 },
+      phase2_deep: { purpose: '', files: [], totalTokens: 0 },
+      phase3_validation: { purpose: '', files: [], totalTokens: 0 },
+      signatures: [{ path: 'a.ts', language: 'TypeScript', signatures: [] }],
+      callGraph: {}, // malformed — no nodes/edges arrays
+    };
+    await writeFile(join(dir, ARTIFACT_LLM_CONTEXT), JSON.stringify(ctx), 'utf-8');
+
+    const result = await readCachedContext(tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.callGraph).toBeUndefined();      // malformed graph dropped
+    expect(result!.signatures).toHaveLength(1);     // signature-only data still served
+  });
 });
 
 // ============================================================================
