@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { classifyRole, deriveStrategy, buildReason, compositeScore } from './semantic.js';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -235,6 +235,25 @@ describe('handleGetSpec', () => {
     expect(result.domain).toBe('auth');
     expect(result.content).toContain('Auth Spec');
     expect(result.specFile).toBe('openspec/specs/auth/spec.md');
+  });
+
+  it('blocks path traversal via the domain arg (must not read outside the repo)', async () => {
+    // Plant a spec.md two levels up; a traversing domain must NOT reach it.
+    const outside = join(tmpDir, '..', `escape-${Date.now()}`);
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, 'spec.md'), '# SECRET should not be readable', 'utf-8');
+    try {
+      const { handleGetSpec } = await import('./semantic.js');
+      const result = await handleGetSpec(tmpDir, `../escape-${Date.now()}`) as { error?: string; content?: string };
+      expect(result.content).toBeUndefined();
+      expect(result.error).toContain('list_spec_domains');
+      // also the classic deep escape
+      const deep = await handleGetSpec(tmpDir, '../../../../../../etc') as { error?: string; content?: string };
+      expect(deep.content).toBeUndefined();
+      expect(deep.error).toBeTruthy();
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 

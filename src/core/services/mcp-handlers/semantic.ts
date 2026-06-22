@@ -19,7 +19,7 @@ import {
   OPENSPEC_SPECS_SUBDIR,
 } from '../../../constants.js';
 import { fileExists } from '../../../utils/command-helpers.js';
-import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain, queryTooLongError } from './utils.js';
+import { validateDirectory, safeJoin, loadMappingIndex, specsForFile, functionsForDomain, queryTooLongError } from './utils.js';
 import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote } from './progressive.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 
@@ -456,7 +456,16 @@ export async function handleGetSpec(directory: string, domain: string): Promise<
   const { join: pjoin } = await import('node:path');
   const absDir = await validateDirectory(directory);
 
-  const specFile = pjoin(absDir, 'openspec', 'specs', domain, 'spec.md');
+  // `domain` is an untrusted tool arg; confine it to the repo so e.g.
+  // domain="../../../../etc" can't escape to read arbitrary spec.md files.
+  let specFile: string;
+  try {
+    specFile = safeJoin(absDir, pjoin('openspec', 'specs', domain, 'spec.md'));
+  } catch {
+    return {
+      error: `No spec found for domain "${domain}". Run list_spec_domains to see available domains.`,
+    };
+  }
   if (!existsSync(specFile)) {
     return {
       error: `No spec found for domain "${domain}". Run list_spec_domains to see available domains.`,
