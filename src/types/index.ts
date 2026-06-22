@@ -57,6 +57,14 @@ export interface OpenLoreConfig {
    * binding = unchanged single-repository behavior.
    */
   specStore?: SpecStoreConfig;
+  /**
+   * Optional declared covering surfaces + advisory posture for the change-impact
+   * certificate (change: add-change-impact-certificate). A covering surface is a
+   * declared semantic/governance boundary (a set of symbols or files), not a
+   * directory glob. The certificate is advisory by default; `block` opts specific
+   * surface severities into failing a commit. Absent = no surfaces declared.
+   */
+  impactCertificate?: ImpactCertificateConfig;
 }
 
 /** Named high-risk patterns the blast-radius hook may block on (opt-in). */
@@ -64,6 +72,42 @@ export type BlastRadiusBlockPattern = 'orphans-anchored-memory' | 'orphans-ancho
 
 export interface BlastRadiusConfig {
   block?: BlastRadiusBlockPattern[];
+}
+
+/** Severity of a declared covering surface (change: add-change-impact-certificate). */
+export type CoveringSurfaceSeverity = 'info' | 'warn' | 'critical';
+
+/**
+ * One member of a declared covering surface: a symbol name and/or a repo-relative
+ * file. A symbol resolves to exactly one indexed node (unique-name match) or it
+ * degrades to a finding; a file contributes all of its internal symbols.
+ */
+export interface CoveringSurfaceMember {
+  symbol?: string;
+  file?: string;
+}
+
+/**
+ * A declared covering surface — a semantic or governance boundary a proposed
+ * change is assessed against. Additive: absent = no surface assessment.
+ */
+export interface CoveringSurfaceConfig {
+  /** Stable, user-facing name (e.g. "client", "data-handling", "regulated"). */
+  name: string;
+  /** The boundary members (symbols and/or files). */
+  members: CoveringSurfaceMember[];
+  /** Optional severity; a surface marked `critical` MAY be opted into blocking. */
+  severity?: CoveringSurfaceSeverity;
+}
+
+export interface ImpactCertificateConfig {
+  /** Declared covering surfaces this repository is assessed against. */
+  surfaces?: CoveringSurfaceConfig[];
+  /**
+   * Surface severities whose newly-opened paths the git hook should block a commit
+   * on (opt-in). Empty/absent = advisory-only (the default posture).
+   */
+  block?: CoveringSurfaceSeverity[];
 }
 
 /**

@@ -62,3 +62,34 @@ An optional `specStore` block in `.openlore/config.json` binds this repository t
 
 `targets` and `references` are **names**, not paths: each must match a repository registered with `openlore federation add … --name <name>` (see [Federation](federation.md)). Check the binding's health with `openlore spec-store status` ([CLI reference](cli-reference.md#spec-store-binding)); it reports per-target resolution, index freshness, reference presence, and store-path presence as findings with stable codes, and never blocks.
 
+### Covering surfaces (change-impact certificate)
+
+An optional `impactCertificate` block declares the **covering surfaces** the change-impact certificate assesses a diff against — semantic or governance boundaries (a client surface, a data-handling surface, a regulated interface), not directory globs. Omit it entirely and the certificate still reports blast radius, drifted specs, and tests; declaring surfaces additionally reports the paths a change *newly opens* into each. See [`openlore impact-certificate`](cli-reference.md#change-impact-certificate) and the [`change_impact_certificate` MCP tool](mcp-tools.md).
+
+```json
+{
+  "impactCertificate": {
+    "surfaces": [
+      {
+        "name": "client",
+        "severity": "critical",
+        "members": [
+          { "symbol": "renderResponse" },
+          { "file": "src/api/public.ts" }
+        ]
+      }
+    ],
+    "block": ["critical"]
+  }
+}
+```
+
+| Field | Required | Meaning |
+|-------|:---:|---------|
+| `surfaces[].name` | yes | a stable, user-facing surface name (must be unique; empty names and duplicates are dropped) |
+| `surfaces[].members` | yes | the boundary's members: each is a `{ "symbol": "<name>" }` (resolved to exactly one indexed symbol — ambiguous/unknown becomes a finding, never guessed) and/or a `{ "file": "<repo-relative path>" }` (all of the file's symbols). A member may set both. |
+| `surfaces[].severity` | no | `info` \| `warn` \| `critical` (default `warn`); any other value is coerced to `warn` |
+| `block` | no | severities the **advisory git hook** should fail a commit on (e.g. `["critical"]`). Empty/absent = advisory-only (the default). Infrastructure failure never blocks. |
+
+A surface is resolved against the indexed graph (plus any symbol the same diff just added). The certificate is advisory by default and decays via the code-anchored freshness lease; when an anchored symbol later moves, `openlore spec-store status` re-fires a persisted certificate as a `certificate-stale` finding.
+

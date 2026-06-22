@@ -19,6 +19,7 @@ import { resolve } from 'node:path';
 import { validateDirectory } from './utils.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { listRepos, evaluateRepoState } from '../../federation/registry.js';
+import { recheckPersistedCertificates } from './impact-certificate.js';
 import type { SpecStoreConfig } from '../../../types/index.js';
 import type { FederationRepoEntry, RepoIndexState } from '../../federation/types.js';
 
@@ -32,7 +33,8 @@ export type SpecStoreFindingCode =
   | 'target-missing'      // a resolved target's registered path no longer exists
   | 'index-missing'       // a resolved target has no built `.openlore` index
   | 'index-stale'         // a resolved target's index is stale vs its working tree
-  | 'reference-missing';  // a declared reference is unresolved or its path is gone
+  | 'reference-missing'   // a declared reference is unresolved or its path is gone
+  | 'certificate-stale';  // a target has a persisted impact certificate whose anchored symbols moved
 
 export type SpecStoreFindingSeverity = 'info' | 'warn' | 'error';
 
@@ -312,6 +314,26 @@ export async function handleSpecStoreStatus(directory: string): Promise<SpecStor
     const { status, finding } = resolveTarget(t, byName);
     targets.push(status);
     if (finding) findings.push(finding);
+    // Re-fire any stale impact certificate persisted in this target (decay lease;
+    // change: add-change-impact-certificate). Cheap-gated: recheckPersistedCertificates
+    // returns immediately when the target has no certificates directory, so this adds
+    // nothing for repos that never opted into certificates. An expired certificate is
+    // surfaced as a finding so it is never trusted past the state it was computed against.
+    if (status.resolved && status.state === 'indexed' && status.path) {
+      let stales: ReturnType<typeof recheckPersistedCertificates> = [];
+      // Hard no-throw boundary: a target repo's corrupt anchor graph / certificate
+      // must never break this read-only health check (handler contract: never throws).
+      try { stales = recheckPersistedCertificates(status.path); } catch { stales = []; }
+      for (const stale of stales) {
+        const moved = stale.movedAnchors.map(m => m.subject).slice(0, 3).join(', ');
+        findings.push({
+          code: 'certificate-stale', severity: 'warn', subject: `${t}:${stale.change}`,
+          message: `Target "${t}" has a stale impact certificate for change "${stale.change}"` +
+            (moved ? ` — anchored symbol(s) moved: ${moved}.` : ' — its anchored symbols moved.'),
+          remediation: `Re-fire it: (cd ${status.path} && openlore impact-certificate --change ${stale.change} --save).`,
+        });
+      }
+    }
   }
 
   const references: ResolvedRepoStatus[] = [];

@@ -857,3 +857,105 @@ distinguishable by their status.
 A spec-store binding adds an optional OpenLoreConfig.specStore block { name, path, targets[], references? } where targets/references are NAMES that must match entries already in the federation registry (.openlore/federation.json). Resolution and index-state reuse the federation registry verbatim (loadRegistry/listRepos/evaluateRepoState), so the binding adds no new index machinery — it is a thin declarative layer over the shipped index-of-indexes. The health check is read-only and returns conclusion-shaped findings with stable codes (store-path-missing, target-unresolved, target-missing, index-missing, index-stale, reference-missing); it never throws and never blocks. The MCP tool spec_store_status follows the federation_status precedent: present in the full TOOL_DEFINITIONS surface and additionally in the opt-in federation preset, kept out of minimal/navigation/memory.
 
 **Consequences:** Using a spec-store binding requires the target repos to also be registered via `openlore federation add`; a declared name with no registry entry surfaces as a target-unresolved finding with a pasteable remediation rather than an error. Tool count rises 60→61, requiring updates to the count-guarded docs and the --preset help string. Future working-set and impact-certificate tools will extend this binding.
+
+### Requirement: CoveringSurfaceDeclaration
+
+The system SHALL support an optional, additive declaration of named **covering surfaces**, where a
+surface is a set of symbols, files, or published interfaces representing a semantic or governance
+boundary, with an optional severity. A surface SHALL be resolvable to a concrete symbol-ID set over the
+(federated) graph; an unresolved surface member SHALL degrade to a finding rather than throwing. A
+covering surface SHALL be a declared boundary, not a directory-ownership glob, and SHALL be the unit a
+proposed change is assessed against.
+
+> Implemented by `add-change-impact-certificate` (2026-06-21). Surfaces are declared under
+> `OpenLoreConfig.impactCertificate.surfaces`; `resolveSurfaces` resolves a `symbol` member to exactly
+> one indexed node (ambiguous/unknown → `surface-unresolved-member` finding) and a `file` member to all
+> its internal symbols (empty → `surface-empty`). Decision: `187224b0`.
+
+#### Scenario: A surface resolves to a symbol set
+
+- **GIVEN** a covering surface declared as a mix of one file and two symbols
+- **WHEN** the surface is resolved over the graph
+- **THEN** it resolves to the expected set of symbol IDs, and any member that does not resolve produces a
+  finding rather than an error
+
+### Requirement: NewlyOpenedPathDetection
+
+The system SHALL, given a proposed change, compute reachability to each declared covering surface in the
+pre-change graph and in the post-change graph — the latter derived by applying the change's diff to the
+call graph — and SHALL report the paths into each surface that exist only in the
+post-change graph. These newly-opened paths SHALL be reported distinctly from the surface's existing
+callers. For each newly-opened path the system SHALL name the shortest opening path. The computation
+SHALL be deterministic, with no LLM.
+
+> Implemented by `add-change-impact-certificate` (2026-06-21). The post-change graph is derived by a
+> bounded **differential edge-delta over the changed files** (re-parse changed files at base vs working
+> tree; adjust the canonical adjacency: post = canonical + added − removed, pre = canonical − added +
+> removed), NOT the incremental dependency graph (`add-watch-incremental-dependency-graph`), which is
+> still unbuilt. A new call edge can only originate from a changed file, so this detects every
+> newly-opened path without a full rebuild. Added callee names that resolve ambiguously are reported as
+> `unresolved-added-call`, never guessed; a call resolved to a same-diff local definition binds to that
+> local (no homonym phantom opening). The changed-file set is complete: old content is read from the
+> MERGE-BASE (the same baseline `getChangedFiles` diffs against, so the certificate's blast-radius and
+> path halves never disagree), renamed files read their old content from the base-ref `oldPath` (a pure
+> rename opens nothing), and brand-new UNTRACKED files are folded in (a new file's opening is never
+> missed) — all regression-tested against a real git repo. Decisions: `187224b0`, `97c22605`, `c2fbacf9`.
+
+#### Scenario: A change opens a new transitive path into a surface
+
+- **GIVEN** a covering surface and a proposed change whose diff adds an edge creating a two-hop path into
+  that surface where none existed before
+- **WHEN** newly-opened-path detection runs
+- **THEN** it reports exactly that newly-opened path into the surface, naming the shortest opening path,
+  and does not report it as a pre-existing caller
+
+#### Scenario: A change touching only existing callers opens nothing
+
+- **GIVEN** a covering surface and a proposed change that modifies only code already able to reach the
+  surface
+- **WHEN** newly-opened-path detection runs
+- **THEN** it reports no newly-opened paths into that surface
+
+### Requirement: ChangeImpactCertificate
+
+The system SHALL emit, for a proposed change, a single deterministic, conclusion-shaped impact
+certificate composed of: the change's blast radius (callers and layers), the newly-opened paths into
+each declared covering surface, the specs the change drifts, and the tests to run. The certificate SHALL
+compose existing deterministic analyses only, with no LLM, and SHALL be a briefing — counts, named
+surfaces, named paths — never a raw graph. Each finding SHALL carry a stable code, and surface findings
+SHALL carry the surface name and severity.
+
+> Implemented by `add-change-impact-certificate` (2026-06-21) as MCP tool `change_impact_certificate`
+> (classified `conclusion`; in the opt-in `federation` preset, out of minimal/navigation/memory). Blast
+> radius, tests, and drift reuse `computeBlastRadius` verbatim. Decision: `187224b0`.
+
+#### Scenario: A cross-boundary change is certified
+
+- **GIVEN** a proposed change that opens a new path into a declared surface and drifts two specs
+- **WHEN** the impact certificate is requested
+- **THEN** it returns one conclusion-shaped certificate naming the newly-opened path and its surface, the
+  two drifted specs, the affected callers and layers, and the tests to run
+
+### Requirement: ImpactCertificateDecaysWithLease
+
+The impact certificate SHALL be anchored to the change and its touched symbols via the existing
+code-anchored freshness lease, and SHALL be marked stale when the change grows or an anchored symbol
+moves. An expired certificate SHALL be treated as unverified and SHALL NOT be presented as silently
+still-true. The spec-store health check SHALL surface a stale certificate as a finding so it can be
+re-fired against current state.
+
+> Implemented by `add-change-impact-certificate` (2026-06-21). A persisted certificate carries
+> `StructuralAnchor`s over the touched symbols under `.openlore/impact-certificates/`; a changed file
+> with no indexed symbol — a brand-new/untracked file the differential just assessed — is anchored at the
+> FILE level instead, so the certificate still decays for the new code it certified rather than silently
+> omitting it. `recheckCertificate` recomputes freshness via `memoryFreshness` against the current edge
+> store (no graph to verify against → treated stale, never silently current). `handleSpecStoreStatus`
+> re-checks each resolved+indexed target's persisted certificates (cheap-gated on the certs dir) and emits
+> a `certificate-stale` finding. Decisions: `187224b0`, `c2fbacf9`.
+
+#### Scenario: Editing an anchored symbol expires the certificate
+
+- **GIVEN** a fresh impact certificate anchored to a set of symbols
+- **WHEN** one of those symbols is subsequently modified
+- **THEN** the certificate is marked stale, the health check surfaces it as a finding to re-fire, and the
+  stale certificate is not reported as current

@@ -447,7 +447,7 @@ openlore emits SCIP for interop with external indexers but never imports it; the
 
 **Consequences:** SCIP consumers get a snapshot; openlore never depends on SCIP being read back.
 
-### MCP exposes a curated navigation tool preset, not all 61 tools
+### MCP exposes a curated navigation tool preset, not all 62 tools
 
 **Status:** Approved
 **Date:** 2026-06-01
@@ -668,3 +668,32 @@ the change is briefable; it SHALL NOT block any workflow.
 - **GIVEN** a configured spec-store binding and no `--change` argument
 - **WHEN** `openlore working-set context` is run
 - **THEN** the command reports a `change-unspecified` finding and exits zero without briefing
+
+### Requirement: ImpactCertificateCommand
+
+The system SHALL provide a CLI command `openlore impact-certificate` that computes and emits the impact
+certificate for a proposed change in a configured spec-store binding. The command SHALL support
+`--change <id>` to select the change, `--json` whose output carries stable surface and path codes
+documented in the agent-facing contract, and the advisory git-hook flags (`--hook`, `--install-hook`,
+`--uninstall-hook`) following the existing pre-flight hook pattern. The certificate SHALL be advisory by
+default: the command and its hook SHALL NOT block. A repository MAY opt into blocking for specific
+high-severity surface findings via configuration, but blocking SHALL never be the default, and
+infrastructure failure (no graph, no binding) SHALL never block.
+
+> Implemented by `add-change-impact-certificate` (2026-06-21). Blocking is opt-in via
+> `impactCertificate.block` (e.g. `["critical"]`); the hook persists the certificate (`--save` elsewhere)
+> so the spec-store health check can re-fire it. Verified e2e: blocked at exit 1 under
+> `block: ["critical"]`, advisory at exit 0 without it. Tool count rises 62→63. Decision: `187224b0`.
+
+#### Scenario: Default certificate is advisory
+
+- **GIVEN** the impact-certificate hook installed with default configuration
+- **WHEN** a commit is made for a change that opens a new path into a declared surface
+- **THEN** the certificate is emitted and the commit is not blocked
+
+#### Scenario: Opt-in blocking fires only on its configured severity
+
+- **GIVEN** a repository configured to block when a change opens a new path into a surface marked
+  critical
+- **WHEN** a change opens a new path into a critical surface
+- **THEN** the hook blocks; and for a newly-opened path into any non-critical surface it remains advisory

@@ -110,7 +110,7 @@ openlore spec-store status            # per-target resolution + index state, ref
 openlore spec-store status --json     # stable finding codes for an orchestrator
 ```
 
-`spec_store_status` (the matching MCP tool, also under `--preset federation`) is read-only and conclusion-shaped: it never throws — a corrupt registry degrades to a `registry-unreadable` finding rather than an error — and never blocks. It is the foundation of a broader integration (assembling working-set context and certifying change impact across the declared targets); those build on this binding.
+`spec_store_status` (the matching MCP tool, also under `--preset federation`) is read-only and conclusion-shaped: it never throws — a corrupt registry degrades to a `registry-unreadable` finding rather than an error — and never blocks. It is the foundation of a broader, now-complete integration: `working_set_context` assembles the structural briefing an active change needs across the declared targets, and `change_impact_certificate` certifies what a change *newly opens* into declared covering surfaces before it lands (and `spec_store_status` re-fires a stale certificate as a `certificate-stale` finding). Both build on this binding.
 
 ### Honest limits
 

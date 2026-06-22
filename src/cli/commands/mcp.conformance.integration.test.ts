@@ -91,8 +91,15 @@ describe('spec-12 MCP protocol conformance (via SDK Client over stdio)', () => {
     expect(res.tools.length).toBeGreaterThan(0);
     // Every advertised tool is a real, known tool.
     for (const t of res.tools) expect(TOOL_NAMES.has(t.name), t.name).toBe(true);
-    // Marquee entry point is present.
+    // Bidirectional: every DEFINED tool is actually advertised on the wire. The
+    // conformance server runs the full surface (no --preset), so the listing must
+    // equal TOOL_DEFINITIONS — this catches a tool registered in TOOL_DEFINITIONS but
+    // never exposed (which the advertised⊆known check above would silently miss).
+    const advertised = new Set(res.tools.map((t) => t.name));
+    for (const name of TOOL_NAMES) expect(advertised.has(name), `defined but not advertised: ${name}`).toBe(true);
+    // Marquee entry points are present, including the federation-only impact certificate.
     expect(res.tools.some((t) => t.name === 'orient')).toBe(true);
+    expect(res.tools.some((t) => t.name === 'change_impact_certificate')).toBe(true);
     // Single-page posture: no pagination cursor.
     expect((res as { nextCursor?: string }).nextCursor).toBeUndefined();
   });

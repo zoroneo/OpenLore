@@ -1,8 +1,8 @@
 # Spec-store integration — deterministic structural context for externally-stored, multi-repo plans
 
-> Status: PROPOSED (2026-06-21). Umbrella overview for three dependency-ordered, independently
-> shippable changes. No status header is binding until each change ships its own spec deltas into
-> the canonical specs tree.
+> Status: COMPLETE (2026-06-21). Umbrella overview for three dependency-ordered, independently
+> shippable changes — all three now shipped (change 1 PR #178, change 2 PR #180, change 3 on
+> `feat/change-impact-certificate`). Each change shipped its own spec deltas into the canonical specs tree.
 
 ## The shape of the integration
 
@@ -34,7 +34,7 @@ existing static analysis.
 |-------|--------|--------------|-----------|
 | 1 ✅ | `add-spec-store-binding` | **SHIPPED (2026-06-21).** Bind OpenLore to an external spec repository that declares target + reference code repositories; resolve names to local indexes; health-check the binding. | `add-multi-repo-federation` |
 | 2 ✅ | `add-working-set-context-briefing` | **SHIPPED (2026-06-21).** For an active change, assemble a deterministic, token-budgeted structural briefing across its targets — the working-set context an agent needs before editing. | `add-spec-store-binding`, `orient`, `add-trust-calibrated-context-economy` |
-| 3 | `add-change-impact-certificate` | For a proposed change, emit a decaying, conclusion-shaped impact certificate: blast radius, newly-opened paths to declared covering surfaces, drifted specs, tests to run. | `add-working-set-context-briefing`, `blast_radius`, `add-code-anchored-memory-staleness` |
+| 3 ✅ | `add-change-impact-certificate` | **SHIPPED (2026-06-21).** For a proposed change, emit a decaying, conclusion-shaped impact certificate: blast radius, newly-opened paths to declared covering surfaces, drifted specs, tests to run. | `add-working-set-context-briefing`, `blast_radius`, `add-code-anchored-memory-staleness` |
 
 Each is shippable alone and earns its keep alone. Together they let an external, multi-repo planning
 workflow stand on deterministic structural ground instead of declarations.

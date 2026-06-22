@@ -127,6 +127,7 @@ export const TOOL_REGISTRY: Record<string, ToolPlan> = {
   federation_status: { kind: 'read', buildArgs: dirOnly },
   spec_store_status: { kind: 'read', buildArgs: dirOnly },
   working_set_context: { kind: 'read', buildArgs: dirOnly },
+  change_impact_certificate: { kind: 'read', buildArgs: dirOnly },
   get_function_body: {
     kind: 'read',
     buildArgs: (f) =>

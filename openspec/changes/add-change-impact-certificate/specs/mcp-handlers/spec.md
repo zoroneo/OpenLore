@@ -21,9 +21,16 @@ proposed change is assessed against.
 ### Requirement: NewlyOpenedPathDetection
 
 The system SHALL, given a proposed change, compute reachability to each declared covering surface in the
-pre-change graph and in the post-change graph — the latter derived by applying the change's diff via the
-incremental dependency graph — and SHALL report the paths into each surface that exist only in the
-post-change graph. These newly-opened paths SHALL be reported distinctly from the surface's existing
+pre-change graph and in the post-change graph — the latter derived by applying the change's diff to the
+call graph — and SHALL report the paths into each surface that exist only in the
+post-change graph.
+
+> Note (as-shipped): the post-change graph is derived by a bounded **differential edge-delta over the
+> changed files** (re-parse changed files at base vs working tree; post = canonical + added − removed,
+> pre = canonical − added + removed), NOT the incremental dependency graph
+> (`add-watch-incremental-dependency-graph`), which is still unbuilt — see the proposal header deviation
+> and the merged `mcp-handlers` spec. A new call edge can only originate from a changed file, so this
+> detects every newly-opened path without a full rebuild and without that dependency. These newly-opened paths SHALL be reported distinctly from the surface's existing
 callers. For each newly-opened path the system SHALL name the shortest opening path. The computation
 SHALL be deterministic, with no LLM.
 
