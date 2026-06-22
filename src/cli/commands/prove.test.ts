@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { saveScorecard, type ProveResult } from './prove.js';
+import { saveScorecard, parseNumericFlag, type ProveResult } from './prove.js';
 import { OPENLORE_PROVE_REL_PATH } from '../../constants.js';
 import type { Scorecard, ScorecardMeta } from '../../core/agent-eval/scorecard.js';
 
@@ -16,7 +16,7 @@ const scorecard: Scorecard = {
   costWithout: 0.2, costWith: 0.16, costDeltaPct: -20,
   turnsWithout: 20, turnsWith: 14, turnsDeltaPct: -30,
   correctWithout: 1, correctWith: 1, freshWithout: 13000, freshWith: 4000,
-  runsPerArm: 1, verdict: 'helps',
+  samplesPerArm: 1, verdict: 'helps',
 };
 const baseMeta: ScorecardMeta = {
   mode: 'estimate', generatedAt: '2026-06-22T10:00:00.000Z', repoSha: 'abc1234', model: null, tasks: 3,
@@ -61,5 +61,34 @@ describe('saveScorecard', () => {
     saveScorecard(dir, result({ ...baseMeta, generatedAt: '2026-06-23T09:00:00.000Z' }));
     const files = readdirSync(join(dir, OPENLORE_PROVE_REL_PATH)).sort();
     expect(files).toEqual(['prove-2026-06-22.json', 'prove-2026-06-23.json']);
+  });
+
+  it('rounds float noise out of the persisted raw block', () => {
+    const noisy = result();
+    noisy.raw!.withoutCell.costUsd = 0.057999999999999996;
+    noisy.raw!.withCell.costUsd = 0.043000000000000003;
+    const saved = JSON.parse(readFileSync(saveScorecard(dir, noisy), 'utf-8'));
+    expect(saved.raw.withoutCell.costUsd).toBe(0.058);
+    expect(saved.raw.withCell.costUsd).toBe(0.043);
+  });
+});
+
+describe('parseNumericFlag', () => {
+  it('returns the default when the flag is absent', () => {
+    expect(parseNumericFlag(undefined, 'runs', true, 1, 2)).toBe(2);
+  });
+  it('parses and clamps a valid value to the minimum', () => {
+    expect(parseNumericFlag('4', 'runs', true, 1, 2)).toBe(4);
+    expect(parseNumericFlag('0', 'runs', true, 1, 2)).toBe(1);   // clamp up
+    expect(parseNumericFlag('-3', 'runs', true, 1, 2)).toBe(1);  // clamp up
+    expect(parseNumericFlag('1.9', 'runs', true, 1, 2)).toBe(1); // int truncation
+    expect(parseNumericFlag('0.5', 'max-budget-usd', false, 0, 0.5)).toBe(0.5);
+  });
+  it('REJECTS a non-numeric value instead of letting NaN through', () => {
+    const r = parseNumericFlag('abc', 'runs', true, 1, 2);
+    expect(typeof r).toBe('object');
+    expect((r as { error: string }).error).toContain('--runs must be a number');
+    const b = parseNumericFlag('xyz', 'max-budget-usd', false, 0, 0.5);
+    expect((b as { error: string }).error).toContain('--max-budget-usd must be a number');
   });
 });

@@ -7,7 +7,7 @@ import { parseAgentJson, summarize, median, type Metrics } from './measure.js';
 import { deriveTasks, scoreAnswer, type GraphFact } from './tasks.js';
 import {
   computeScorecard, verdict, renderScorecard,
-  serializeScorecard, renderScorecardMarkdown, scorecardBadgeUrl,
+  serializeScorecard, renderScorecardMarkdown, scorecardBadgeUrl, money,
   type Scorecard, type ScorecardMeta,
 } from './scorecard.js';
 import { estimateCells, answerBearingFiles, DEFAULT_ESTIMATE_ASSUMPTIONS } from './estimate.js';
@@ -33,6 +33,29 @@ describe('parseAgentJson', () => {
     const m = parseAgentJson(JSON.stringify({ result: 'x' }));
     expect(m.freshInputTokens).toBe(0);
     expect(m.costUsd).toBe(0);
+  });
+
+  it('coerces non-numeric agent fields to 0 (no NaN/Infinity leak into the scorecard)', () => {
+    const m = parseAgentJson(JSON.stringify({
+      result: 'x', total_cost_usd: 'unknown', num_turns: null,
+      usage: { input_tokens: 'oops', cache_read_input_tokens: 'NaN' },
+    }));
+    expect(m.costUsd).toBe(0);
+    expect(m.numTurns).toBe(0);
+    expect(m.freshInputTokens).toBe(0);
+    expect(Number.isFinite(m.costUsd)).toBe(true);
+  });
+});
+
+describe('money() rounding + finite-guard', () => {
+  it('rounds to 4 decimals (sub-cent), stripping float noise', () => {
+    expect(money(0.057999999999999996)).toBe(0.058);
+    expect(money(0.0153)).toBe(0.0153);
+  });
+  it('coerces a non-finite value to 0 (never serializes as null)', () => {
+    expect(money(NaN)).toBe(0);
+    expect(money(Infinity)).toBe(0);
+    expect(money(-Infinity)).toBe(0);
   });
 });
 
@@ -148,7 +171,7 @@ describe('scorecard verdict + render', () => {
 });
 
 describe('verdict (unit)', () => {
-  const base = { costWithout: 0, costWith: 0, turnsWithout: 0, turnsWith: 0, correctWithout: 1, correctWith: 1, freshWithout: 0, freshWith: 0, runsPerArm: 4 };
+  const base = { costWithout: 0, costWith: 0, turnsWithout: 0, turnsWith: 0, correctWithout: 1, correctWith: 1, freshWithout: 0, freshWith: 0, samplesPerArm: 4 };
   it('helps only when both metrics improve', () => {
     expect(verdict({ ...base, costDeltaPct: -10, turnsDeltaPct: -10 })).toBe('helps');
     expect(verdict({ ...base, costDeltaPct: -10, turnsDeltaPct: 0 })).toBe('break-even');
@@ -161,7 +184,7 @@ const sc = (over: Partial<Scorecard> = {}): Scorecard => ({
   costWithout: 0.20, costWith: 0.16, costDeltaPct: -20,
   turnsWithout: 20, turnsWith: 14, turnsDeltaPct: -30,
   correctWithout: 1, correctWith: 1, freshWithout: 13000, freshWith: 4000,
-  runsPerArm: 4, verdict: 'helps', ...over,
+  samplesPerArm: 4, verdict: 'helps', ...over,
 });
 const meta = (over: Partial<ScorecardMeta> = {}): ScorecardMeta => ({
   mode: 'measured', generatedAt: '2026-06-22T10:00:00.000Z', repoSha: 'abc1234', model: 'sonnet', tasks: 3, ...over,
@@ -171,7 +194,7 @@ describe('serializeScorecard (--json contract)', () => {
   it('has exactly the documented stable key set at version 1', () => {
     const out = serializeScorecard(sc(), meta());
     expect(Object.keys(out).sort()).toEqual(
-      ['schemaVersion', 'mode', 'generatedAt', 'repo', 'model', 'runsPerArm', 'tasks',
+      ['schemaVersion', 'mode', 'generatedAt', 'repo', 'model', 'samplesPerArm', 'tasks',
         'cost', 'roundTrips', 'freshTokens', 'correctness', 'verdict'].sort(),
     );
     expect(out.schemaVersion).toBe(1);
@@ -213,6 +236,16 @@ describe('renderScorecardMarkdown', () => {
     expect(md).toContain('+43%');
     expect(md).toContain("doesn't help on this repo");
   });
+
+  it('sanitizes a hostile --model (backtick / newline) so the inline-code span cannot be broken', () => {
+    const md = renderScorecardMarkdown(sc(), meta({ model: 'a`b\nc' }));
+    const metaLine = md.split('\n').find(l => l.includes('model'))!;
+    // backticks stripped/replaced and the newline collapsed → the model stays on
+    // one line inside one code span (the line has the opening+closing pair only).
+    expect(metaLine).not.toContain('a`b');
+    expect(md.split('\n').filter(l => l.startsWith('_') || l.includes('· model')).length).toBe(1);
+    expect(metaLine).toContain('model `');
+  });
 });
 
 describe('scorecardBadgeUrl', () => {
@@ -231,7 +264,7 @@ describe('scorecardBadgeUrl', () => {
 
 describe('renderScorecard estimate mode', () => {
   it('shows the estimate banner and suppresses the small-sample LLM caveat', () => {
-    const out = renderScorecard(sc({ runsPerArm: 1 }), { tasks: 3, mode: 'estimate' });
+    const out = renderScorecard(sc({ samplesPerArm: 1 }), { tasks: 3, mode: 'estimate' });
     expect(out).toContain('ESTIMATE');
     expect(out).not.toContain('sample is small');
   });

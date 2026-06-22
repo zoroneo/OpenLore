@@ -84,6 +84,8 @@ Deep-trace detail — the win scales with codebase size (cost Δ; round-trips WI
 
 > **Honesty contract.** We never publish a savings number the benchmark didn't produce; we always show the loss cases next to the wins; the scorecard is date-stamped and re-measured after each optimization phase. Every public token claim traces to a command you can run in this repo — if it doesn't reproduce, treat it as marketing and call it out.
 
+> **Prove it on your repo — no API key needed.** `openlore prove --estimate` projects the orientation tax from your own call graph in seconds (zero API key, zero network); plain `openlore prove` runs the full measured WITH/WITHOUT pass (needs `claude` + a key). Add `--json` (CI-consumable), `--markdown` (a paste-ready scorecard block + a shields.io badge for your README), or `--save` (a dated record under `.openlore/prove/`). Honest by construction — an estimate is labeled `estimate` everywhere and never presented as a measurement. Details: [docs/AGENT-BENCHMARKS.md](docs/AGENT-BENCHMARKS.md#openlore-prove--measure-or-estimate-it-on-your-repo).
+
 ---
 
 ## Why It Exists

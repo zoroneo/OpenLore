@@ -13,6 +13,17 @@
 > docstring also now states its scope limit plainly: it projects the orientation-task tax from the graph
 > and **cannot** model whether the LLM already memorized the code — only the measured arm can.
 >
+> **Adversarial QA hardening (2026-06-22, decision `b67add6d`):** four parallel adversarial e2e passes
+> (flag-fuzzing, JSON-contract, estimate-model, docs/injection) confirmed the estimate model and badge
+> are correct/honest/injection-proof, and surfaced fixes now applied: (1) the JSON key `runsPerArm`
+> actually reported tasks×runs, renamed `samplesPerArm` before the v1 contract ships; (2) non-numeric
+> `--runs`/`--max-budget-usd` silently produced a degenerate all-zero scorecard (NaN) — now rejected
+> with a clear error + exit 1; (3) `--json --markdown` silently dropped markdown — now mutually
+> exclusive; (4) a hostile `--model` (backtick/newline) could corrupt the markdown line, and non-finite
+> agent numbers could serialize as `null` — both sanitized/finite-guarded; (5) `gitShortSha` no longer
+> leaks `git` stderr; (6) the persisted `raw` block is rounded. README + `docs/cli-reference.md` now
+> surface the no-API-key `--estimate` path and the badge. +8 tests (44 in the prove suites; 4428 total).
+>
 > Third of three changes that close the loss case in OpenLore's own agent benchmark (siblings:
 > `add-task-scoped-context-injection`, `default-to-lean-tool-surface` — both still PROPOSED). Builds
 > directly on the existing `openlore prove` command (Spec 25 Q2, `src/cli/commands/prove.ts`,

@@ -28,18 +28,29 @@ export interface Metrics {
   error?: string;
 }
 
-/** Parse a `claude -p --output-format json` result blob into raw metrics (no scoring). */
+/** Coerce any value to a finite number, falling back to 0 (NaN/Infinity/non-numeric → 0). */
+const finite = (v: unknown): number => {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/**
+ * Parse a `claude -p --output-format json` result blob into raw metrics (no
+ * scoring). Every numeric is coerced through `finite()` so a malformed agent
+ * payload (e.g. a non-numeric `total_cost_usd`) can never propagate NaN/Infinity
+ * downstream into the scorecard or the JSON contract.
+ */
 export function parseAgentJson(raw: string): Omit<Metrics, 'correct'> {
   const j = JSON.parse(raw) as Record<string, unknown>;
   const usage = (j.usage ?? {}) as Record<string, number>;
-  const fresh = (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+  const fresh = finite(usage.input_tokens) + finite(usage.cache_creation_input_tokens);
   return {
     freshInputTokens: fresh,
-    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-    outputTokens: usage.output_tokens ?? 0,
-    costUsd: Number(j.total_cost_usd ?? 0),
-    numTurns: Number(j.num_turns ?? 0),
-    durationMs: Number(j.duration_ms ?? 0),
+    cacheReadTokens: finite(usage.cache_read_input_tokens),
+    outputTokens: finite(usage.output_tokens),
+    costUsd: finite(j.total_cost_usd),
+    numTurns: finite(j.num_turns),
+    durationMs: finite(j.duration_ms),
     answer: String(j.result ?? ''),
   };
 }

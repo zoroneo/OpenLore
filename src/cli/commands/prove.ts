@@ -31,7 +31,7 @@ import {
 } from '../../core/agent-eval/measure.js';
 import { estimateCells } from '../../core/agent-eval/estimate.js';
 import {
-  computeScorecard, renderScorecard, serializeScorecard, renderScorecardMarkdown,
+  computeScorecard, renderScorecard, serializeScorecard, renderScorecardMarkdown, money,
   type Scorecard, type ScorecardMeta, type ProveMode,
 } from '../../core/agent-eval/scorecard.js';
 
@@ -76,10 +76,28 @@ function claudeAvailable(): boolean {
 /** Best-effort short repo SHA for scorecard provenance; null when unavailable. */
 function gitShortSha(cwd: string): string | null {
   try {
-    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd, encoding: 'utf-8' }).trim() || null;
+    // Silence the child's stderr ('fatal: not a git repository' / 'Needed a single
+    // revision') — the throw is handled here; we don't want it on our stderr.
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim() || null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Parse a numeric CLI flag, clamping a valid value to `min` but REJECTING a
+ * non-numeric one (e.g. `--runs abc`) instead of silently letting NaN through —
+ * NaN would skip every agent run and emit a degenerate all-zero scorecard.
+ */
+export function parseNumericFlag(
+  raw: string | undefined, name: string, integer: boolean, min: number, dflt: number,
+): number | { error: string } {
+  if (raw === undefined) return dflt;
+  const n = integer ? parseInt(raw, 10) : parseFloat(raw);
+  if (!Number.isFinite(n)) return { error: `--${name} must be a number (got "${raw}")` };
+  return Math.max(min, n);
 }
 
 /** Synthetic metrics for --dry-run: WITH is cheaper + fewer turns, both correct. */
@@ -224,6 +242,19 @@ export async function runProve(opts: {
  * Returns the absolute path written. Same-day repeats get a numeric suffix so a
  * prior run is never overwritten (decision 670b5f0b).
  */
+/** Round the monetary fields of a raw cell/metrics block so the saved file carries no float noise. */
+function roundRawCosts(raw: ProveRaw): ProveRaw {
+  const cell = (c: Cell): Cell => ({ ...c, costUsd: money(c.costUsd) });
+  const runs = (rs?: Metrics[]): Metrics[] | undefined =>
+    rs?.map(r => ({ ...r, costUsd: money(r.costUsd) }));
+  return {
+    withoutCell: cell(raw.withoutCell),
+    withCell: cell(raw.withCell),
+    withoutRuns: runs(raw.withoutRuns),
+    withRuns: runs(raw.withRuns),
+  };
+}
+
 export function saveScorecard(absDir: string, result: ProveResult): string {
   const sc = result.scorecard!;
   const meta = result.meta!;
@@ -232,7 +263,7 @@ export function saveScorecard(absDir: string, result: ProveResult): string {
   const day = meta.generatedAt.slice(0, 10); // YYYY-MM-DD
   let path = join(dir, `prove-${day}.json`);
   for (let n = 2; existsSync(path); n++) path = join(dir, `prove-${day}-${n}.json`);
-  const payload = { ...serializeScorecard(sc, meta), raw: result.raw };
+  const payload = { ...serializeScorecard(sc, meta), raw: result.raw ? roundRawCosts(result.raw) : undefined };
   writeFileSync(path, JSON.stringify(payload, null, 2) + '\n', 'utf-8');
   return path;
 }
@@ -261,15 +292,28 @@ Examples:
 `)
   .action(async (opts: ProveOptions) => {
     const directory = opts.directory ?? process.cwd();
-    const runs = opts.runs ? Math.max(1, parseInt(opts.runs, 10)) : 2;
     const model = opts.model ?? 'sonnet';
-    const maxBudgetUsd = opts.maxBudgetUsd ? parseFloat(opts.maxBudgetUsd) : 0.5;
     const dryRun = opts.dryRun ?? false;
     const estimate = opts.estimate ?? false;
     const json = opts.json ?? false;
     const markdown = opts.markdown ?? false;
+
+    // Two machine forms can't both own stdout — fail loudly rather than silently
+    // dropping one.
+    if (json && markdown) {
+      logger.error('--json and --markdown are mutually exclusive; pass only one.');
+      process.exitCode = 1;
+      return;
+    }
     // Machine output owns stdout — suppress the human log chrome so it stays parseable.
     const machine = json || markdown;
+
+    // Reject non-numeric --runs / --max-budget-usd (NaN would skip every run and
+    // emit a degenerate all-zero scorecard).
+    const runs = parseNumericFlag(opts.runs, 'runs', true, 1, 2);
+    if (typeof runs === 'object') { logger.error(runs.error); process.exitCode = 1; return; }
+    const maxBudgetUsd = parseNumericFlag(opts.maxBudgetUsd, 'max-budget-usd', false, 0, 0.5);
+    if (typeof maxBudgetUsd === 'object') { logger.error(maxBudgetUsd.error); process.exitCode = 1; return; }
 
     // The agent arm needs `claude`; the estimate + dry-run arms do not.
     if (!dryRun && !estimate && !claudeAvailable()) {

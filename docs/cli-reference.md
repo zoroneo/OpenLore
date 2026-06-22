@@ -14,6 +14,9 @@
 | `openlore test` | Generate spec-driven tests (Vitest / Playwright / pytest / GTest / Catch2) | No |
 | `openlore test --coverage` | Report which spec scenarios have corresponding tests | No |
 | `openlore digest` | Plain-English summary of all specs for human review | No |
+| `openlore prove` | Measure OpenLore's token value on your repo (WITH vs WITHOUT agent pass) | Yes |
+| `openlore prove --estimate` | Deterministic, graph-derived projection of the orientation tax — no agent, no key | No |
+| `openlore prove --json\|--markdown\|--save` | CI-consumable scorecard / paste-ready block + badge / dated record under `.openlore/prove/` | Matches arm |
 | `openlore decisions` | Manage architectural decisions: list, approve, reject, sync to specs and ADRs | No |
 | `openlore decisions --install-hook` | Install the pre-commit hook that gates commits until decisions are reviewed | No |
 | `openlore run` | Full pipeline: init, analyze, generate | Yes |

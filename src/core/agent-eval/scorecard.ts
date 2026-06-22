@@ -43,7 +43,13 @@ export interface Scorecard {
   correctWith: number;
   freshWithout: number;
   freshWith: number;
-  runsPerArm: number;
+  /**
+   * Independent samples per arm = tasks × runs (each task-run is one agent
+   * invocation). NOT the `--runs` value, which is per-task; divide by
+   * `meta.tasks` for runs-per-task. Named honestly so the JSON contract doesn't
+   * claim "runs" when it means "samples".
+   */
+  samplesPerArm: number;
   verdict: Verdict;
 }
 
@@ -78,7 +84,7 @@ export function computeScorecard(without: Cell, withCell: Cell): Scorecard {
     correctWith: withCell.correctRate,
     freshWithout: without.freshInputTokens,
     freshWith: withCell.freshInputTokens,
-    runsPerArm: Math.min(without.runs, withCell.runs),
+    samplesPerArm: Math.min(without.runs, withCell.runs),
   };
   return { ...base, verdict: verdict(base) };
 }
@@ -104,7 +110,7 @@ export function renderScorecard(sc: Scorecard, opts: { tasks: number; mock?: boo
     lines.push('  ⚠ ESTIMATE — deterministic graph projection, NOT a measured agent run (no API key needed).');
     lines.push('    Run `openlore prove` (needs `claude` + API key) for a real WITH/WITHOUT measurement.');
   }
-  lines.push(`  Tasks: ${opts.tasks}   Runs/arm: ${sc.runsPerArm}   (WITHOUT vs WITH openlore)`);
+  lines.push(`  Tasks: ${opts.tasks}   Samples/arm: ${sc.samplesPerArm}   (WITHOUT vs WITH openlore)`);
   lines.push('');
   lines.push(`  Cost          $${sc.costWithout.toFixed(3)}  →  $${sc.costWith.toFixed(3)}   (${sign(sc.costDeltaPct)}%)`);
   lines.push(`  Round-trips   ${sc.turnsWithout.toFixed(0)}  →  ${sc.turnsWith.toFixed(0)}   (${sign(sc.turnsDeltaPct)}%)`);
@@ -117,7 +123,7 @@ export function renderScorecard(sc: Scorecard, opts: { tasks: number; mock?: boo
         : "❌ OpenLore doesn't help here";
   lines.push(`  Verdict: ${verdictLabel}`);
   // The small-sample caveat is about LLM noise — irrelevant to a deterministic estimate.
-  if (mode !== 'estimate' && sc.runsPerArm < 3) {
+  if (mode !== 'estimate' && sc.samplesPerArm < 3) {
     lines.push('  (sample is small — LLM runs are noisy; use --runs 4+ for a firmer number)');
   }
   lines.push('');
@@ -137,7 +143,8 @@ export interface SerializedScorecard {
   generatedAt: string;
   repo: { sha: string | null };
   model: string | null;
-  runsPerArm: number;
+  /** Independent samples per arm = tasks × runs (divide by `tasks` for runs-per-task). */
+  samplesPerArm: number;
   tasks: number;
   cost: { without: number; with: number; deltaPct: number };
   roundTrips: { without: number; with: number; deltaPct: number };
@@ -146,8 +153,16 @@ export interface SerializedScorecard {
   verdict: Verdict;
 }
 
-/** Round to 4 decimals (sub-cent) so the JSON contract carries no float noise. */
-const money = (n: number): number => Math.round(n * 1e4) / 1e4;
+/**
+ * Round to 4 decimals (sub-cent) so the JSON contract carries no float noise,
+ * and coerce a non-finite value (NaN/±Infinity — e.g. if a malformed agent JSON
+ * ever yields a non-numeric cost) to 0 so it never serializes as `null` in a
+ * field the schema declares `number`.
+ */
+export const money = (n: number): number => (Number.isFinite(n) ? Math.round(n * 1e4) / 1e4 : 0);
+
+/** Strip characters that would break a markdown inline-code span / single line. */
+const sanitizeInline = (s: string): string => s.replace(/[\r\n]+/g, ' ').replace(/`/g, "'").trim();
 
 /** Serialize a scorecard + run metadata into the stable `--json` shape. */
 export function serializeScorecard(sc: Scorecard, meta: ScorecardMeta): SerializedScorecard {
@@ -157,7 +172,7 @@ export function serializeScorecard(sc: Scorecard, meta: ScorecardMeta): Serializ
     generatedAt: meta.generatedAt,
     repo: { sha: meta.repoSha },
     model: meta.model,
-    runsPerArm: sc.runsPerArm,
+    samplesPerArm: sc.samplesPerArm,
     tasks: meta.tasks,
     cost: { without: money(sc.costWithout), with: money(sc.costWith), deltaPct: sc.costDeltaPct },
     roundTrips: { without: sc.turnsWithout, with: sc.turnsWith, deltaPct: sc.turnsDeltaPct },
@@ -195,10 +210,12 @@ export function renderScorecardMarkdown(sc: Scorecard, meta: ScorecardMeta): str
   lines.push('');
   const banner = modeBanner(meta.mode);
   if (banner) { lines.push(banner); lines.push(''); }
-  const shaNote = meta.repoSha ? ` · repo \`${meta.repoSha}\`` : '';
-  const modelNote = meta.model ? ` · model \`${meta.model}\`` : '';
+  // Sanitize provenance interpolated into the inline-code spans so a hostile
+  // --model (backtick / newline) can't corrupt the markdown line.
+  const shaNote = meta.repoSha ? ` · repo \`${sanitizeInline(meta.repoSha)}\`` : '';
+  const modelNote = meta.model ? ` · model \`${sanitizeInline(meta.model)}\`` : '';
   // "generated" is mode-neutral — an estimate is not "measured".
-  lines.push(`_${meta.tasks} task(s) · ${sc.runsPerArm} run(s)/arm · generated ${meta.generatedAt}${shaNote}${modelNote}_`);
+  lines.push(`_${meta.tasks} task(s) · ${sc.samplesPerArm} sample(s)/arm · generated ${meta.generatedAt}${shaNote}${modelNote}_`);
   lines.push('');
   lines.push('| Metric | WITHOUT | WITH | Δ |');
   lines.push('|---|---|---|---|');
