@@ -36,7 +36,7 @@ import {
 import {
   validateToolArgs,
   withToolTimeout,
-  capOutput,
+  capStructuredResult,
   classifyToolError,
 } from '../../core/services/mcp-handlers/tool-guard.js';
 
@@ -2057,11 +2057,11 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
         };
       }
 
-      const rawText =
-        typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-      // Output cap (spec-10): truncate deterministically with a how-to-narrow note
-      // rather than silently dropping data or blowing the agent's context.
-      const { text, truncated } = capOutput(rawText, MCP_TOOL_MAX_BYTES);
+      // Output cap (spec-10): bound the response to a byte budget rather than blowing
+      // the agent's context. capStructuredResult truncates at the STRUCTURED level so a
+      // JSON result stays valid+parseable (naive byte-truncation of serialized JSON cuts
+      // mid-string-literal — e.g. get_spec on a >256 KB spec — and is unusable).
+      const { text, truncated } = capStructuredResult(result, MCP_TOOL_MAX_BYTES);
 
       emit(directory, 'mcp', {
         event: 'tool_call', tool: name, ms: Date.now() - _t0, agent: agentName, agent_version: agentVersion,

@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   validateToolArgs, withToolTimeout, ToolTimeoutError, toolTimeoutMs,
-  capOutput, classifyToolError,
+  capOutput, capStructuredResult, classifyToolError,
 } from './tool-guard.js';
 
 const schema = {
@@ -60,6 +60,44 @@ describe('capOutput', () => {
     expect(r.text).toMatch(/narrow the query/i);
     // deterministic
     expect(capOutput(big, 500)).toEqual(r);
+  });
+});
+
+describe('capStructuredResult', () => {
+  it('leaves a within-budget object as pretty JSON, untruncated', () => {
+    const r = capStructuredResult({ a: 1, b: 'hi' }, 1024);
+    expect(r.truncated).toBe(false);
+    expect(JSON.parse(r.text)).toEqual({ a: 1, b: 'hi' });
+  });
+
+  it('keeps the result PARSEABLE when truncating a large string field (the get_spec bug)', () => {
+    // A naive byte-truncation of the serialized JSON would cut mid-string and break parsing.
+    const result = { domain: 'analyzer', specFile: 'openspec/specs/analyzer/spec.md', content: 'x\n'.repeat(200_000) };
+    const r = capStructuredResult(result, 256 * 1024);
+    expect(r.truncated).toBe(true);
+    expect(Buffer.byteLength(r.text, 'utf8')).toBeLessThanOrEqual(256 * 1024);
+    const parsed = JSON.parse(r.text) as { domain: string; content: string; truncated: boolean };
+    expect(parsed.domain).toBe('analyzer');          // shape preserved
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.content).toMatch(/truncated/i);     // marker present, still a string
+    expect(parsed.content.length).toBeLessThan(result.content.length);
+  });
+
+  it('raw-string results still go through capOutput (plain-text tools)', () => {
+    const r = capStructuredResult('y'.repeat(5000), 500);
+    expect(r.truncated).toBe(true);
+    expect(r.text).toMatch(/output truncated/i);
+  });
+
+  it('falls back to a valid JSON envelope when there is no dominant string field', () => {
+    // A huge array with no big top-level string field — still must stay parseable.
+    const result = { items: Array.from({ length: 50_000 }, (_, i) => ({ id: i, name: `n${i}` })) };
+    const r = capStructuredResult(result, 64 * 1024);
+    expect(r.truncated).toBe(true);
+    expect(Buffer.byteLength(r.text, 'utf8')).toBeLessThanOrEqual(64 * 1024);
+    const parsed = JSON.parse(r.text) as { truncated: boolean; note: string; partial: string };
+    expect(parsed.truncated).toBe(true);
+    expect(typeof parsed.partial).toBe('string');
   });
 });
 
