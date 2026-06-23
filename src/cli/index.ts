@@ -178,4 +178,11 @@ program.addCommand(panicCalibrateCommand);
 program.addCommand(panicReplayCommand);
 program.addCommand(gryphWatchCommand);
 
+// A bare `openlore` (no command) is the most natural way a new user explores the tool.
+// Show help on stdout and exit 0 instead of Commander's default (help on stderr, exit 1).
+if (process.argv.length <= 2) {
+  program.outputHelp();
+  process.exit(0);
+}
+
 program.parse();

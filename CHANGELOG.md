@@ -29,6 +29,17 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 ### Changed
 
+- **CLI front door now describes the product and steers to one-command setup.**
+  Bare `openlore` / `openlore --help` previously opened with the legacy spec-gen
+  framing ("Reverse-engineer OpenSpec specifications…") and a Quick start that sent
+  new users to `openlore generate` (LLM/API-key-gated). The program description now
+  reads "Persistent architectural memory for coding agents" (served via `orient` +
+  MCP), the `--help` epilog leads with "Get started (one command): `openlore install`"
+  and groups commands into no-API-key **Core** vs optional **Spec authoring**, the
+  stale `test` line now reads "Report spec test coverage" (it never generated tests),
+  and `openlore doctor` recommends `openlore install` when config/analysis is missing.
+  `openlore install` and `openlore doctor` are documented in the CLI reference (#188).
+
 - **The default MCP tool surface is now lean (behavior change).** A bare
   `openlore mcp` and a plain `openlore install` now wire the 10-tool `navigation`
   preset — the Spec 14 benchmark-winning graph-traversal core — instead of all 62
@@ -61,6 +72,10 @@ All notable changes to OpenLore are documented here. This project adheres to
   guard runs from a bootstrap module so it evaluates before commander loads.
 - **`--json` stream purity** — `verify --json` (and, defensively, `drift`/`decisions`
   `--json`) now keep stdout pure: machine output on stdout, all logs on stderr.
+- **`openlore install --no-analyze` next-step** — it skips `init` as well as
+  `analyze`, so the old advice "Run `openlore analyze`" failed with "Run `openlore
+  init` first." It now advises `openlore init && openlore analyze` (or `openlore
+  install` to do it in one step) (#188).
 
 ## [2.1.3] - 2026-06-22
 

@@ -4,11 +4,12 @@
  * session, unless --no-analyze (analyze: false) is passed.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInstall } from './index.js';
+import { logger } from '../../utils/logger.js';
 
 async function exists(p: string): Promise<boolean> {
   try { await stat(p); return true; } catch { return false; }
@@ -48,6 +49,22 @@ describe('openlore install — auto index build', () => {
     expect(await exists(join(dir, '.claude/settings.json'))).toBe(true);
     // No analysis artifacts produced.
     expect(await exists(join(dir, '.openlore/analysis/vector-index'))).toBe(false);
+  });
+
+  it('--no-analyze advises a next step that actually works (init is skipped too)', async () => {
+    const infoSpy = vi.spyOn(logger, 'info');
+    await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
+
+    // --no-analyze skips init as well, so no config is written…
+    expect(await exists(join(dir, '.openlore/config.json'))).toBe(false);
+
+    // …which is exactly why the next-step must not be a bare "openlore analyze"
+    // (that fails with "Run openlore init first"). It must include init.
+    const nextStep = infoSpy.mock.calls.find(([key]) => key === 'Next step')?.[1];
+    expect(nextStep, 'install --no-analyze should print a Next step').toBeDefined();
+    expect(String(nextStep)).toContain('openlore init');
+    expect(String(nextStep)).toContain('openlore analyze');
+    infoSpy.mockRestore();
   });
 
   it('dry-run never builds the index', async () => {

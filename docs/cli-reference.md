@@ -73,11 +73,10 @@ openlore orient [options]
 With no `--task`, `orient` prints a session-start primer. Requires `openlore analyze`
 to have run at least once.
 
-### Install / Connect Options
+### Install Options
 
 ```bash
-openlore install [options]        # detect agents, wire surfaces, build the index
-openlore connect [agent] [options] # wire a specific agent (no index build by default)
+openlore install [options]   # detect agents, wire surfaces, build the index
 
   --agent <name>         # Limit to one surface: claude-code, cursor, cline,
                          #   continue, agents-md
@@ -87,8 +86,26 @@ openlore connect [agent] [options] # wire a specific agent (no index build by de
   --dry-run              # Print planned changes without writing any files
   --force                # Overwrite OpenLore-managed blocks even if hand-edited
   --uninstall            # Remove OpenLore-managed blocks and entries
-  --no-analyze           # Configure surfaces only; skip init/analyze
+  --no-analyze           # Configure surfaces only; skip init + analyze
 ```
+
+### Connect Options
+
+```bash
+openlore connect [agent] [options]   # wire ONE agent (no index build by default)
+openlore connect remove [agent]      # disconnect that agent
+
+  <agent>                # Positional: claude-code | cursor | cline | continue |
+                         #   agents-md (omit for an interactive picker)
+  --preset <name>        # MCP tool preset to wire (same names as install)
+  --all-tools            # Wire the full 62-tool surface (alias of --preset full)
+  --dry-run              # Print planned changes without writing any files
+  --force                # Overwrite OpenLore-managed blocks even if hand-edited
+  --no-analyze           # Configure surfaces only; do not build the index
+```
+
+`connect` takes the agent as a positional argument (`openlore connect cursor`), not
+`--agent`, and disconnects via the `remove` subcommand rather than `--uninstall`.
 
 A bare `openlore install` wires the lean `navigation` surface (10 tools) and, for
 Claude Code, both a `SessionStart` primer hook and a `UserPromptSubmit` task-scoped
@@ -269,7 +286,7 @@ Checks performed:
 
 | Check | What it looks for |
 |-------|------------------|
-| Node.js version | ≥ 20 required |
+| Node.js version | ≥ 22.5 required (`node:sqlite`) |
 | Git repository | `.git` directory and `git` binary on PATH |
 | openlore config | `.openlore/config.json` exists and is parseable |
 | Analysis artifacts | `repo-structure.json` freshness (warns if >24h old) |

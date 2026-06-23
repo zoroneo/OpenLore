@@ -23,4 +23,12 @@ describe('CLI onboarding front door', () => {
     // `openlore test` stopped generating stubs (commit 7f2dd4b); the epilog must not say it does.
     expect(source).not.toMatch(/openlore test\s+Generate spec-driven tests/);
   });
+
+  it('shows help and exits 0 on a bare `openlore` (no command), not the Commander default', () => {
+    // A new user typing just `openlore` to explore should get help on stdout + exit 0,
+    // not Commander's default (help on stderr, exit 1).
+    expect(source).toMatch(/process\.argv\.length\s*<=\s*2/);
+    expect(source).toMatch(/outputHelp\(\)/);
+    expect(source).toMatch(/process\.exit\(0\)/);
+  });
 });
