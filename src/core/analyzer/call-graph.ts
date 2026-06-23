@@ -4435,8 +4435,14 @@ export class CallGraphBuilder {
     // Seed resolution with pre-existing nodes (incremental subset rebuilds) so
     // cross-file calls outside the re-parsed subset still resolve internally.
     // These are NOT added to allNodes, so they never appear in the output.
+    // Skip any seed node whose FILE is itself in this build — the fresh parse is
+    // authoritative for those files, so a stale node (e.g. a symbol this edit
+    // renamed away) must not leak back in and re-bind a caller to the old id
+    // (fix-transitive-incremental-staleness).
     if (resolutionNodes) {
+      const subsetFiles = new Set(files.map((f) => f.path));
       for (const node of resolutionNodes) {
+        if (subsetFiles.has(node.filePath)) continue;
         if (!allNodes.has(node.id) && !node.isExternal) trie.insert(node);
       }
     }

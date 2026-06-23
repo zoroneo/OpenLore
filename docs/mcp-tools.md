@@ -47,7 +47,7 @@ The tool list and schemas are emitted in a fixed, deterministic order with no pe
 
 ### Watch mode (keep search_code and orient fresh)
 
-By default the MCP server reads `llm-context.json` from the last `analyze` run. With `--watch-auto`, it also watches source files for changes and incrementally re-indexes signatures so `search_code` and `orient` reflect your latest edits without waiting for the next commit.
+By default the MCP server reads `llm-context.json` from the last `analyze` run. With `--watch-auto`, it also watches source files for changes and incrementally re-indexes signatures *and call-graph edges* so `search_code`, `orient`, and graph queries reflect your latest edits without waiting for the next commit.
 
 Add `--watch-auto` to your MCP config args:
 
@@ -73,8 +73,17 @@ and the vector index is updated with row-level ops rather than a full-table rewr
 A bulk event (branch switch / rebase / formatter) collapses to a single refresh. On large
 repos (> 5000 source files) live embedding auto-degrades to signatures-only (logged once);
 embeddings then refresh at commit. Set `OPENLORE_WATCH_DEBUG=1` for per-file stderr detail
-(default is one summary line per batch). The call graph is not rebuilt on every change; it
-stays current via the [post-commit hook](#cicd-integration) (`openlore analyze --force`).
+(default is one summary line per batch).
+
+The call graph **is** kept incrementally fresh: each save re-resolves the changed file's
+reverse-dependency closure — its direct callers plus any prior non-callers whose
+previously-unresolved calls a newly-added symbol should now bind — so the affected region
+matches what `analyze --force` would produce. A bounded per-save work budget
+(`INCREMENTAL_CLOSURE_BUDGET`, default 40 files) keeps a hub edit light; when a change's
+closure exceeds it, the un-recomputed files are marked **explicitly stale** in the graph
+metadata (freshness verdicts over their symbols report non-authoritative, never silently
+wrong) and self-heal as later edits touch them. A full `openlore analyze --force` (e.g. the
+[post-commit hook](#cicd-integration)) recomputes everything and clears the stale region.
 
 | Option | Default | Description |
 |---|---|---|

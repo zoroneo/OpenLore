@@ -23,7 +23,7 @@ import logger from '../../utils/logger.js';
 import { loadDecisionStore, INACTIVE_STATUSES } from '../decisions/store.js';
 import { loadMemoryStore } from '../decisions/memory-store.js';
 import { AnchorContext } from '../decisions/anchor-adapter.js';
-import { memoryFreshness, decisionAnchors } from '../decisions/anchor.js';
+import { memoryFreshness, decisionAnchors, isStaleRegionOnly } from '../decisions/anchor.js';
 import type { StructuralAnchor, AnchorVerdict } from '../../types/index.js';
 
 // ============================================================================
@@ -645,6 +645,11 @@ export async function detectMemoryStaleness(rootPath: string): Promise<DriftIssu
       if (anchors.length === 0) continue;
       const f = memoryFreshness(anchors, view);
       if (f.freshness === 'fresh') continue;
+      // A pure stale-region downgrade is NOT code-drift — the anchored code is
+      // byte-identical; an incremental update just hasn't recomputed its topology
+      // yet (it self-heals). Reporting "the code changed" here would be a false
+      // claim, so skip it (recall surfaces the stale-region state separately).
+      if (isStaleRegionOnly(f.verdicts)) continue;
       issues.push(makeMemoryStalenessIssue('decision', d.id, d.title, f.freshness, f.verdicts, d.affectedDomains[0] ?? null));
     }
 
@@ -658,6 +663,7 @@ export async function detectMemoryStaleness(rootPath: string): Promise<DriftIssu
       if (m.anchors.length === 0) continue;
       const f = memoryFreshness(m.anchors, view);
       if (f.freshness === 'fresh') continue;
+      if (isStaleRegionOnly(f.verdicts)) continue; // not code-drift (see above)
       issues.push(makeMemoryStalenessIssue('note', m.id, m.content, f.freshness, f.verdicts, null));
     }
 

@@ -30,7 +30,17 @@ export class FunctionRegistryTrie {
   }
 
   findBySimpleName(name: string): FunctionNode[] {
-    return this.byName.get(name) ?? [];
+    const arr = this.byName.get(name);
+    if (!arr) return [];
+    // Order candidates by their (unique) id so a name-collision tiebreak
+    // (`candidates[0]` for a `name_only`/`import` pick) is deterministic and
+    // INDEPENDENT of insertion order. A from-scratch `analyze` inserts in
+    // file-iteration order; an incremental subset rebuild inserts the changed
+    // file's fresh nodes first, then seed nodes in DB row order — so without a
+    // stable sort the two builds could pick different duplicate-name targets and
+    // diverge (fix-transitive-incremental-staleness). Sorted in place (idempotent).
+    if (arr.length > 1) arr.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return arr;
   }
 
   findByQualifiedName(className: string, methodName: string): FunctionNode[] {

@@ -71,6 +71,21 @@ export interface GraphFreshnessView {
    * Optional — when absent, a missing symbol is always `orphaned`.
    */
   renameOf?(nodeId: string): string | undefined;
+  /**
+   * True when the node lies in an explicitly-marked stale region — its
+   * surrounding topology was NOT recomputed by a budget-exceeded incremental
+   * update (fix-transitive-incremental-staleness). A symbol whose own span is
+   * unchanged can still sit in a stale region; this lets the verdict reflect
+   * that the topology around it may have diverged. Optional — absent on legacy
+   * views, where nothing is ever stale-by-region.
+   */
+  inStaleRegion?(nodeId: string): boolean;
+  /**
+   * True when the FILE is in an explicitly-marked stale region — the file-level
+   * counterpart of {@link inStaleRegion}, used for file-level anchors that carry
+   * no `nodeId` (fix-transitive-incremental-staleness).
+   */
+  fileInStaleRegion?(filePath: string): boolean;
 }
 
 /**
@@ -128,6 +143,14 @@ export function anchorFreshness(
     // nodeId takes precedence: a still-resolving node is decided here, never via
     // stableId (add-content-addressed-stable-symbol-ids).
     if (current !== undefined) {
+      // The symbol still exists. If its own span changed it is `drifted` already.
+      // If it is UNCHANGED but sits in an explicitly-marked stale region, the
+      // surrounding topology was not recomputed — do NOT report `fresh`; downgrade
+      // to `drifted` so it is never served as authoritative
+      // (fix-transitive-incremental-staleness, FreshnessVerdictsHonorTheStaleRegion).
+      if (current === anchor.contentHash && view.inStaleRegion?.(anchor.nodeId)) {
+        return { anchor, freshness: 'drifted', staleRegion: true };
+      }
       return { anchor, freshness: current === anchor.contentHash ? 'fresh' : 'drifted' };
     }
     // nodeId miss — the symbol may have moved/renamed-file. Re-resolve by its
@@ -154,12 +177,21 @@ export function anchorFreshness(
   if (!view.fileExists(anchor.filePath)) {
     return { anchor, freshness: 'orphaned' };
   }
+  // A file in an explicitly-marked stale region is not authoritative even when
+  // its content hash matches — its topology was not recomputed. Mirror the
+  // symbol-level rule: downgrade only the otherwise-`fresh` outcomes, so a file
+  // that genuinely changed stays plain `drifted`
+  // (fix-transitive-incremental-staleness, FreshnessVerdictsHonorTheStaleRegion).
+  const stale = view.fileInStaleRegion?.(anchor.filePath) ?? false;
   // A truly legacy anchor has no baseline hash — existence is all we can prove.
   if (anchor.contentHash === undefined) {
-    return { anchor, freshness: 'fresh' };
+    return stale ? { anchor, freshness: 'drifted', staleRegion: true } : { anchor, freshness: 'fresh' };
   }
   const current = view.fileHash(anchor.filePath);
-  return { anchor, freshness: current === anchor.contentHash ? 'fresh' : 'drifted' };
+  if (current === anchor.contentHash) {
+    return stale ? { anchor, freshness: 'drifted', staleRegion: true } : { anchor, freshness: 'fresh' };
+  }
+  return { anchor, freshness: 'drifted' };
 }
 
 const FRESHNESS_RANK: Record<MemoryFreshness, number> = {
@@ -192,6 +224,27 @@ export function memoryFreshness(
     verdicts,
     anchored: anchors.length > 0,
   };
+}
+
+/**
+ * True when a memory's non-`fresh` aggregate is due ONLY to the explicit stale
+ * region — every drifted anchor is a stale-region downgrade and nothing is
+ * orphaned or genuinely content-drifted (fix-transitive-incremental-staleness).
+ * The anchored code is byte-identical; its surrounding topology simply was not
+ * recomputed by a budget-exceeded incremental update and will self-heal. Callers
+ * use this to label it honestly ("not yet reconciled") instead of asserting the
+ * code changed, and the drift detector uses it to NOT report a false code-drift.
+ */
+export function isStaleRegionOnly(verdicts: readonly AnchorVerdict[]): boolean {
+  let sawStaleRegionDrift = false;
+  for (const v of verdicts) {
+    if (v.freshness === 'orphaned') return false;
+    if (v.freshness === 'drifted') {
+      if (!v.staleRegion) return false; // a genuine content drift is present
+      sawStaleRegionDrift = true;
+    }
+  }
+  return sawStaleRegionDrift;
 }
 
 // ── contradiction surfacing (add-bitemporal-typed-memory-operations) ──────────

@@ -130,6 +130,27 @@ describe('orient — decision freshness & no-silent-stale guarantee', () => {
     expect(drift).toBeDefined();
     expect(drift!.freshness).toBe('drifted');
     expect(drift!.verify).toBe(true);
+    expect((drift as { staleRegion?: boolean }).staleRegion).toBeUndefined(); // a real change, NOT stale-region
+  });
+
+  it('labels a stale-region decision with staleRegion (honest, consistent with recall)', async () => {
+    // The decision's anchored code is byte-identical; its file was only marked stale
+    // by a budget-exceeded incremental update. orient must label it staleRegion, not
+    // imply the code changed (fix-transitive-incremental-staleness).
+    await writeDecisions([{ id: 'sr1', title: 'keep fooHandler pure', affectedFiles: ['src/foo.ts'] }]);
+    const store = EdgeStore.open(EdgeStore.dbPath(await analysisDir()));
+    store.markFilesStale(['src/foo.ts']);
+    store.close();
+
+    const r = (await handleOrient(root, 'work on fooHandler')) as {
+      pendingDecisions?: Array<{ id: string; freshness?: string; verify?: boolean; staleRegion?: boolean }>;
+      staleDecisions?: Array<{ id: string }>;
+    };
+    const d = r.pendingDecisions?.find((x) => x.id === 'sr1');
+    expect(d).toBeDefined();          // still authoritative (not orphaned)
+    expect(d!.freshness).toBe('drifted');
+    expect(d!.verify).toBe(true);
+    expect(d!.staleRegion).toBe(true); // the honest marker
   });
 
   // add-bitemporal-typed-memory-operations: contradiction surfacing at the entry tool.

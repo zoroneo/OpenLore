@@ -642,6 +642,20 @@ export const WATCH_EMBED_FILE_CEILING = 5000;
 export const WATCH_VCS_SETTLE_MS = 750;
 
 /**
+ * Per-changed-file work budget for the incremental call-graph closure
+ * (change: fix-transitive-incremental-staleness). Caps how many OTHER files a
+ * single save re-parses to keep the graph converged with `analyze --force`:
+ * the changed file's direct callers PLUS prior non-callers whose previously-
+ * `external` call sites a newly-added symbol should now bind. Replaces the old
+ * fixed depth-1 `CALLER_REPARSE_LIMIT` of 10. When the closure exceeds this
+ * budget (a hub change), the un-recomputed files are marked explicitly `stale`
+ * rather than silently left divergent — sound over-approximation. Large enough
+ * to converge ordinary edits in one pass; small enough that a hub edit degrades
+ * to the honest stale flag instead of stalling the watch loop.
+ */
+export const INCREMENTAL_CLOSURE_BUDGET = 40;
+
+/**
  * Max number of raw call edges a `conclusion`-class MCP tool may include as
  * provenance before it is treated as a graph dump (the conclusion-over-graph
  * tool contract — see `src/core/services/mcp-handlers/tool-contract.ts`).

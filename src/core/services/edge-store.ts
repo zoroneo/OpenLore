@@ -14,6 +14,12 @@ function openDatabase(dbPath: string): DatabaseSync {
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');
+  // Wait (don't immediately throw "database is locked") when another process
+  // holds the write lock — e.g. the incremental watcher marking files stale
+  // while a post-commit `analyze --force` rebuilds the store. Without this the
+  // loser of the race throws on open/write and silently drops its work
+  // (fix-transitive-incremental-staleness widened this contention).
+  db.exec('PRAGMA busy_timeout = 5000');
   return db;
 }
 
@@ -87,6 +93,7 @@ export class EdgeStore {
         DROP TABLE IF EXISTS provenance;
         DROP TABLE IF EXISTS change_coupling;
         DROP TABLE IF EXISTS cfg_overlay;
+        DROP TABLE IF EXISTS stale_files;
         DROP TABLE IF EXISTS schema_version;
         CREATE TABLE schema_version (version INTEGER NOT NULL);
       `);
@@ -110,6 +117,14 @@ export class EdgeStore {
       CREATE INDEX IF NOT EXISTS idx_callee_id   ON edges(callee_id);
       CREATE INDEX IF NOT EXISTS idx_caller_file ON edges(caller_file);
       CREATE INDEX IF NOT EXISTS idx_callee_file ON edges(callee_file);
+      -- callee_name is filtered by the incremental closure's consumer lookups
+      -- (getExternalConsumerFiles / getNameOnlyConsumers / getExternalConsumers)
+      -- on the hot watch path. Without this index each is a full scan of edges,
+      -- making one save O(edges × addedSymbols) — seconds on a large repo. Index
+      -- build is ~28ms / +2MB and keeps those lookups sub-millisecond. Additive
+      -- (IF NOT EXISTS), so existing stores gain it on next open with no schema
+      -- bump (fix-transitive-incremental-staleness).
+      CREATE INDEX IF NOT EXISTS idx_callee_name ON edges(callee_name);
 
       CREATE TABLE IF NOT EXISTS inheritance_edges (
         parent_id TEXT NOT NULL,
@@ -226,6 +241,19 @@ export class EdgeStore {
         cfg         TEXT NOT NULL  -- JSON FunctionCfg
       );
       CREATE INDEX IF NOT EXISTS idx_cfg_file ON cfg_overlay(file_path);
+
+      -- Explicitly-stale region (change: fix-transitive-incremental-staleness).
+      -- A file lands here when a budget-exceeded incremental update could not
+      -- afford to re-resolve its edges against a changed symbol — the honest
+      -- "told when stale" fallback. Membership means: do NOT serve this file's
+      -- topology as current; freshness verdicts over its symbols report
+      -- non-authoritative. Cleared when the file is next recomputed
+      -- (opportunistic self-heal) or by a full analyze --force (clearAll).
+      -- Additive table, so an existing store gains it without a schema wipe.
+      CREATE TABLE IF NOT EXISTS stale_files (
+        file_path  TEXT PRIMARY KEY,
+        marked_at  INTEGER NOT NULL
+      );
     `);
   }
 
@@ -278,6 +306,41 @@ export class EdgeStore {
         .prepare("SELECT * FROM edges WHERE callee_name = ? AND confidence = 'external'")
         .all(symbolName) as unknown as RawEdge[]
     ).map(rawToCallEdge);
+  }
+
+  /**
+   * Distinct caller FILES that make an unresolved external reference to this
+   * exact name (`confidence === 'external'`). When an incremental edit ADDS a
+   * symbol, these are the prior non-callers whose `external::<name>` call sites
+   * should now bind to the new internal symbol — the files `getCallerFiles`
+   * misses (they hold an external edge, not an edge into the changed file). The
+   * change-driven closure re-resolves them so the graph converges with
+   * `analyze --force` (change: fix-transitive-incremental-staleness).
+   */
+  getExternalConsumerFiles(symbolName: string): string[] {
+    return (
+      this.db
+        .prepare("SELECT DISTINCT caller_file FROM edges WHERE callee_name = ? AND confidence = 'external'")
+        .all(symbolName) as unknown as Array<{ caller_file: string }>
+    ).map((r) => r.caller_file);
+  }
+
+  /**
+   * Caller FILE + current resolved callee id for every `name_only` edge to this
+   * exact name (the lowest, ambiguity-tolerant tier — no import, no receiver
+   * type). When an incremental edit ADDS a symbol, the winning candidate for a
+   * `name_only` call is the lowest candidate id, so the new symbol only flips a
+   * consumer whose current target id sorts AFTER the new id. The caller compares
+   * `calleeId` to prune the no-op majority (a common-name add would otherwise
+   * needlessly re-resolve and stale-flag every consumer)
+   * (fix-transitive-incremental-staleness). One row per (file, target) pair.
+   */
+  getNameOnlyConsumers(symbolName: string): Array<{ file: string; calleeId: string }> {
+    return (
+      this.db
+        .prepare("SELECT DISTINCT caller_file, callee_id FROM edges WHERE callee_name = ? AND confidence = 'name_only'")
+        .all(symbolName) as unknown as Array<{ caller_file: string; callee_id: string }>
+    ).map((r) => ({ file: r.caller_file, calleeId: r.callee_id }));
   }
 
   /**
@@ -757,9 +820,54 @@ export class EdgeStore {
       .run(filePath, hash, Date.now());
   }
 
+  // ── Explicit stale region (fix-transitive-incremental-staleness) ───────────────
+
+  /**
+   * Mark files as explicitly stale — their topology was NOT recomputed by a
+   * budget-exceeded incremental update. Idempotent (re-marking refreshes the
+   * timestamp). Sound over-approximation: it is always safe to mark more.
+   */
+  markFilesStale(files: readonly string[], at: number = Date.now()): void {
+    if (files.length === 0) return;
+    const stmt = this.db.prepare('INSERT OR REPLACE INTO stale_files (file_path, marked_at) VALUES (?, ?)');
+    runTransaction(this.db, () => {
+      for (const f of files) stmt.run(f, at);
+    });
+  }
+
+  /**
+   * Clear the stale mark for files that have just been recomputed (self-heal).
+   * No-op for files that were never stale.
+   */
+  clearFilesStale(files: readonly string[]): void {
+    if (files.length === 0) return;
+    const stmt = this.db.prepare('DELETE FROM stale_files WHERE file_path = ?');
+    runTransaction(this.db, () => {
+      for (const f of files) stmt.run(f);
+    });
+  }
+
+  /** True when a file is in the explicitly-stale region. */
+  isFileStale(file: string): boolean {
+    return this.db.prepare('SELECT 1 FROM stale_files WHERE file_path = ? LIMIT 1').get(file) !== undefined;
+  }
+
+  /** Every file currently in the explicitly-stale region (deterministic order). */
+  getStaleFiles(): string[] {
+    return (
+      this.db.prepare('SELECT file_path FROM stale_files ORDER BY file_path').all() as unknown as Array<{ file_path: string }>
+    ).map((r) => r.file_path);
+  }
+
+  /** Count of files in the explicitly-stale region. */
+  countStaleFiles(): number {
+    const row = this.db.prepare('SELECT COUNT(*) as n FROM stale_files').get() as { n: number };
+    return row.n;
+  }
+
   /** Drop all graph data — used by full analyze rebuild. */
   clearAll(): void {
-    this.db.exec('DELETE FROM edges; DELETE FROM inheritance_edges; DELETE FROM nodes; DELETE FROM classes; DELETE FROM nodes_fts; DELETE FROM file_hashes; DELETE FROM decisions; DELETE FROM decision_edges; DELETE FROM provenance; DELETE FROM change_coupling; DELETE FROM cfg_overlay;');
+    this.db.exec('DELETE FROM edges; DELETE FROM inheritance_edges; DELETE FROM nodes; DELETE FROM classes; DELETE FROM nodes_fts; DELETE FROM file_hashes; DELETE FROM decisions; DELETE FROM decision_edges; DELETE FROM provenance; DELETE FROM change_coupling; DELETE FROM cfg_overlay; DELETE FROM stale_files;');
   }
 
   /** Run fn inside a single SQLite transaction. */

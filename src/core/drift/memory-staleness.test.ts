@@ -101,6 +101,30 @@ describe('detectMemoryStaleness', () => {
     expect(issues[0].severity).toBe('info');
   });
 
+  it('does NOT report a stale-region-only downgrade as memory-drifted (no false "code changed" claim)', async () => {
+    // The decision's anchored code is byte-identical; its file was only marked
+    // stale by a budget-exceeded incremental update. detectMemoryStaleness must
+    // NOT claim the code changed — that drift is not real and self-heals
+    // (fix-transitive-incremental-staleness).
+    const anchor = await freshTargetAnchor();
+    await writeDecisions([{ id: 'd1', title: 'about target', anchors: [anchor], affectedFiles: ['src/t.ts'] }]);
+
+    const dir = join(root, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+    const store = EdgeStore.open(EdgeStore.dbPath(dir));
+    store.markFilesStale(['src/t.ts']);
+    store.close();
+
+    // Suppressed — no fabricated memory-drifted issue.
+    expect(await detectMemoryStaleness(root)).toEqual([]);
+
+    // But a GENUINE content change in the same (stale-marked) file IS still flagged.
+    const edited = 'export function target() {\n  return 42;\n}\n';
+    await writeFile(join(root, 'src', 't.ts'), edited, 'utf-8');
+    const issues = await detectMemoryStaleness(root);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].kind).toBe('memory-drifted');
+  });
+
   it('flags an orphaned note anchor', async () => {
     await writeNotes([{ id: 'n1', kind: 'note', content: 'note about gone.ts', anchors: [{ filePath: 'src/gone.ts', contentHash: 'x' }], recordedAt: '2026-01-01T00:00:00Z' }]);
     const issues = await detectMemoryStaleness(root);
