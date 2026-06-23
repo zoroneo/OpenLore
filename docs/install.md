@@ -56,6 +56,25 @@ the block we refuse to overwrite unless you pass `--force`.
 | `continue` | `.continue/` | add `/orient` entry to `.continue/config.json` (MCP server registration is TODO — see below) |
 | `agents-md` | always applies | append block to `AGENTS.md` (creates if absent) |
 
+## Pre-commit hooks (opt-in)
+
+`openlore install` does **not** write any pre-commit gate. The git hooks below are installed
+explicitly, each advisory by default and each coexisting in a single `.git/hooks/pre-commit`
+(every installer appends its own marked block and strips a trailing `exit 0` so the next one
+stays reachable):
+
+| Hook | Install | Blocks when |
+|------|---------|-------------|
+| **Enforcement gate** (recommended, unified) | `openlore enforce --install-hook` | a governance finding resolves to `blocking` under [`enforcement.policy`](configuration.md#enforcement-policy) — the single posture over all findings |
+| Decisions gate | wired by the decisions workflow (`openlore decisions`) | verified architectural decisions await review/sync |
+| Blast-radius guard | `openlore blast-radius --install-hook` | the diff triggers a configured `blastRadius.block` pattern |
+| Change-impact certificate | `openlore impact-certificate --install-hook` | the diff opens a new path into a `impactCertificate.block` surface severity |
+
+`openlore enforce` is the recommended single gate: it resolves every governance finding through one
+`enforcement.policy`, and the per-surface `blastRadius.block` / `impactCertificate.block` configs lower
+onto it. All hooks are advisory by default — nothing blocks until you opt a finding into `blocking`.
+See [cli-reference.md](cli-reference.md#enforcement-gate).
+
 ## Task-scoped context injection
 
 Beyond the whole-repo `SessionStart` primer, `openlore install` wires a **per-task** injection

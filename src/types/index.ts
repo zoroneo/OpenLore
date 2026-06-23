@@ -75,6 +75,35 @@ export interface OpenLoreConfig {
    * with documented defaults.
    */
   contextInjection?: ContextInjectionConfig;
+  /**
+   * Optional unified enforcement policy (change: add-finding-enforcement-policy).
+   * Maps a stable governance finding `code` to one enforcement class — the single
+   * declarative source of truth for "what blocks a commit, what merely advises, and
+   * what is deliberately silenced," decoupling a finding's intrinsic severity (owned
+   * by its source) from this repository's risk posture (owned here). Additive and
+   * optional: an absent or empty policy preserves today's behavior exactly (advisory
+   * by default). Supersedes the per-surface `blastRadius.block` / `impactCertificate.block`
+   * sugar, which now lowers onto this policy.
+   */
+  enforcement?: EnforcementConfig;
+}
+
+/**
+ * How the gate treats a governance finding, independent of the finding's severity
+ * (change: add-finding-enforcement-policy). `blocking` fails the gate; `advisory`
+ * reports without failing (the default); `off` is a recorded, inspectable silence —
+ * the finding is still listed as informational so a deliberate silence is never invisible.
+ */
+export type EnforcementClass = 'blocking' | 'advisory' | 'off';
+
+/**
+ * A repository's declared enforcement policy: a map from a stable finding `code`
+ * to its enforcement class. Additive — a code absent from the map keeps its
+ * source-declared default. An unrecognized code is retained (a policy may name a
+ * code before its source ships) and surfaced as a non-failing config finding.
+ */
+export interface EnforcementConfig {
+  policy?: Record<string, EnforcementClass>;
 }
 
 /** Whether task-scoped context injection is active (change: add-task-scoped-context-injection). */

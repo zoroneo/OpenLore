@@ -32,6 +32,7 @@ import { assembleBoundary, computeStaleness } from './confidence-boundary.js';
 import { resolveFederationScope } from '../../federation/resolver.js';
 import { findFleetMemory } from '../../federation/fleet-memory.js';
 import { collectReversals, supersededDecisionIds } from './reversals.js';
+import { buildRetirementGraph, staleRefsInText, type StaleRef } from './stale-decision-reference.js';
 import {
   MEMORY_TYPES,
   type AnchoredMemory,
@@ -205,6 +206,12 @@ interface RecalledMemory {
   verifiedCurrent?: boolean;
   /** Evidence behind a `fresh` verdict; absent on drifted/orphaned facts. */
   certificates?: GroundingCertificate[];
+  /**
+   * Set when this authoritative memory references a decision that has since been
+   * superseded (the `stale-decision-reference` finding). Its stated basis is stale,
+   * so it is NOT presented as cleanly fresh. (add-finding-enforcement-policy)
+   */
+  staleDecisionRef?: StaleRef[];
   score: number;
 }
 
@@ -283,6 +290,11 @@ export async function handleRecall(
       // contradiction detection sees the full set, not a `limit`-truncated slice.
       const contradictionItems: AnchoredItem[] = [];
 
+      // The retirement graph (which decisions were superseded, and by whom) drives the
+      // stale-decision-reference signal: an authoritative memory whose content cites a
+      // retired decision is not presented as cleanly fresh. (add-finding-enforcement-policy)
+      const retirement = buildRetirementGraph(decisionStore.decisions);
+
       for (const m of memStore.memories) {
         if (!noteInScope.has(m.id)) continue;           // out of temporal scope / invalidated
         if (wantType && (m.type ?? 'note') !== wantType) continue; // type filter
@@ -294,6 +306,11 @@ export async function handleRecall(
           content: m.content,
         });
         const invalidated = !!m.invalidatedAt;
+        // Only an authoritative (non-orphaned, non-invalidated) memory carries the signal;
+        // an orphaned/invalidated one is never served as authoritative in the first place.
+        const staleRefs = !invalidated && f.freshness !== 'orphaned'
+          ? staleRefsInText(m.content, retirement)
+          : [];
         items.push({
           kind: 'note',
           id: m.id,
@@ -303,12 +320,14 @@ export async function handleRecall(
           type: m.type ?? 'note',
           ...(m.validFromCommit ? { validFromCommit: m.validFromCommit } : {}),
           ...(invalidated ? { invalidated: true } : {}),
-          verify: f.freshness === 'drifted' ? true : undefined,
+          verify: f.freshness === 'drifted' || staleRefs.length > 0 ? true : undefined,
           ...(isStaleRegionOnly(f.verdicts) ? { staleRegion: true } : {}),
           anchors: f.verdicts.map(summarizeVerdict),
           recordedAt: m.recordedAt,
           match: hasQuery ? { fields: r.matched, anchorBoost: r.anchorBoost } : undefined,
-          ...certify(f.freshness, m.anchors),
+          // A stale-decision-reference suppresses the clean `verifiedCurrent` claim: the
+          // anchor may be fresh, but the fact's stated basis was retired.
+          ...(staleRefs.length > 0 ? { staleDecisionRef: staleRefs } : certify(f.freshness, m.anchors)),
           score: r.score,
         });
         contradictionItems.push({ id: m.id, anchors: m.anchors, freshness: f.freshness, invalidated });
@@ -390,6 +409,10 @@ export async function handleRecall(
       const reanchorNote = needsReanchoring.length
         ? 'needsReanchoring entries reference code that no longer exists — do not treat them as authoritative; re-record them against current code.'
         : undefined;
+      const staleRefCount = authoritativeOut.filter((i) => i.staleDecisionRef?.length).length;
+      const staleRefNote = staleRefCount
+        ? `${staleRefCount} authoritative memor${staleRefCount === 1 ? 'y references a' : 'ies reference a'} superseded decision (see staleDecisionRef) — verify the basis before relying on it.`
+        : undefined;
       const unreconciledNote = unreconciled.length
         ? `${unreconciled.length} symbol(s) have two or more authoritative memories — reconcile or supersede one (see unreconciled).`
         : undefined;
@@ -452,7 +475,7 @@ export async function handleRecall(
         ...(reversals !== undefined ? { reversals } : {}),
         ...(fleetMemory !== undefined ? { fleetMemory } : {}),
         budget,
-        note: [budgetNote, reanchorNote, unreconciledNote, ...warnings].filter(Boolean).join(' ') || undefined,
+        note: [budgetNote, reanchorNote, staleRefNote, unreconciledNote, ...warnings].filter(Boolean).join(' ') || undefined,
         // Recall does no graph traversal — its boundary is the freshness of the
         // index the anchors were checked against (per-memory verdicts cover the
         // rest). (spec: add-confidence-boundary-disclosure)

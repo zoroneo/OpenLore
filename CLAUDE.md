@@ -23,7 +23,7 @@
 | Checking spec coverage before starting a feature | `audit_spec_coverage` |
 | Recording an architectural decision before writing code | `record_decision` |
 | Persisting a durable, code-anchored fact for later sessions | `remember` (opt-in `memory` preset) — anchors a note to a symbol/file so it self-invalidates; optional `type` (invariant/gotcha/rationale/…, default note) and `supersedes=<id>` to retire a prior memory (kept queryable via `asOf`); re-recording the same content+anchor updates in place |
-| Recalling what's known about code you're touching | `recall` (opt-in `memory` preset) — returns memories with a freshness verdict (never serves orphaned ones as authoritative); two authoritative memories on one symbol surface in `unreconciled`; optional `asOf`/`changedSince` (commit-ish) for history and a `type` filter |
+| Recalling what's known about code you're touching | `recall` (opt-in `memory` preset) — returns memories with a freshness verdict (never serves orphaned ones as authoritative); two authoritative memories on one symbol surface in `unreconciled`; an authoritative memory that cites a superseded decision carries a `staleDecisionRef` signal (and is not presented as cleanly fresh); optional `asOf`/`changedSince` (commit-ish) for history and a `type` filter |
 | About to assert a structural fact to a user ("X is dead", "Y calls Z", "this is safe to change") | `verify_claim` (opt-in `verify` preset) — verify the claim against the graph, then cite the receipt to the human; an `unverifiable` verdict means hedge or read the source |
 | "Is my external spec store's binding to its code repos healthy?" | `spec_store_status` (opt-in `federation` preset) — read-only health of the `.openlore/config.json` `specStore` binding: per-target resolution + index freshness, reference presence, conclusion-shaped findings with stable codes; never blocks |
 | "Assemble the structural context an active change needs across its target repos" | `working_set_context` (opt-in `federation` preset) — `orient` generalized from one repo to a change's spec-store targets: reads the change's proposal, orients each indexed target on that intent, returns ONE token-budgeted, per-target-attributed briefing (symbols, callers, spec domains, insertion points) + fresh in-scope anchored intent (orphaned withheld, drifted flagged); read-only, never blocks |
@@ -45,6 +45,13 @@ For all other cases (reading a file, grepping, listing files) use native tools d
 > **Authoring a new MCP tool?** Classify it `conclusion` or `explicit-topology` in
 > `src/core/services/mcp-handlers/tool-contract.ts` — `tool-contract.test.ts` fails until you do.
 > Conclusion tools must return the computed answer, not a graph for the agent to traverse.
+
+> **Authoring a new governance finding?** Register its stable `code` (with a source-declared default
+> class + description) in `FINDING_CODE_REGISTRY` in `src/core/services/mcp-handlers/enforcement-policy.ts`,
+> and emit it in the unified `GovernanceFinding` shape (`{ code, severity, source, subject, message }`).
+> A registered code is one an operator's `enforcement.policy` can name and `openlore enforce` can govern;
+> the source owns the finding's intrinsic `severity`, the policy owns its enforcement class. Findings stay
+> advisory by default — blocking is always opt-in (change: add-finding-enforcement-policy).
 
 <!-- openlore-decisions-instructions -->
 ## Architectural decisions

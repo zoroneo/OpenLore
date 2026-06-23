@@ -124,7 +124,7 @@ You can use layer 1 alone to give agents structural context. Add layer 2 for sem
 |---|---|---|---|
 | Graph-aware MCP context | ❌ file-based reads | Partial | ✓ call graph + clusters |
 | Spec drift detection | ❌ | ❌ | ✓ milliseconds, no API |
-| Architectural decision gates | ❌ | ❌ | ✓ pre-commit hook |
+| Governance gates (decisions + findings) | ❌ | ❌ | ✓ pre-commit hook + `enforcement.policy` |
 | Offline structural analysis | ❌ | ❌ | ✓ |
 | Token-efficient orient() | ❌ | ❌ | ✓ −7%→−21% cost, −26% round-trips on deep tasks † |
 | Living spec generation | ❌ | ❌ | ✓ |
@@ -272,6 +272,7 @@ The default MCP surface is the lean **`navigation`** preset — 10 tools, the Sp
 | "What's dead / what dies if I delete X?" | `find_dead_code` — cross-language reachability, confidence-tagged candidates (Spec 20) |
 | "What's the blast radius of my whole diff before I commit?" | `blast_radius` — one advisory briefing: callers/layers, tests to run, anchored memories/decisions that will drift, stale specs (CLI `openlore blast-radius`) |
 | "Does my diff open a new path into a sensitive boundary?" | `change_impact_certificate` — differential reachability into declared covering surfaces (newly-opened paths), plus blast radius, drift, and tests; decays via the freshness lease (CLI `openlore impact-certificate`; opt-in `federation` preset) |
+| "Block my commit only on the findings I've classed as blocking" | CLI `openlore enforce` — the unified finding-enforcement gate: resolves every governance finding through `enforcement.policy` and blocks only on a `blocking`-classed one (advisory by default; CLI-only, no MCP tool) |
 | "What changed structurally / whose callers are now stale?" | `structural_diff` — graph diff, stale callers, rename flags (Spec 21) |
 | "What changes together with this / what's volatile?" | `get_change_coupling` — co-change + churn from git history (Spec 22) |
 | "May I add this import here / what breaks the architecture?" | `check_architecture` — pre-edit verdict against declared rules (Spec 23) |
@@ -388,6 +389,10 @@ When fresh, injection is zero-overhead. Calling `orient()` resets the tracker. T
 Agents call `record_decision` before writing code. Consolidation runs immediately in the background. At commit time, a pre-commit hook gates the commit until all verified decisions are reviewed and written back as requirements in `spec.md` files. Decisions are classified by scope (`local / component / cross-domain / system`); only `cross-domain` and `system` decisions produce ADR files, keeping the decision log signal-dense.
 
 Decisions are also **first-class graph nodes**. At analyze time the active decision store is projected — the same parser→projector split that puts Infrastructure-as-Code on the graph — into `decision::<id>` nodes joined to the files they govern by `affects` edges. The relationship is stored, not recomputed: `analyze_impact` and `get_subgraph` return the governing decisions of a symbol and its blast radius as typed neighbors (`nodeType: "decision"`), and `orient` reports which relevant files each decision governs. This turns "what architectural decisions constrain this code, and what does changing it implicate?" into a deterministic graph query — the join no code-navigation competitor offers. The JSON store stays authoritative; the projection is derived and rebuilt on every analyze. See [docs/specs/openlore-spec-16-decisions-as-graph-nodes.md](docs/specs/openlore-spec-16-decisions-as-graph-nodes.md).
+
+**Finding enforcement** (no API key, advisory by default)
+
+`openlore enforce` is the **unified gate over all governance findings**, not just decisions. A single `enforcement.policy` block in `.openlore/config.json` maps each finding `code` to `blocking | advisory | off`, decoupling a finding's intrinsic severity (owned by the source that computes it) from the repository's risk posture (owned by config). The `--hook` gate fails a commit only on a `blocking`-classed finding; advisory is the default, so a repo that declares no policy never blocks, and an `off` finding stays visible (silenced, not invisible). It always runs the deterministic `stale-decision-reference` check — a live, authoritative artifact (approved decision, non-orphaned anchored memory, or spec requirement) that still cites a *superseded* decision — and folds in blast-radius orphan and impact-certificate surface findings where those are configured. The legacy `blastRadius.block` / `impactCertificate.block` configs lower onto the one policy (a direct entry wins). Deterministic, no LLM, no new MCP tool. See [docs/configuration.md](docs/configuration.md#enforcement-policy) and [docs/cli-reference.md](docs/cli-reference.md#enforcement-gate).
 
 **Provenance** (no API key, local-only)
 
