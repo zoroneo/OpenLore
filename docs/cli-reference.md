@@ -15,8 +15,8 @@
 | `openlore drift --use-llm` | Detect spec drift (LLM-enhanced) | Yes |
 | `openlore drift --suggest-tests` | After drift, list test files covering affected domains | No |
 | `openlore audit` | Report spec coverage gaps: uncovered functions, hub gaps, stale domains | No |
-| `openlore test` | Generate spec-driven tests (Vitest / Playwright / pytest / GTest / Catch2) | No |
-| `openlore test --coverage` | Report which spec scenarios have corresponding tests | No |
+| `openlore test` | Report spec test coverage (scan test files for `// openlore:` annotation tags) | No |
+| `openlore test --min-coverage <n>` | Fail when effective spec coverage is below N% (CI gate) | No |
 | `openlore digest` | Plain-English summary of all specs for human review | No |
 | `openlore prove` | Measure OpenLore's token value on your repo (WITH vs WITHOUT agent pass) | Yes |
 | `openlore prove --estimate` | Deterministic, graph-derived projection of the orientation tax — no agent, no key | No |
