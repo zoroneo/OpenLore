@@ -3,7 +3,7 @@
 Common issues and solutions when using openlore.
 
 > **Start here:** run `openlore doctor`. It checks your Node version, git repo, config,
-> index freshness, MCP wiring, search mode (semantic vs keyword), and LLM/embedding setup,
+> index freshness, MCP wiring, and LLM/embedding setup,
 > and prints the exact command to fix anything that is missing.
 
 ## Installation Issues

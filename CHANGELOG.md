@@ -7,6 +7,18 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 ### Added
 
+- **`openlore review` — deterministic structural PR review (#188).** A new no-LLM CLI
+  command that composes the structural delta (`structural_diff`: removed/added/
+  signature-changed symbols + the callers they leave stale) and the blast radius
+  (`computeBlastRadius`: hubs, layers, tests to run, and the spec/memory/decision drift
+  the change introduces) for a `base..head` range into one conclusion-shaped Markdown or
+  JSON briefing. No new MCP tool, no new structural computation. Ships with a bundled
+  GitHub Action (`.github/actions/openlore-review`) that posts it as a single sticky PR
+  comment — created once, updated in place by a hidden marker, never duplicated — plus a
+  copy-paste workflow. Advisory by default (exit 0); opt-in gating via the existing
+  `blastRadius.block` convention. Degrades honestly (no index → structural delta only +
+  "run `openlore analyze`"; non-git / unreachable base / unwritable `--out` disclosed,
+  never a crash). The Action activates once a published `openlore` ships `review`.
 - **OpenSpec plugin manifest (marketplace Phase 1)** — OpenLore is the inaugural
   OpenSpec marketplace plugin. It now ships a declarative plugin manifest (the
   `"openspec"` key in `package.json`, vendored schema
@@ -76,6 +88,10 @@ All notable changes to OpenLore are documented here. This project adheres to
   `analyze`, so the old advice "Run `openlore analyze`" failed with "Run `openlore
   init` first." It now advises `openlore init && openlore analyze` (or `openlore
   install` to do it in one step) (#188).
+- **No-key error surfaces the `claude-code` provider** — `generate` / `run` without an
+  API key previously told the user only to set `ANTHROPIC_API_KEY`/etc., never
+  mentioning that the Claude Code CLI (which `openlore doctor` detects) is a no-key
+  provider. The error now points to `generation.provider: "claude-code"` (#188).
 
 ## [2.1.3] - 2026-06-22
 

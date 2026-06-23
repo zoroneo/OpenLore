@@ -14,7 +14,7 @@ the universal `AGENTS.md` fallback) and writes the minimal config needed for eac
 `orient()` before reading source files.
 
 Confirm it worked with `openlore doctor` — it reports your config, index freshness, MCP wiring,
-and search mode, and prints the exact command to fix anything that is missing.
+and LLM/embedding setup, and prints the exact command to fix anything that is missing.
 
 ## Flags
 

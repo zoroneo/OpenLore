@@ -172,7 +172,7 @@ openlore install --no-analyze   # wire surfaces only; build the index later
 openlore install --dry-run      # preview every change without writing
 ```
 
-**Verify it worked:** run `openlore doctor` — it checks your config, index, MCP wiring, and search mode (semantic vs keyword) and tells you exactly what to fix.
+**Verify it worked:** run `openlore doctor` — it checks your config, index, MCP wiring, and LLM/embedding setup, and tells you exactly what to fix.
 
 See [docs/install.md](docs/install.md). The MCP server keeps the index fresh as you edit (file watcher on by default — large build dirs like `target/`, `node_modules/`, `dist/` are pruned automatically; disable entirely with `openlore mcp --no-watch-auto`).
 
