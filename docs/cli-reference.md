@@ -22,7 +22,8 @@
 | `openlore prove --estimate` | Deterministic, graph-derived projection of the orientation tax — no agent, no key | No |
 | `openlore prove --json\|--markdown\|--save` | CI-consumable scorecard / paste-ready block + badge / dated record under `.openlore/prove/` | Matches arm |
 | `openlore decisions` | Manage architectural decisions: list, approve, reject, sync to specs and ADRs | No |
-| `openlore decisions --install-hook` | Install the pre-commit hook that gates commits until decisions are reviewed | No |
+| `openlore decisions --gate` | Pre-commit gate check: exit non-zero if decisions await review (used by the hook) | No |
+| `openlore setup --tools claude` | Install the decisions pre-commit hook (+ skills) that gates commits until decisions are reviewed | No |
 | `openlore run` | Full pipeline: init, analyze, generate | Yes |
 | `openlore view` | Launch interactive graph & spec viewer in the browser | No |
 | `openlore setup` | Install workflow skills into the project (Vibe, Cline, GSD, BMAD, Pi) | No |

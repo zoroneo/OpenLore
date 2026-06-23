@@ -187,6 +187,15 @@ describe('openloreGenerate', () => {
       delete process.env.OPENAI_COMPAT_API_KEY;
       await expect(openloreGenerate({ rootPath: ROOT })).rejects.toThrow(/API key/i);
     });
+
+    it('the no-key error points users to the claude-code provider (no API key needed)', async () => {
+      delete process.env.ANTHROPIC_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.OPENAI_COMPAT_API_KEY;
+      // A user with the Claude Code CLI but no API key must learn the path that works for them.
+      await expect(openloreGenerate({ rootPath: ROOT })).rejects.toThrow(/claude-code/);
+    });
   });
 
   describe('dry run', () => {
