@@ -9,6 +9,29 @@ import type { Cell } from './measure.js';
 
 export type Verdict = 'helps' | 'break-even' | "doesn't help here";
 
+/**
+ * How the scorecard's numbers were produced:
+ * - `measured`  — a real WITH/WITHOUT agent pass (the `claude` arm).
+ * - `estimate`  — a deterministic, graph-derived proxy (no agent, no API key).
+ * - `dry-run`   — synthetic numbers from `--dry-run` (pipeline check only).
+ * The mode travels with every serialized/rendered form so an estimate can never
+ * be mistaken for a measured result (decision 66feae62).
+ */
+export type ProveMode = 'measured' | 'estimate' | 'dry-run';
+
+/** Run-level provenance stamped onto a scorecard at command time. */
+export interface ScorecardMeta {
+  mode: ProveMode;
+  /** ISO-8601 timestamp, stamped by the CLI (not the pure core). */
+  generatedAt: string;
+  /** Short repo SHA the run was measured against, or null if unavailable. */
+  repoSha: string | null;
+  /** Agent model for a measured/dry-run pass; null for an estimate. */
+  model: string | null;
+  /** Number of orientation tasks the scorecard covers. */
+  tasks: number;
+}
+
 export interface Scorecard {
   costWithout: number;
   costWith: number;
@@ -20,7 +43,13 @@ export interface Scorecard {
   correctWith: number;
   freshWithout: number;
   freshWith: number;
-  runsPerArm: number;
+  /**
+   * Independent samples per arm = tasks × runs (each task-run is one agent
+   * invocation). NOT the `--runs` value, which is per-task; divide by
+   * `meta.tasks` for runs-per-task. Named honestly so the JSON contract doesn't
+   * claim "runs" when it means "samples".
+   */
+  samplesPerArm: number;
   verdict: Verdict;
 }
 
@@ -55,7 +84,7 @@ export function computeScorecard(without: Cell, withCell: Cell): Scorecard {
     correctWith: withCell.correctRate,
     freshWithout: without.freshInputTokens,
     freshWith: withCell.freshInputTokens,
-    runsPerArm: Math.min(without.runs, withCell.runs),
+    samplesPerArm: Math.min(without.runs, withCell.runs),
   };
   return { ...base, verdict: verdict(base) };
 }
@@ -63,16 +92,25 @@ export function computeScorecard(without: Cell, withCell: Cell): Scorecard {
 const sign = (n: number): string => (n > 0 ? `+${n}` : `${n}`);
 const pct = (r: number): string => `${Math.round(r * 100)}%`;
 
-/** Render the scorecard as a human-readable block for the terminal. */
-export function renderScorecard(sc: Scorecard, opts: { tasks: number; mock?: boolean }): string {
+/**
+ * Render the scorecard as a human-readable block for the terminal. `mode`
+ * selects the banner and whether the noisy-sample caveat applies (it never does
+ * for a deterministic `estimate`). Back-compat: `mock: true` still forces the
+ * dry-run banner when `mode` is omitted.
+ */
+export function renderScorecard(sc: Scorecard, opts: { tasks: number; mock?: boolean; mode?: ProveMode }): string {
+  const mode: ProveMode = opts.mode ?? (opts.mock ? 'dry-run' : 'measured');
   const lines: string[] = [];
   lines.push('');
   lines.push('  OpenLore — personal token-value scorecard');
   lines.push('  ' + '─'.repeat(48));
-  if (opts.mock) {
+  if (mode === 'dry-run') {
     lines.push('  ⚠ DRY RUN — synthetic numbers, no agent was called. Run without --dry-run for real measurement.');
+  } else if (mode === 'estimate') {
+    lines.push('  ⚠ ESTIMATE — deterministic graph projection, NOT a measured agent run (no API key needed).');
+    lines.push('    Run `openlore prove` (needs `claude` + API key) for a real WITH/WITHOUT measurement.');
   }
-  lines.push(`  Tasks: ${opts.tasks}   Runs/arm: ${sc.runsPerArm}   (WITHOUT vs WITH openlore)`);
+  lines.push(`  Tasks: ${opts.tasks}   Samples/arm: ${sc.samplesPerArm}   (WITHOUT vs WITH openlore)`);
   lines.push('');
   lines.push(`  Cost          $${sc.costWithout.toFixed(3)}  →  $${sc.costWith.toFixed(3)}   (${sign(sc.costDeltaPct)}%)`);
   lines.push(`  Round-trips   ${sc.turnsWithout.toFixed(0)}  →  ${sc.turnsWith.toFixed(0)}   (${sign(sc.turnsDeltaPct)}%)`);
@@ -84,9 +122,138 @@ export function renderScorecard(sc: Scorecard, opts: { tasks: number; mock?: boo
       : sc.verdict === 'break-even' ? '➖ Break-even on this repo'
         : "❌ OpenLore doesn't help here";
   lines.push(`  Verdict: ${verdictLabel}`);
-  if (sc.runsPerArm < 3) {
+  // The small-sample caveat is about LLM noise — irrelevant to a deterministic estimate.
+  if (mode !== 'estimate' && sc.samplesPerArm < 3) {
     lines.push('  (sample is small — LLM runs are noisy; use --runs 4+ for a firmer number)');
   }
   lines.push('');
   return lines.join('\n');
+}
+
+// ── Machine-readable + shareable forms (Spec 25 / add-prove-shareable-scorecard) ──
+
+/**
+ * Stable, documented JSON shape for `openlore prove --json` — an external/CI
+ * contract (decision 581a90bf). `schemaVersion` gates the format; new fields
+ * append without a bump. The key set is asserted in tests so it cannot drift.
+ */
+export interface SerializedScorecard {
+  schemaVersion: 1;
+  mode: ProveMode;
+  generatedAt: string;
+  repo: { sha: string | null };
+  model: string | null;
+  /** Independent samples per arm = tasks × runs (divide by `tasks` for runs-per-task). */
+  samplesPerArm: number;
+  tasks: number;
+  cost: { without: number; with: number; deltaPct: number };
+  roundTrips: { without: number; with: number; deltaPct: number };
+  freshTokens: { without: number; with: number };
+  correctness: { without: number; with: number };
+  verdict: Verdict;
+}
+
+/**
+ * Round to 4 decimals (sub-cent) so the JSON contract carries no float noise,
+ * and coerce a non-finite value (NaN/±Infinity — e.g. if a malformed agent JSON
+ * ever yields a non-numeric cost) to 0 so it never serializes as `null` in a
+ * field the schema declares `number`.
+ */
+export const money = (n: number): number => (Number.isFinite(n) ? Math.round(n * 1e4) / 1e4 : 0);
+
+/** Strip characters that would break a markdown inline-code span / single line. */
+const sanitizeInline = (s: string): string => s.replace(/[\r\n]+/g, ' ').replace(/`/g, "'").trim();
+
+/** Serialize a scorecard + run metadata into the stable `--json` shape. */
+export function serializeScorecard(sc: Scorecard, meta: ScorecardMeta): SerializedScorecard {
+  return {
+    schemaVersion: 1,
+    mode: meta.mode,
+    generatedAt: meta.generatedAt,
+    repo: { sha: meta.repoSha },
+    model: meta.model,
+    samplesPerArm: sc.samplesPerArm,
+    tasks: meta.tasks,
+    cost: { without: money(sc.costWithout), with: money(sc.costWith), deltaPct: sc.costDeltaPct },
+    roundTrips: { without: sc.turnsWithout, with: sc.turnsWith, deltaPct: sc.turnsDeltaPct },
+    freshTokens: { without: sc.freshWithout, with: sc.freshWith },
+    correctness: { without: sc.correctWithout, with: sc.correctWith },
+    verdict: sc.verdict,
+  };
+}
+
+const verdictPhrase = (v: Verdict): string =>
+  v === 'helps' ? 'helps on this repo'
+    : v === 'break-even' ? 'break-even on this repo'
+      : "doesn't help on this repo";
+
+/** Banner that makes an estimate / dry-run impossible to read as a measured result. */
+function modeBanner(mode: ProveMode): string | null {
+  if (mode === 'estimate') {
+    return '> **Estimate — not a measured agent run.** Deterministic, graph-derived projection of the ' +
+      'orientation tax (no API key, no `claude`). Run `openlore prove` for a real WITH/WITHOUT measurement.';
+  }
+  if (mode === 'dry-run') {
+    return '> **Dry run — synthetic numbers, no agent was called.** Run `openlore prove` without `--dry-run` for a real measurement.';
+  }
+  return null;
+}
+
+/**
+ * Paste-ready markdown block matching the README Value Scorecard shape — wins and
+ * losses both shown, honest verdict, plus a shields.io badge line a user can drop
+ * into their own README. Same honest verdict as the terminal render.
+ */
+export function renderScorecardMarkdown(sc: Scorecard, meta: ScorecardMeta): string {
+  const lines: string[] = [];
+  lines.push('## OpenLore — token-value scorecard');
+  lines.push('');
+  const banner = modeBanner(meta.mode);
+  if (banner) { lines.push(banner); lines.push(''); }
+  // Sanitize provenance interpolated into the inline-code spans so a hostile
+  // --model (backtick / newline) can't corrupt the markdown line.
+  const shaNote = meta.repoSha ? ` · repo \`${sanitizeInline(meta.repoSha)}\`` : '';
+  const modelNote = meta.model ? ` · model \`${sanitizeInline(meta.model)}\`` : '';
+  // "generated" is mode-neutral — an estimate is not "measured".
+  lines.push(`_${meta.tasks} task(s) · ${sc.samplesPerArm} sample(s)/arm · generated ${meta.generatedAt}${shaNote}${modelNote}_`);
+  lines.push('');
+  lines.push('| Metric | WITHOUT | WITH | Δ |');
+  lines.push('|---|---|---|---|');
+  lines.push(`| Cost (USD) | $${sc.costWithout.toFixed(3)} | $${sc.costWith.toFixed(3)} | ${sign(sc.costDeltaPct)}% |`);
+  lines.push(`| Round-trips | ${sc.turnsWithout.toFixed(0)} | ${sc.turnsWith.toFixed(0)} | ${sign(sc.turnsDeltaPct)}% |`);
+  lines.push(`| Fresh tokens | ${sc.freshWithout.toFixed(0)} | ${sc.freshWith.toFixed(0)} | — |`);
+  lines.push(`| Correctness | ${pct(sc.correctWithout)} | ${pct(sc.correctWith)} | — |`);
+  lines.push('');
+  const mark = sc.verdict === 'helps' ? '✅' : sc.verdict === 'break-even' ? '➖' : '❌';
+  lines.push(`**Verdict: ${mark} OpenLore ${verdictPhrase(sc.verdict)}.**`);
+  lines.push('');
+  lines.push(scorecardBadgeMarkdown(sc, meta));
+  lines.push('');
+  return lines.join('\n');
+}
+
+/** shields.io colors keyed to the honest verdict. */
+function verdictColor(v: Verdict): string {
+  return v === 'helps' ? '2563eb' : v === 'break-even' ? '9ca3af' : 'ef4444';
+}
+
+/** Encode a shields.io static-badge label/message segment (`-` → `--`, space → `_`). */
+function badgeSegment(s: string): string {
+  return s.replace(/-/g, '--').replace(/_/g, '__').replace(/ /g, '_');
+}
+
+/**
+ * shields.io static badge URL summarizing the run by its headline signal
+ * (round-trips Δ — the most consistent, hardest-to-game metric). Estimate/dry-run
+ * runs are labeled as such in the badge so a shared badge never overclaims.
+ */
+export function scorecardBadgeUrl(sc: Scorecard, meta: ScorecardMeta): string {
+  const label = meta.mode === 'measured' ? 'OpenLore' : `OpenLore (${meta.mode})`;
+  const msg = `round-trips ${sign(sc.turnsDeltaPct)}%`;
+  return `https://img.shields.io/badge/${badgeSegment(label)}-${badgeSegment(msg)}-${verdictColor(sc.verdict)}`;
+}
+
+/** Markdown image for the badge (paste-ready). */
+export function scorecardBadgeMarkdown(sc: Scorecard, meta: ScorecardMeta): string {
+  return `![OpenLore token-value](${scorecardBadgeUrl(sc, meta)})`;
 }

@@ -166,6 +166,87 @@ remove the round-trip**, which dominates on trivial tasks. Honest conclusion: sh
 navigation default; the trivial-lookup loss is not "fixable" without an unreliable skip-heuristic, so
 we don't ship one — `openlore prove` remains the per-repo arbiter.
 
+## `openlore prove` — measure (or estimate) it on YOUR repo
+
+`openlore prove` is the per-repo arbiter the honesty contract points at: rather than trusting our
+numbers, you measure yours. It derives a few orientation tasks from your call graph, runs a WITH/WITHOUT
+agent pass (isolated with `--strict-mcp-config`), and prints cost / round-trips / correctness deltas at
+equal correctness, plus an honest verdict.
+
+| Flag | What you get | Needs API key? |
+|------|--------------|----------------|
+| *(none)* | Measured WITH/WITHOUT scorecard (the agent arm shells out to `claude`) | Yes |
+| `--estimate` | Deterministic, graph-derived **projection** of the orientation tax — no agent, no key | **No** |
+| `--dry-run` | The scorecard shape with clearly-labelled synthetic numbers | No |
+| `--json` | Stable, CI-consumable JSON (`schemaVersion: 1`); pure JSON on stdout | depends on arm |
+| `--markdown` | Paste-ready scorecard block + a shields.io badge for your README | depends on arm |
+| `--save` | Persist a dated scorecard under `.openlore/prove/prove-<date>.json` (non-clobbering) | depends on arm |
+
+Flags compose — e.g. a no-API-key shareable first look with a saved record:
+
+```bash
+openlore prove --estimate --markdown --save
+```
+
+**The `--estimate` arm, and what it does NOT claim.** The estimate projects the *orientation-task* tax
+from your graph: a from-scratch agent spends a search round-trip per task plus reads of the distinct
+files the answers live in, whereas `orient` returns the whole neighbourhood in one call followed by a
+small bounded confirm. Both arms dedup shared reads, so the comparison is fair. It is a deterministic
+proxy with a few documented assumption constants (`src/core/agent-eval/estimate.ts`) — **never** a
+measured agent run, and every output labels it `estimate`. Crucially it **cannot** model whether the
+LLM has already memorised your code (the reason a famous/small repo shows no win in the *measured*
+arm); only `openlore prove` without `--estimate` measures that. Use `--estimate` for an honest,
+zero-cost first look; use the measured arm for the real verdict.
+
+**Honesty in the shareable forms.** `--json`/`--markdown`/`--save` carry the same verdict the terminal
+shows — wins *and* losses — and the badge encodes the round-trips Δ with a verdict-keyed colour. A
+non-measured run is labelled (`OpenLore (estimate)`) in the badge so a shared badge never overclaims.
+
+**No verdict over no data.** Errored agent runs (auth failure, budget exhaustion, unparseable output)
+are dropped from the medians rather than counted as $0/0-turn samples, and if a whole arm has no
+successful run the command **fails loudly** (exit 1) instead of emitting a misleading "break-even" —
+so a fully-failed measured run can never be mistaken for a neutral result by a CI consumer reading the
+`--json` `verdict`.
+
+### JSON output schema for CI
+
+The `--json` shape is stable (`schemaVersion: 1`); CI can gate on the exact, documented shape below.
+The key set is guarded by a test so it cannot drift.
+
+```json
+{
+  "schemaVersion": 1,
+  "mode": "estimate",
+  "generatedAt": "2026-06-22T15:32:12.662Z",
+  "repo": { "sha": "eb9c2d3" },
+  "model": null,
+  "samplesPerArm": 1,
+  "tasks": 3,
+  "cost":        { "without": 0.0081, "with": 0.0063, "deltaPct": -22 },
+  "roundTrips":  { "without": 4,      "with": 2,      "deltaPct": -50 },
+  "freshTokens": { "without": 5700,   "with": 5100 },
+  "correctness": { "without": 1,      "with": 1 },
+  "verdict": "helps"
+}
+```
+
+| Key | Type | Notes |
+|-----|------|-------|
+| `schemaVersion` | `1` | Format version; new fields append without a bump |
+| `mode` | enum | `measured` · `estimate` · `dry-run` — an estimate/dry-run is never a measurement |
+| `generatedAt` | ISO-8601 string | Stamp time |
+| `repo.sha` | string \| null | Short HEAD SHA, or null outside a git repo |
+| `model` | string \| null | Agent model for a measured/dry-run pass; `null` for `--estimate` |
+| `samplesPerArm` | number | **= tasks × runs** (independent samples per arm; divide by `tasks` for runs-per-task) |
+| `tasks` | number | Orientation tasks covered |
+| `cost` / `roundTrips` | `{without, with, deltaPct}` | `deltaPct` is integer % (negative = WITH is cheaper/fewer) |
+| `freshTokens` | `{without, with}` | Median fresh input tokens per arm |
+| `correctness` | `{without, with}` | Rate in `[0,1]` |
+| `verdict` | enum | `helps` · `break-even` · `doesn't help here` (never a win when correctness drops) |
+
+Per-arm/per-task raw metrics are **not** in `--json` stdout; they are persisted only in the `--save`
+artifact's `raw` block.
+
 <!-- BENCH-AGENT:AUTOGEN BELOW — regenerated each run; edit findings ABOVE this line -->
 
 ## Measured run — auto-generated by `npm run bench:agent` (Spec 14)

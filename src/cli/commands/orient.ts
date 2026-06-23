@@ -15,9 +15,11 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from '../../utils/logger.js';
+import { withQuietStdout } from '../../utils/quiet-stdout.js';
 import { handleOrient } from '../../core/services/mcp-handlers/orient.js';
 import { estimateTokens } from '../../core/services/llm-service.js';
 import { OPENLORE_ANALYSIS_REL_PATH } from '../../constants.js';
+import { buildInjection, extractPrompt } from './orient-inject.js';
 
 interface OrientCliOptions {
   task?: string;
@@ -27,6 +29,80 @@ interface OrientCliOptions {
   lean?: boolean;
   json?: boolean;
   metrics?: boolean;
+  inject?: boolean;
+}
+
+/**
+ * Read all of stdin (the hook prompt payload). Resolves '' when stdin is a TTY
+ * (nothing piped). Exported for testing; defaults to `process.stdin`.
+ *
+ * Load-bearing for the "a hook must never hang the user's turn" contract: when
+ * the fallback timer fires (a writer that opened the pipe but never wrote/closed
+ * it), `done()` not only resolves but TEARS DOWN the stream — pausing it,
+ * detaching listeners, and unref-ing the underlying handle — so the process can
+ * exit immediately instead of waiting for an EOF that may never come. Resolving
+ * the promise alone is not enough: a still-referenced, flowing stdin keeps the
+ * event loop alive until the writer closes the pipe.
+ */
+export function readStdin(
+  stream: NodeJS.ReadStream = process.stdin,
+  timeoutMs = 1500,
+): Promise<string> {
+  return new Promise(resolve => {
+    if (stream.isTTY) return resolve('');
+    let data = '';
+    let settled = false;
+    const onData = (chunk: string): void => {
+      data += chunk;
+    };
+    const done = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      stream.removeListener('data', onData);
+      stream.removeListener('end', done);
+      stream.removeListener('error', done);
+      stream.pause();
+      stream.unref?.();
+      resolve(data);
+    };
+    stream.setEncoding('utf8');
+    stream.on('data', onData);
+    stream.on('end', done);
+    stream.on('error', done);
+    // A hook must never hang the user's turn: if stdin neither closes nor errors,
+    // proceed with whatever arrived (typically '' → pointer line) and detach.
+    const timer = setTimeout(done, timeoutMs);
+    timer.unref?.();
+  });
+}
+
+/**
+ * `orient --inject` — task-scoped context injection
+ * (change: add-task-scoped-context-injection). Emits a bounded, attributed,
+ * ignorable orientation block (or a single pointer line) to stdout for a
+ * pre-turn agent hook. Reads the task from --task or the hook's stdin payload.
+ * Always exits 0: a hook must never break the user's turn.
+ */
+async function runInject(directory: string, taskOpt: string | undefined): Promise<void> {
+  let prompt = taskOpt ?? '';
+  if (!prompt) {
+    try {
+      prompt = extractPrompt(await readStdin());
+    } catch {
+      prompt = '';
+    }
+  }
+  try {
+    // Keep stdout clean: handleOrient → validateDirectory writes a "[ok] …"
+    // success line via console.log, which would otherwise pollute the injected
+    // context. Redirect diagnostics to stderr (same discipline as --json mode)
+    // so stdout carries only the orientation block.
+    const block = await withQuietStdout(() => buildInjection(directory, prompt));
+    if (block) console.log(block);
+  } catch {
+    // buildInjection is fail-open, but guard the print path too: never throw.
+  }
 }
 
 /**
@@ -78,30 +154,6 @@ function printPrimer(directory: string, asJson: boolean): void {
   }
 }
 
-/**
- * Run `fn` with console.log/info/warn redirected to stderr, then restore them.
- * handleOrient → validateDirectory writes a "[ok] Successfully validated
- * directory…" line to stdout via logger.success; in --json mode that would
- * corrupt the JSON the wrappers parse. The MCP server applies the same stdout
- * discipline (see startMcpServer). logger.error already uses stderr.
- */
-async function withQuietStdout<T>(fn: () => Promise<T>): Promise<T> {
-  const orig = { log: console.log, info: console.info, warn: console.warn };
-  const toStderr = (...args: unknown[]): void => {
-    process.stderr.write(args.map(a => (typeof a === 'string' ? a : String(a))).join(' ') + '\n');
-  };
-  console.log = toStderr;
-  console.info = toStderr;
-  console.warn = toStderr;
-  try {
-    return await fn();
-  } finally {
-    console.log = orig.log;
-    console.info = orig.info;
-    console.warn = orig.warn;
-  }
-}
-
 /** Concise human-readable rendering of a handleOrient result. */
 function printHuman(result: Record<string, unknown>): void {
   if (result.error) {
@@ -141,6 +193,7 @@ export const orientCommand = new Command('orient')
   .option('--lean', 'Return only the navigation core — drop provenance/change-coupling/insertion-points/specs/decisions enrichment (Spec 27)', false)
   .option('--json', 'Emit the full result as JSON instead of a human-readable summary', false)
   .option('--metrics', 'Report wall time and output size to stderr (opt-in; off by default)', false)
+  .option('--inject', 'Emit a bounded, ignorable task-scoped orientation block for a pre-turn agent hook (reads the task from --task or stdin); always exits 0', false)
   .addHelpText(
     'after',
     `
@@ -158,6 +211,14 @@ prints a short session-start primer (used by the install SessionStart hook).
     const directory = opts.directory ?? process.cwd();
     const asJson = opts.json ?? false;
     const task = opts.task?.trim();
+
+    // Task-scoped injection hook mode: emit a bounded orientation block (or a
+    // pointer line) to stdout and always exit 0 — a pre-turn hook must never
+    // break the user's turn. Reads the task from --task or stdin.
+    if (opts.inject) {
+      await runInject(directory, task);
+      return;
+    }
 
     // No task → session-start primer (keeps the install hook from erroring).
     if (!task) {

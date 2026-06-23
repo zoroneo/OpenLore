@@ -84,6 +84,8 @@ Deep-trace detail — the win scales with codebase size (cost Δ; round-trips WI
 
 > **Honesty contract.** We never publish a savings number the benchmark didn't produce; we always show the loss cases next to the wins; the scorecard is date-stamped and re-measured after each optimization phase. Every public token claim traces to a command you can run in this repo — if it doesn't reproduce, treat it as marketing and call it out.
 
+> **Prove it on your repo — no API key needed.** `openlore prove --estimate` projects the orientation tax from your own call graph in seconds (zero API key, zero network); plain `openlore prove` runs the full measured WITH/WITHOUT pass (needs `claude` + a key). Add `--json` (CI-consumable), `--markdown` (a paste-ready scorecard block + a shields.io badge for your README), or `--save` (a dated record under `.openlore/prove/`). Honest by construction — an estimate is labeled `estimate` everywhere and never presented as a measurement. Details: [docs/AGENT-BENCHMARKS.md](docs/AGENT-BENCHMARKS.md#openlore-prove--measure-or-estimate-it-on-your-repo).
+
 ---
 
 ## Why It Exists
@@ -163,6 +165,7 @@ That single command:
 1. **Auto-detects** which agent surfaces are present (Claude Code, Cursor, Cline, Continue, AGENTS.md) and wires each one to call `orient()` — no manual `CLAUDE.md` editing.
 2. **Registers the MCP server** so it starts automatically when your agent launches (you don't run `openlore mcp` yourself).
 3. **Builds the index** (`init` + `analyze` → a keyword/BM25 graph, no network needed) so `orient()` returns real results in your very first session — no separate `analyze` step.
+4. **Wires task-scoped orientation** (Claude Code): a `UserPromptSubmit` hook runs `orient` against each new prompt and injects a bounded, ignorable orientation block *before* the first turn — so the common task begins already oriented without a manual `orient()` call or a spent tool round-trip. A deterministic relevance gate keeps it out of the small/familiar case (degrading to a one-line pointer); disable with `contextInjection.mode: "off"` in `.openlore/config.json`. See [docs/install.md](docs/install.md#task-scoped-context-injection).
 
 ```bash
 openlore install --no-analyze   # wire surfaces only; build the index later
@@ -529,6 +532,29 @@ The same `federation` preset also exposes a spec-store arc — binding OpenLore 
 
 ---
 
+## OpenSpec plugin (marketplace)
+
+OpenSpec is adding a plugin marketplace so optional, heavyweight "engines" extend it without bloating the core, and **OpenLore is the inaugural engine and reference plugin**. The cold-start path becomes first-class inside OpenSpec — generate specs from existing code, then hand evolution back to core OpenSpec:
+
+```bash
+openspec init
+openspec lore generate      # delegates to OpenLore: code archaeology → specs
+openspec validate --specs   # core OpenSpec takes over
+```
+
+OpenSpec discovers OpenLore by a declarative **plugin manifest** (the `"openspec"` key in OpenLore's `package.json`) and invokes it as a **subprocess** — it never imports OpenLore's code. Inspect or validate that manifest with:
+
+```bash
+openlore plugin-manifest emit --json   # print the manifest (stdout only)
+openlore plugin-manifest validate      # schema + semantic check; exit 0 valid / 1 invalid / 2 not found
+```
+
+> **Two manifests, never confused.** `openlore plugin-manifest` is the OpenSpec *plugin* contract (the marketplace reads it). `openlore manifest` (above) is the unrelated *federation* manifest (`.well-known/openlore.json`). Distinct names, distinct schemas.
+
+Because OpenLore requires Node ≥22.5 while OpenSpec runs on ≥20.19, a delegated `openlore` launched under an unsupported Node **fails fast** with one legible stderr line and a stable exit code (78) — never a stack trace — so the host surfaces a clean failure. Config writes stay confined to OpenLore's own `openlore` key in `openspec/config.yaml`, preserving every host key and comment byte-for-byte. See [docs/OPENSPEC-INTEGRATION.md](docs/OPENSPEC-INTEGRATION.md) for the full contract. (Phase 1; the host loader and curated registry ship in the OpenSpec repo.)
+
+---
+
 ## Documentation
 
 | Topic | Doc |
@@ -578,7 +604,7 @@ The same `federation` preset also exposes a spec-store arc — binding OpenLore 
 
 ## Requirements
 
-- Node.js 22.5+
+- Node.js 22.5+ (launching the CLI under an older Node fails fast with a one-line message and exit code 78, never a stack trace)
 - API key for `generate`, `verify`, and `drift --use-llm`:
   ```bash
   export ANTHROPIC_API_KEY=sk-ant-...    # default provider
@@ -601,7 +627,7 @@ The same `federation` preset also exposes a spec-store arc — binding OpenLore 
 ```bash
 npm install
 npm run build
-npm test          # 2900+ unit tests
+npm test          # 4400+ unit tests
 npm run typecheck
 ```
 

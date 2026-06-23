@@ -93,3 +93,30 @@ An optional `impactCertificate` block declares the **covering surfaces** the cha
 
 A surface is resolved against the indexed graph (plus any symbol the same diff just added). The certificate is advisory by default and decays via the code-anchored freshness lease; when an anchored symbol later moves, `openlore spec-store status` re-fires a persisted certificate as a `certificate-stale` finding.
 
+### Task-scoped context injection
+
+An optional `contextInjection` block controls the per-task orientation that `openlore install` wires as a Claude Code `UserPromptSubmit` hook (`openlore orient --inject`). It runs `orient` against your submitted prompt and places a bounded, ignorable orientation block in context *before the agent's first turn*, so the common task begins already oriented without a manual `orient` call — amortizing the per-task round-trip the [Value Scorecard](AGENT-BENCHMARKS.md) attributes the small/familiar loss case to. Omit the block entirely for the defaults below (injection enabled). See [`openlore install`](install.md#task-scoped-context-injection).
+
+```json
+{
+  "contextInjection": {
+    "mode": "task-scoped",
+    "tokenBudget": 600,
+    "relevanceMinMatches": 2,
+    "relevanceMinFanIn": 2,
+    "relevanceMinScore": 0.3
+  }
+}
+```
+
+| Field | Default | Meaning |
+|-------|:---:|---------|
+| `mode` | `task-scoped` | `task-scoped` enables injection; `off` makes `orient --inject` a no-op (exit 0). Disabling does **not** affect the MCP server or the `SessionStart` primer. |
+| `tokenBudget` | `600` | Hard cap on the injected block, in estimated tokens. The mandatory header + task line is the floor; lower-priority detail (functions → files → call neighbours → specs → tools) is dropped to stay within budget. |
+| `relevanceMinMatches` | `2` | Relevance gate: minimum matched-function count to emit a full block (below it → a one-line pointer). |
+| `relevanceMinFanIn` | `2` | Relevance gate: a match with at least this fan-in (or a hub) clears the gate structurally. |
+| `relevanceMinScore` | `0.3` | Relevance gate: minimum top match score — used **only** on the bounded semantic/hybrid score scale (BM25-fallback scores are corpus-relative and the score path is disabled there). |
+
+The relevance gate is deterministic and never learned: when a task's graph match is weak (the small/familiar/shallow case), injection degrades to a single pointer line rather than taxing a task that needs no orientation. Injection is fail-open — any failure (no graph, parse error, empty/weak match) emits the pointer line and exits 0, so the hook can never break the agent's turn.
+
+> **Without embeddings** (the default keyword/BM25 index) the gate is *structural only* — it uses matched-function count and fan-in/hub centrality, not score. A central function can be matched by spurious keyword overlap, so an off-topic prompt may occasionally still emit a block. Running `openlore analyze --embed` enables the semantic-score path (`relevanceMinScore`), which discriminates relevance far better. The injected block is always explicitly ignorable, so a false positive costs only a few tokens.

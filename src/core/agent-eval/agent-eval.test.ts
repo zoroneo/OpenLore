@@ -5,7 +5,12 @@
 import { describe, it, expect } from 'vitest';
 import { parseAgentJson, summarize, median, type Metrics } from './measure.js';
 import { deriveTasks, scoreAnswer, type GraphFact } from './tasks.js';
-import { computeScorecard, verdict, renderScorecard } from './scorecard.js';
+import {
+  computeScorecard, verdict, renderScorecard,
+  serializeScorecard, renderScorecardMarkdown, scorecardBadgeUrl, money,
+  type Scorecard, type ScorecardMeta,
+} from './scorecard.js';
+import { estimateCells, answerBearingFiles, DEFAULT_ESTIMATE_ASSUMPTIONS } from './estimate.js';
 
 describe('parseAgentJson', () => {
   it('extracts fresh/cached/cost/turns from a claude -p json blob', () => {
@@ -28,6 +33,29 @@ describe('parseAgentJson', () => {
     const m = parseAgentJson(JSON.stringify({ result: 'x' }));
     expect(m.freshInputTokens).toBe(0);
     expect(m.costUsd).toBe(0);
+  });
+
+  it('coerces non-numeric agent fields to 0 (no NaN/Infinity leak into the scorecard)', () => {
+    const m = parseAgentJson(JSON.stringify({
+      result: 'x', total_cost_usd: 'unknown', num_turns: null,
+      usage: { input_tokens: 'oops', cache_read_input_tokens: 'NaN' },
+    }));
+    expect(m.costUsd).toBe(0);
+    expect(m.numTurns).toBe(0);
+    expect(m.freshInputTokens).toBe(0);
+    expect(Number.isFinite(m.costUsd)).toBe(true);
+  });
+});
+
+describe('money() rounding + finite-guard', () => {
+  it('rounds to 4 decimals (sub-cent), stripping float noise', () => {
+    expect(money(0.057999999999999996)).toBe(0.058);
+    expect(money(0.0153)).toBe(0.0153);
+  });
+  it('coerces a non-finite value to 0 (never serializes as null)', () => {
+    expect(money(NaN)).toBe(0);
+    expect(money(Infinity)).toBe(0);
+    expect(money(-Infinity)).toBe(0);
   });
 });
 
@@ -143,9 +171,153 @@ describe('scorecard verdict + render', () => {
 });
 
 describe('verdict (unit)', () => {
-  const base = { costWithout: 0, costWith: 0, turnsWithout: 0, turnsWith: 0, correctWithout: 1, correctWith: 1, freshWithout: 0, freshWith: 0, runsPerArm: 4 };
+  const base = { costWithout: 0, costWith: 0, turnsWithout: 0, turnsWith: 0, correctWithout: 1, correctWith: 1, freshWithout: 0, freshWith: 0, samplesPerArm: 4 };
   it('helps only when both metrics improve', () => {
     expect(verdict({ ...base, costDeltaPct: -10, turnsDeltaPct: -10 })).toBe('helps');
     expect(verdict({ ...base, costDeltaPct: -10, turnsDeltaPct: 0 })).toBe('break-even');
+  });
+});
+
+// ── add-prove-shareable-scorecard ───────────────────────────────────────────
+
+const sc = (over: Partial<Scorecard> = {}): Scorecard => ({
+  costWithout: 0.20, costWith: 0.16, costDeltaPct: -20,
+  turnsWithout: 20, turnsWith: 14, turnsDeltaPct: -30,
+  correctWithout: 1, correctWith: 1, freshWithout: 13000, freshWith: 4000,
+  samplesPerArm: 4, verdict: 'helps', ...over,
+});
+const meta = (over: Partial<ScorecardMeta> = {}): ScorecardMeta => ({
+  mode: 'measured', generatedAt: '2026-06-22T10:00:00.000Z', repoSha: 'abc1234', model: 'sonnet', tasks: 3, ...over,
+});
+
+describe('serializeScorecard (--json contract)', () => {
+  it('has exactly the documented stable key set at version 1', () => {
+    const out = serializeScorecard(sc(), meta());
+    expect(Object.keys(out).sort()).toEqual(
+      ['schemaVersion', 'mode', 'generatedAt', 'repo', 'model', 'samplesPerArm', 'tasks',
+        'cost', 'roundTrips', 'freshTokens', 'correctness', 'verdict'].sort(),
+    );
+    expect(out.schemaVersion).toBe(1);
+    expect(out.cost).toEqual({ without: 0.20, with: 0.16, deltaPct: -20 });
+    expect(out.roundTrips).toEqual({ without: 20, with: 14, deltaPct: -30 });
+    expect(out.repo).toEqual({ sha: 'abc1234' });
+    expect(out.verdict).toBe('helps');
+  });
+
+  it('carries mode + null model for an estimate', () => {
+    const out = serializeScorecard(sc(), meta({ mode: 'estimate', model: null }));
+    expect(out.mode).toBe('estimate');
+    expect(out.model).toBeNull();
+  });
+
+  it('round-trips through JSON unchanged', () => {
+    const out = serializeScorecard(sc(), meta());
+    expect(JSON.parse(JSON.stringify(out))).toEqual(out);
+  });
+});
+
+describe('renderScorecardMarkdown', () => {
+  it('renders the table, honest verdict, and a badge', () => {
+    const md = renderScorecardMarkdown(sc(), meta());
+    expect(md).toContain('| Round-trips | 20 | 14 | -30% |');
+    expect(md).toContain('OpenLore helps on this repo');
+    expect(md).toContain('img.shields.io/badge/');
+    expect(md).not.toContain('Estimate — not a measured'); // measured run: no estimate banner
+  });
+
+  it('shows the estimate banner and never claims measurement for an estimate', () => {
+    const md = renderScorecardMarkdown(sc(), meta({ mode: 'estimate', model: null }));
+    expect(md).toContain('Estimate — not a measured agent run');
+  });
+
+  it('shows losses honestly (no cherry-picking)', () => {
+    const loss = sc({ costDeltaPct: 43, turnsDeltaPct: 38, verdict: "doesn't help here" });
+    const md = renderScorecardMarkdown(loss, meta());
+    expect(md).toContain('+43%');
+    expect(md).toContain("doesn't help on this repo");
+  });
+
+  it('sanitizes a hostile --model (backtick / newline) so the inline-code span cannot be broken', () => {
+    const md = renderScorecardMarkdown(sc(), meta({ model: 'a`b\nc' }));
+    const metaLine = md.split('\n').find(l => l.includes('model'))!;
+    // backticks stripped/replaced and the newline collapsed → the model stays on
+    // one line inside one code span (the line has the opening+closing pair only).
+    expect(metaLine).not.toContain('a`b');
+    expect(md.split('\n').filter(l => l.startsWith('_') || l.includes('· model')).length).toBe(1);
+    expect(metaLine).toContain('model `');
+  });
+});
+
+describe('scorecardBadgeUrl', () => {
+  it('encodes the round-trips signal and the verdict color', () => {
+    const url = scorecardBadgeUrl(sc(), meta());
+    // shields.io escaping: " " → "_", every "-" → "--" (so "-30%" → "--30%").
+    expect(url).toContain('round--trips_--30%');
+    expect(url).toContain('2563eb'); // helps → blue
+  });
+  it('labels non-measured modes in the badge', () => {
+    const url = scorecardBadgeUrl(sc({ verdict: 'break-even' }), meta({ mode: 'estimate' }));
+    expect(url).toContain('OpenLore_(estimate)');
+    expect(url).toContain('9ca3af'); // break-even → grey
+  });
+});
+
+describe('renderScorecard estimate mode', () => {
+  it('shows the estimate banner and suppresses the small-sample LLM caveat', () => {
+    const out = renderScorecard(sc({ samplesPerArm: 1 }), { tasks: 3, mode: 'estimate' });
+    expect(out).toContain('ESTIMATE');
+    expect(out).not.toContain('sample is small');
+  });
+});
+
+describe('estimate arm (deterministic, no agent)', () => {
+  // A connected graph: distinctive hub with 3 callers in distinct files, and a
+  // distinctive fan-out function calling into more files.
+  const facts: GraphFact[] = [
+    { name: 'validateDirectory', filePath: 'src/utils.ts', callerNames: ['handleOrient', 'handleImpact', 'handleDrift'], calleeNames: [], isEntryPoint: false },
+    { name: 'handleOrient', filePath: 'src/orient.ts', callerNames: [], calleeNames: ['validateDirectory', 'readConfig'], isEntryPoint: true },
+    { name: 'handleImpact', filePath: 'src/impact.ts', callerNames: [], calleeNames: [], isEntryPoint: true },
+    { name: 'handleDrift', filePath: 'src/drift.ts', callerNames: [], calleeNames: [], isEntryPoint: true },
+    { name: 'readConfig', filePath: 'src/config.ts', callerNames: ['handleOrient'], calleeNames: [], isEntryPoint: false },
+  ];
+
+  it('answerBearingFiles unions file-path oracles and name→file resolutions', () => {
+    const tasks = deriveTasks(facts);
+    const files = answerBearingFiles(facts, tasks);
+    // locate oracle carries src/utils.ts; caller names resolve to their files.
+    expect(files.has('src/utils.ts')).toBe(true);
+    expect(files.has('src/orient.ts')).toBe(true);
+    expect(files.size).toBeGreaterThan(1);
+  });
+
+  it('produces a WITH arm that is cheaper and fewer round-trips on a connected graph', () => {
+    const tasks = deriveTasks(facts);
+    const cells = estimateCells(facts, tasks)!;
+    expect(cells).not.toBeNull();
+    expect(cells.with.numTurns).toBeLessThan(cells.without.numTurns);
+    expect(cells.with.costUsd).toBeLessThan(cells.without.costUsd);
+    // The estimate holds correctness equal — the tax is effort, not accuracy.
+    expect(cells.with.correctRate).toBe(1);
+    expect(cells.without.correctRate).toBe(1);
+  });
+
+  it('is deterministic (same facts → same cells)', () => {
+    const tasks = deriveTasks(facts);
+    expect(estimateCells(facts, tasks)).toEqual(estimateCells(facts, tasks));
+  });
+
+  it('returns null when there are no tasks', () => {
+    expect(estimateCells(facts, [])).toBeNull();
+  });
+
+  it('caps answer-bearing files so one mega-hub cannot skew the estimate', () => {
+    const many: GraphFact[] = [
+      { name: 'megaHubFunction', filePath: 'src/hub.ts', callerNames: Array.from({ length: 200 }, (_, i) => `caller${i}`), calleeNames: [], isEntryPoint: false },
+      ...Array.from({ length: 200 }, (_, i) => ({ name: `caller${i}`, filePath: `src/c${i}.ts`, callerNames: [], calleeNames: ['megaHubFunction'], isEntryPoint: true })),
+    ];
+    const tasks = deriveTasks(many);
+    const cells = estimateCells(many, tasks)!;
+    // without-turns = nTasks + cappedFiles; capped at maxAnswerFiles + a few tasks.
+    expect(cells.without.numTurns).toBeLessThanOrEqual(DEFAULT_ESTIMATE_ASSUMPTIONS.maxAnswerFiles + tasks.length);
   });
 });

@@ -34,6 +34,7 @@ import { Markdown, Text } from '@earendil-works/pi-tui';
 import { Type, type TObject, type TSchema } from 'typebox';
 
 import { spawn } from 'node:child_process';
+import { openSync, closeSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -380,18 +381,30 @@ async function ensureDaemon(cwd: string): Promise<Daemon | null> {
   const existing = await readDescriptor(cwd);
   if (existing && (await healthy(existing))) return { baseUrl: `http://${existing.host}:${existing.port}`, token: existing.token };
   try {
-    if (process.platform === 'win32') {
-      // shell:true + detached:true applies windowsHide only to cmd.exe, not the node child.
-      // Pass the full command as a single /c string so cmd.exe quotes cwd correctly,
-      // handling both spaces and metacharacters (&|><^) in the project path.
-      // Empty title "" prevents start from consuming the quoted cwd as a window title.
-      const child = spawn('cmd.exe', ['/c', `start "" /b openlore serve --directory "${cwd}"`], { stdio: 'ignore', windowsHide: true });
+    // The daemon must outlive this process and write .openlore/serve.json.
+    // Windows 10 kills a child whose stdout/stderr are NUL (stdio:'ignore') —
+    // it dies before writing the descriptor (Win11 tolerates it). Give it a
+    // real file handle (serve.log) instead; that's the fix validated on Win10.
+    // On Windows we also drop `detached`: it allocates a console window that
+    // windowsHide can't suppress, and Windows doesn't reap the child on parent
+    // exit anyway. macOS/Linux need `detached` (setsid) to outlive us.
+    const isWin = process.platform === 'win32';
+    // shell:true joins args verbatim, so quote the cwd ourselves to survive
+    // spaces / metacharacters in the project path. POSIX has no shell, so the
+    // raw path is passed straight through (quoting would become part of it).
+    const dirArg = isWin ? `"${cwd}"` : cwd;
+    await mkdir(join(cwd, OPENLORE_DIR), { recursive: true });
+    const logFd = openSync(join(cwd, OPENLORE_DIR, 'serve.log'), 'a');
+    try {
+      const child = spawn('openlore', ['serve', '--directory', dirArg], {
+        stdio: ['ignore', logFd, logFd],
+        windowsHide: true,
+        ...(isWin ? { shell: true } : { detached: true }),
+      });
       child.on('error', () => { /* daemon not found — polling loop will time out cleanly */ });
       child.unref();
-    } else {
-      const child = spawn('openlore', ['serve', '--directory', cwd], { detached: true, stdio: 'ignore' });
-      child.on('error', () => { /* daemon not found — polling loop will time out cleanly */ });
-      child.unref();
+    } finally {
+      closeSync(logFd);
     }
   } catch { return null; }
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;

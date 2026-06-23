@@ -9,6 +9,7 @@ import { Command } from 'commander';
 import { mkdir, readFile, writeFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '../../utils/logger.js';
+import { redirectConsoleToStderr } from '../../utils/quiet-stdout.js';
 import { fileExists, formatDuration, parseList, resolveLLMProvider } from '../../utils/command-helpers.js';
 import {
   DEFAULT_DRIFT_MAX_FILES,
@@ -365,6 +366,10 @@ Pre-commit hook:
       return;
     }
 
+    // --json: keep stdout pure (logs → stderr) by construction, matching
+    // orient/verify, so a future logger call in this path can't corrupt the JSON.
+    const restoreStdout = opts.json ? redirectConsoleToStderr() : null;
+
     try {
       // ========================================================================
       // PHASE 0: HOOK MANAGEMENT (early return)
@@ -478,7 +483,8 @@ Pre-commit hook:
             duration: Date.now() - startTime,
             mode: 'static',
           };
-          console.log(JSON.stringify(emptyResult, null, 2));
+          // Straight to stdout so it bypasses the console→stderr redirect.
+          process.stdout.write(JSON.stringify(emptyResult, null, 2) + '\n');
         } else {
           logger.success('No changes detected. Specs are up to date.');
         }
@@ -558,7 +564,8 @@ Pre-commit hook:
       // PHASE 5: DISPLAY RESULTS
       // ========================================================================
       if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
+        // Straight to stdout so it bypasses the console→stderr redirect.
+        process.stdout.write(JSON.stringify(result, null, 2) + '\n');
       } else if (opts.quiet) {
         // Quiet mode: only show the final pass/fail line
         if (result.hasDrift) {
@@ -654,5 +661,7 @@ Pre-commit hook:
         console.error(error);
       }
       process.exitCode = 1;
+    } finally {
+      restoreStdout?.();
     }
   });

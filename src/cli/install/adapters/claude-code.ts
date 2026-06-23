@@ -41,37 +41,51 @@ function mcpEntry(preset?: string): { command: string; args: string[] } {
 }
 
 /**
- * Our SessionStart entry is marked with `_openlore: true` so we can identify
+ * Each OpenLore hook group is marked with `_openlore: true` so we can identify
  * (and replace, or remove on uninstall) just our group without touching any
- * other SessionStart hooks the user may have configured. Claude Code ignores
- * unknown fields on matcher groups.
+ * other hooks the user may have configured. Claude Code ignores unknown fields
+ * on matcher groups.
+ *
+ * Two groups are wired:
+ *   - SessionStart   → whole-repo orientation primer (`orient --json`).
+ *   - UserPromptSubmit → task-scoped injection (`orient --inject`), which runs
+ *     orient against the submitted prompt and injects a bounded, ignorable
+ *     block so the first turn begins already oriented
+ *     (change: add-task-scoped-context-injection).
  */
 const ORIENT_COMMAND = 'npx --yes openlore orient --json';
-const SESSION_HOOK = {
-  matcher: '',
-  _openlore: true,
-  hooks: [
-    {
-      type: 'command',
-      command: ORIENT_COMMAND,
-    },
-  ],
-};
+const INJECT_COMMAND = 'npx --yes openlore orient --inject';
 
-function isOurSessionEntry(entry: unknown): boolean {
+/** The hook keys OpenLore manages, each with its command. */
+const MANAGED_HOOKS: ReadonlyArray<{ key: string; command: string }> = [
+  { key: 'SessionStart', command: ORIENT_COMMAND },
+  { key: 'UserPromptSubmit', command: INJECT_COMMAND },
+];
+
+function ourHookGroup(command: string): Record<string, unknown> {
+  return {
+    matcher: '',
+    _openlore: true,
+    hooks: [{ type: 'command', command }],
+  };
+}
+
+function isOurHookEntry(entry: unknown): boolean {
   if (!entry || typeof entry !== 'object') return false;
   return (entry as Record<string, unknown>)._openlore === true;
 }
 
-function mergeSessionStart(existing: unknown): unknown[] {
+/** Replace our marker-identified group in `existing`, leaving user-authored entries untouched. */
+function mergeOurHook(existing: unknown, command: string): unknown[] {
   const arr = Array.isArray(existing) ? existing : [];
-  const withoutOurs = arr.filter((e) => !isOurSessionEntry(e));
-  return [...withoutOurs, SESSION_HOOK];
+  const withoutOurs = arr.filter((e) => !isOurHookEntry(e));
+  return [...withoutOurs, ourHookGroup(command)];
 }
 
-function stripOurSessionStart(existing: unknown): unknown[] {
+/** Remove our marker-identified group from `existing`, leaving user-authored entries untouched. */
+function stripOurHook(existing: unknown): unknown[] {
   const arr = Array.isArray(existing) ? existing : [];
-  return arr.filter((e) => !isOurSessionEntry(e));
+  return arr.filter((e) => !isOurHookEntry(e));
 }
 
 async function readJsonOrEmpty(path: string): Promise<Record<string, unknown>> {
@@ -229,7 +243,8 @@ export const claudeCodeAdapter: Adapter = {
       await writeFile(mcpPath, mcpAfter, 'utf8');
     }
 
-    // --- 2. SessionStart hook → .claude/settings.json (marker-identified) ---
+    // --- 2. Hooks → .claude/settings.json (marker-identified) ------------------
+    // SessionStart (whole-repo primer) + UserPromptSubmit (task-scoped injection).
     const settingsPath = join(ctx.root, SETTINGS_PATH);
     const rawSettings = await readRawOrNull(settingsPath);
     const had = rawSettings != null;
@@ -237,21 +252,17 @@ export const claudeCodeAdapter: Adapter = {
 
     // Migrate away the legacy mcpServers.openlore + meta a prior version wrote
     // here (settings.json is never read for MCP). removeManaged strips the
-    // managed paths (mcpServers.openlore) and our top-level meta; SessionStart
-    // is identified separately by its `_openlore: true` marker, so it survives.
+    // managed paths (mcpServers.openlore) and our top-level meta; our hook groups
+    // are identified separately by their `_openlore: true` marker, so they survive.
     const migrated = removeManaged(existing);
     const base = migrated.removed ? migrated.next : existing;
 
-    const currentSessionStart =
-      ((base.hooks as Record<string, unknown>)?.SessionStart as unknown) ?? [];
-    const nextSessionStart = mergeSessionStart(currentSessionStart);
-
     const next = structuredClone(base) as Record<string, unknown>;
     if (!next.hooks || typeof next.hooks !== 'object') next.hooks = {};
-    (next.hooks as Record<string, unknown>).SessionStart = nextSessionStart;
+    const nextHooks = next.hooks as Record<string, unknown>;
 
     // Edit only what we manage: drop any legacy meta / mis-placed mcpServers.openlore (settings.json
-    // is never read for MCP), and set our marker-identified SessionStart group. Everything else in the
+    // is never read for MCP), and set each marker-identified hook group. Everything else in the
     // user's settings.json is preserved byte-for-byte.
     const settingsEdits: JsonPathEdit[] = [];
     if ('_openlore' in existing) settingsEdits.push({ path: ['_openlore'], value: undefined });
@@ -263,7 +274,11 @@ export const claudeCodeAdapter: Adapter = {
           : { path: ['mcpServers', 'openlore'], value: undefined },
       );
     }
-    settingsEdits.push({ path: ['hooks', 'SessionStart'], value: nextSessionStart });
+    for (const { key, command } of MANAGED_HOOKS) {
+      const merged = mergeOurHook((base.hooks as Record<string, unknown>)?.[key], command);
+      nextHooks[key] = merged;
+      settingsEdits.push({ path: ['hooks', key], value: merged });
+    }
 
     const changed = JSON.stringify(existing) !== JSON.stringify(next);
     const before = had ? (rawSettings ?? '') : '';
@@ -272,10 +287,10 @@ export const claudeCodeAdapter: Adapter = {
       path: settingsPath,
       kind: !had ? 'create' : !changed ? 'noop' : 'update',
       summary: !had
-        ? `create ${SETTINGS_PATH} with SessionStart hook`
+        ? `create ${SETTINGS_PATH} with SessionStart + UserPromptSubmit hooks`
         : !changed
           ? `${SETTINGS_PATH}: already up to date`
-          : `update SessionStart hook in ${SETTINGS_PATH}`,
+          : `update SessionStart + UserPromptSubmit hooks in ${SETTINGS_PATH}`,
       preview: !had
         ? previewCreate(settingsPath, after)
         : !changed
@@ -374,23 +389,30 @@ export const claudeCodeAdapter: Adapter = {
     } catch {
       return md;
     }
-    // Strip our SessionStart entry (identified by the `_openlore` marker, not by
-    // the managed-paths meta). Build the removal as format-preserving path edits AND mutate a
-    // copy to decide noop / file-now-empty, so the user's other settings stay byte-identical.
+    // Strip our hook entries (SessionStart + UserPromptSubmit, each identified by
+    // the `_openlore` marker, not by the managed-paths meta). Build the removal as
+    // format-preserving path edits AND mutate a copy to decide noop / file-now-empty,
+    // so the user's other settings stay byte-identical.
     let changed = false;
     const removalEdits: JsonPathEdit[] = [];
     const hooksObj = parsed.hooks as Record<string, unknown> | undefined;
-    if (hooksObj && Array.isArray(hooksObj.SessionStart)) {
-      const filtered = stripOurSessionStart(hooksObj.SessionStart);
-      if (filtered.length !== hooksObj.SessionStart.length) changed = true;
-      if (filtered.length === 0) {
-        removalEdits.push({ path: ['hooks', 'SessionStart'], value: undefined });
-        if (Object.keys(hooksObj).length === 1) removalEdits.push({ path: ['hooks'], value: undefined });
-        delete hooksObj.SessionStart;
-        if (Object.keys(hooksObj).length === 0) delete parsed.hooks;
-      } else {
-        removalEdits.push({ path: ['hooks', 'SessionStart'], value: filtered });
-        hooksObj.SessionStart = filtered;
+    if (hooksObj) {
+      for (const { key } of MANAGED_HOOKS) {
+        if (!Array.isArray(hooksObj[key])) continue;
+        const original = hooksObj[key] as unknown[];
+        const filtered = stripOurHook(original);
+        if (filtered.length !== original.length) changed = true;
+        if (filtered.length === 0) {
+          removalEdits.push({ path: ['hooks', key], value: undefined });
+          delete hooksObj[key];
+        } else {
+          removalEdits.push({ path: ['hooks', key], value: filtered });
+          hooksObj[key] = filtered;
+        }
+      }
+      if (Object.keys(hooksObj).length === 0) {
+        removalEdits.push({ path: ['hooks'], value: undefined });
+        delete parsed.hooks;
       }
     }
 

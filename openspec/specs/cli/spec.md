@@ -436,6 +436,30 @@ The system SHALL expose the navigation preset as the default MCP tool surface an
 
 > Decision recorded: a6c916ed
 > Date: 2026-06-22
+### Requirement: SerializeTheProveScorecardAsVersionedStablekeyedJson
+
+The system SHALL serialize the prove scorecard as a versioned JSON object with a stable key set so that external tooling and CI pipelines can consume and gate on it.
+
+> Decision recorded: 581a90bf
+> Date: 2026-06-22
+### Requirement: PersistProveScorecardsAsDatedNonclobberingFilesUnderOpenloreprove
+
+The system SHALL persist prove scorecards as dated, non-clobbering JSON files under .openlore/prove/ when invoked with --save.
+
+> Decision recorded: 670b5f0b
+> Date: 2026-06-22
+### Requirement: ComputeTheProveEstimateArmAsADeterministicGraphderivedProxyLabeledNevermeasured
+
+The system SHALL compute a deterministic, graph-derived estimate scorecard when invoked with prove --estimate, clearly labeled as never-measured.
+
+> Decision recorded: 66feae62
+> Date: 2026-06-22
+### Requirement: ProveSavescorecardWritesAtomicallyWxAndDegradesFsErrorsInsteadOfCrashing
+
+The system SHALL write prove scorecards atomically with O_CREAT|O_EXCL and degrade filesystem errors to stderr + exit 1 without discarding the printed scorecard.
+
+> Decision recorded: dfe33d94
+> Date: 2026-06-23
 
 ## Technical Notes
 
@@ -733,3 +757,161 @@ Adversarial e2e on the default-to-lean-tool-surface change (a6c916ed) found four
 jsonc-parser modify() throws when indexing into a non-container parent (e.g. mcpServers is a string/number/null/array instead of an object). Since mergeEntries already coerces the non-object value to {} and produces the correct nextObject, serializeManaged wraps the format-preserving path in try/catch and falls back to JSON.stringify(nextObject) — the same fresh-write path used for unparseable files. This trades formatting preservation (only in the hostile case) for never crashing or half-installing.
 
 **Consequences:** A malformed/hostile .mcp.json no longer crashes install mid-flight; the OpenLore server is wired correctly (exit 0) and existing content is reconstructed from the merged object. Formatting is preserved in every normal case; only the previously-crashing non-container-parent case loses byte-exact formatting.
+
+### Requirement: OrientInjectMode
+
+The system SHALL provide an `--inject` mode on the `openlore orient` command that emits an
+injection-shaped orientation block for a single task. The task SHALL be taken from `--task` when
+present, otherwise read from the command's stdin (the prompt payload a pre-turn agent hook supplies).
+The emitted block SHALL reuse the lean orientation output (Spec 27), SHALL be bounded by a documented
+token budget, SHALL be clearly attributed to OpenLore, and SHALL open with a one-line statement that
+it is informational and may be ignored (the same facts-not-coercion posture as the Epistemic Lease,
+decision `8e95746d`). The mode SHALL be deterministic with no LLM. Any failure — missing graph, parse
+error, empty match, or empty prompt — SHALL degrade to a single pointer line and exit 0, so a hook
+that invokes it can never break the user's turn.
+
+> Implemented by `add-task-scoped-context-injection` (2026-06-22). `orient --inject` reuses
+> `handleOrient(lean=true)`; stdin is parsed for a Claude Code `UserPromptSubmit` JSON payload
+> (`.prompt`) or treated as raw text. stdout is kept clean (diagnostics → stderr) so only the block
+> is injected. Default budget 600 tokens. Verified e2e on this repo: strong match emits the block at
+> exit 0, no-graph/empty prompt emit the pointer line at exit 0. Adds no MCP tool. Decisions:
+> `27c4bb53`, `0fc964d3`.
+
+#### Scenario: Inject emits a budgeted, ignorable block for a real task
+
+- **GIVEN** an analyzed repository and a task supplied via `--task`
+- **WHEN** `openlore orient --inject` runs
+- **THEN** it emits a lean, OpenLore-attributed orientation block that opens with an
+  informational/ignorable framing line and does not exceed the configured token budget
+
+#### Scenario: Inject never breaks the turn
+
+- **GIVEN** a repository with no analysis graph
+- **WHEN** `openlore orient --inject` runs from a hook
+- **THEN** it emits a single pointer line indicating OpenLore is available and exits 0, emitting no
+  error to the harness
+
+### Requirement: OrientationRelevanceGate
+
+The `--inject` mode SHALL compute a deterministic, local orientation-relevance signal from the
+orientation result — the matched-function count, the fan-in / hub centrality of the matches, and
+(only on the bounded semantic/hybrid score scale) the top match score — and SHALL compare it to a
+documented threshold. When the signal is at or above the threshold, `--inject` SHALL emit the full
+orientation block; when below it, `--inject` SHALL emit only a single pointer line. The threshold and
+its inputs SHALL be documented and overridable in repository configuration, and SHALL never be
+learned or LLM-derived.
+
+> Implemented by `add-task-scoped-context-injection` (2026-06-22). The gate passes when matched-count
+> ≥ `relevanceMinMatches` (default 2) AND there is structural centrality (a match with fan-in ≥
+> `relevanceMinFanIn` (default 2), or a hub) — or, only on the bounded semantic/hybrid score scale, a
+> top score ≥ `relevanceMinScore` (default 0.3). BM25-fallback scores are corpus-relative and
+> unbounded, so the score path is disabled there and the gate relies on count + centrality. Decision:
+> `0fc964d3`.
+
+#### Scenario: A weak-orientation task gates down to a pointer
+
+- **GIVEN** a task whose graph match is sparse or low-scoring (the small/familiar/shallow case)
+- **WHEN** `openlore orient --inject` runs
+- **THEN** it emits only the single pointer line, not a full orientation block
+
+#### Scenario: A strong-orientation task emits the full block
+
+- **GIVEN** a deep task with a strong, high-fan-in graph match
+- **WHEN** `openlore orient --inject` runs
+- **THEN** it emits the full lean orientation block within budget
+
+### Requirement: TaskScopedInjectionInstallWiring
+
+`openlore install` SHALL wire, in addition to the existing whole-repo `SessionStart` orientation hook,
+a task-scoped first-prompt injection hook for each agent adapter that exposes a pre-turn hook
+mechanism (for Claude Code, a `UserPromptSubmit` hook running `openlore orient --inject`). The wired
+group SHALL be marker-identified (`_openlore: true`) so re-running install replaces only the OpenLore
+group in place — a stale OpenLore group self-heals to the current command and re-install never
+duplicates it — while user-authored sibling hooks are left byte-identical. (Unlike the fingerprinted
+managed paths in `CLAUDE.md` and `.mcp.json`, the marker-identified hook group carries no fingerprint
+and is not hand-edit-protected: edits inside the OpenLore group are overwritten on the next install by
+design.) `--uninstall` SHALL remove the group cleanly, deleting now-empty parent objects and the file
+when it was OpenLore-only. `--dry-run` SHALL preview the change. Adapters with no pre-turn hook
+mechanism SHALL fall back to the existing instruction block without error. The wiring SHALL preserve
+the user's other configuration byte-for-byte (merge-not-clobber, decision `df27e8ef`).
+
+> Implemented by `add-task-scoped-context-injection` (2026-06-22). The claude-code adapter generalizes
+> its SessionStart merge/strip helpers over both hook keys (`SessionStart`, `UserPromptSubmit`).
+> Cursor/Cline/Continue/AGENTS.md have no settings/hook channel and keep the instruction-block
+> fallback. Verified e2e: install wires both marker-identified groups, re-install is byte-identical,
+> uninstall removes both and deletes an OpenLore-only file. Decision: `1d35a27b`.
+
+#### Scenario: Install wires task-scoped injection idempotently
+
+- **GIVEN** a project with Claude Code present
+- **WHEN** `openlore install` runs, then runs again
+- **THEN** a single marker-identified `UserPromptSubmit` OpenLore group is present after both runs, and
+  any user-authored hooks are left byte-identical
+
+#### Scenario: Uninstall removes task-scoped injection
+
+- **GIVEN** a project where `openlore install` wired the task-scoped injection hook
+- **WHEN** `openlore install --uninstall` runs
+- **THEN** the OpenLore `UserPromptSubmit` group is removed, empty parents are pruned, and the file is
+  deleted only if it held nothing but OpenLore entries
+
+### Requirement: ContextInjectionOptOut
+
+The system SHALL read a repository configuration switch controlling task-scoped context injection
+(default: enabled), and when injection is disabled `openlore orient --inject` SHALL emit nothing and
+exit 0. Disabling injection SHALL NOT affect the MCP server registration or the `SessionStart` primer.
+The injected block's data SHALL never exceed the configured token budget regardless of match size
+(detail lines are added only while they fit); the small fixed framing floor — the attribution header
+and the task line, which must always be present for the block to be safely attributable and ignorable
+— is exempt, so a pathologically small budget yields just that floor.
+
+> Implemented by `add-task-scoped-context-injection` (2026-06-22). Read from
+> `.openlore/config.json` `contextInjection.mode` (`task-scoped` default | `off`); `tokenBudget`
+> caps the block. Verified e2e: `mode: "off"` yields empty stdout at exit 0; a custom small budget
+> drops lower-priority detail to stay within cap. Decision: `27c4bb53`.
+
+#### Scenario: Injection can be turned off without disabling the rest
+
+- **GIVEN** a repository configured with context injection disabled
+- **WHEN** `openlore orient --inject` runs
+- **THEN** it emits nothing and exits 0, while the MCP server and SessionStart primer remain wired
+
+### Serialize the prove scorecard as versioned, stable-keyed JSON
+
+**Status:** Approved
+**Date:** 2026-06-22
+**ID:** 581a90bf
+
+`openlore prove --json` is an external/CI contract; a schemaVersion + fixed key set lets tooling consume and gate on it, and a guard test keeps the keys from drifting. Reuses the existing Scorecard object from computeScorecard rather than a parallel shape.
+
+**Consequences:** Adds a SerializedScorecard type + serializeScorecard() in scorecard.ts; the key set is asserted in tests; future fields append without breaking the version.
+
+### Persist prove scorecards as dated, non-clobbering files under .openlore/prove/
+
+**Status:** Approved
+**Date:** 2026-06-22
+**ID:** 670b5f0b
+
+The honesty contract is "date-stamped and re-measured after each optimization phase"; persisting under .openlore/prove/prove-<ISO>.json makes results keepable and diffable on the user's own repo without clobbering prior runs.
+
+**Consequences:** prove --save writes serialized scorecard + raw metrics; repeated saves on the same day get a uniqueness suffix; .openlore/prove/ is a new output dir under the existing .openlore root.
+
+### Compute the prove --estimate arm as a deterministic graph-derived proxy, labeled never-measured
+
+**Status:** Approved
+**Date:** 2026-06-22
+**ID:** 66feae62
+
+An API-key-less first-touch user needs a real, honest signal. The estimate counts the distinct answer-bearing files the auto-derived orientation tasks span (from-scratch reads) versus one orient call, with a few named, documented assumption constants. It must never be presented as a measured agent run.
+
+**Consequences:** Adds estimate.ts (pure, deterministic) producing WITH/WITHOUT Cells fed to computeScorecard with mode=estimate; renderers carry an unmistakable estimate label; assumptions are named constants, not hidden tuning.
+
+### prove saveScorecard writes atomically (wx) and degrades fs errors instead of crashing
+
+**Status:** Approved
+**Date:** 2026-06-23
+**ID:** dfe33d94
+
+Round-3 adversarial QA found two saveScorecard defects: an existsSync-then-write loop raced under concurrency and silently overwrote a prior run (violating the documented non-clobber guarantee), and .openlore/prove existing as a file made mkdirSync throw an unhandled stack-trace crash that discarded the computed scorecard. Fix: pick the non-clobbering name atomically via O_CREAT|O_EXCL (writeFileSync flag wx), advancing the suffix on EEXIST; and wrap the save call so any filesystem error degrades to a clear stderr message + exit 1 while the scorecard is still printed.
+
+**Consequences:** Concurrent --save calls never clobber; a filesystem failure never crashes the process. Docs (cli-reference, AGENT-BENCHMARKS, --json schema) aligned with shipped behavior. Refines the prove persistence decision (670b5f0b).
