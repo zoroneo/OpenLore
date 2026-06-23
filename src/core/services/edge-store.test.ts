@@ -42,6 +42,28 @@ describe('EdgeStore', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  describe('incremental-closure hot-path infra (fix-transitive-incremental-staleness)', () => {
+    it('indexes edges(callee_name) so consumer lookups are not full scans', () => {
+      const raw = new DatabaseSync(dbPath);
+      try {
+        const idx = raw.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_callee_name'").get();
+        expect(idx).toBeDefined();
+        const plan = raw.prepare(
+          "EXPLAIN QUERY PLAN SELECT DISTINCT caller_file FROM edges WHERE callee_name='bar' AND confidence='import'",
+        ).all() as Array<{ detail: string }>;
+        expect(plan.some((p) => /USING INDEX idx_callee_name/.test(p.detail))).toBe(true);
+      } finally {
+        raw.close();
+      }
+    });
+
+    it('getNameOnlyConsumers returns the current callee id (for the prune comparison)', () => {
+      // edgeCA: src/c.ts::baz -> src/a.ts::foo, confidence name_only, callee_name 'foo'.
+      const consumers = store.getNameOnlyConsumers('foo');
+      expect(consumers).toEqual([{ file: 'src/c.ts', calleeId: 'src/a.ts::foo' }]);
+    });
+  });
+
   describe('schema-bump wipe (wasReset)', () => {
     it('a current-version store reports wasReset === false', () => {
       expect(store.wasReset).toBe(false);

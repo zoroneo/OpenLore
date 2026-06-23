@@ -3,7 +3,11 @@
 | Command | Description | API Key |
 |---------|-------------|---------|
 | `openlore init` | Initialize configuration | No |
+| `openlore install` | One-command setup: wire agent surfaces (lean `navigation` MCP + hooks) and build the index | No |
+| `openlore connect [agent]` | Wire a specific coding agent to the MCP server + hooks | No |
 | `openlore analyze` | Run static analysis | No |
+| `openlore orient` | Relevant functions, callers, specs, and insertion points for a task (the flagship) | No |
+| `openlore orient --inject` | Emit a bounded, ignorable task-scoped orientation block for a pre-turn hook | No |
 | `openlore generate` | Generate specs from analysis | Yes |
 | `openlore generate --adr` | Also generate Architecture Decision Records | Yes |
 | `openlore verify` | Verify spec accuracy | Yes |
@@ -11,14 +15,15 @@
 | `openlore drift --use-llm` | Detect spec drift (LLM-enhanced) | Yes |
 | `openlore drift --suggest-tests` | After drift, list test files covering affected domains | No |
 | `openlore audit` | Report spec coverage gaps: uncovered functions, hub gaps, stale domains | No |
-| `openlore test` | Generate spec-driven tests (Vitest / Playwright / pytest / GTest / Catch2) | No |
-| `openlore test --coverage` | Report which spec scenarios have corresponding tests | No |
+| `openlore test` | Report spec test coverage (scan test files for `// openlore:` annotation tags) | No |
+| `openlore test --min-coverage <n>` | Fail when effective spec coverage is below N% (CI gate) | No |
 | `openlore digest` | Plain-English summary of all specs for human review | No |
 | `openlore prove` | Measure OpenLore's token value on your repo (WITH vs WITHOUT agent pass) | Yes |
 | `openlore prove --estimate` | Deterministic, graph-derived projection of the orientation tax — no agent, no key | No |
 | `openlore prove --json\|--markdown\|--save` | CI-consumable scorecard / paste-ready block + badge / dated record under `.openlore/prove/` | Matches arm |
 | `openlore decisions` | Manage architectural decisions: list, approve, reject, sync to specs and ADRs | No |
-| `openlore decisions --install-hook` | Install the pre-commit hook that gates commits until decisions are reviewed | No |
+| `openlore decisions --gate` | Pre-commit gate check: exit non-zero if decisions await review (used by the hook) | No |
+| `openlore setup --tools claude` | Install the decisions pre-commit hook (+ skills) that gates commits until decisions are reviewed | No |
 | `openlore run` | Full pipeline: init, analyze, generate | Yes |
 | `openlore view` | Launch interactive graph & spec viewer in the browser | No |
 | `openlore setup` | Install workflow skills into the project (Vibe, Cline, GSD, BMAD, Pi) | No |
@@ -32,6 +37,13 @@
 | `openlore serve` | Start a warm local HTTP daemon exposing tools (loopback, for Pi / editors) | No |
 | `openlore doctor` | Check environment and configuration for common issues | No |
 | `openlore refresh-stories` | Refresh story files with latest structural context after each commit | No |
+| `openlore blast-radius` | Pre-flight structural blast-radius briefing for the current diff (advisory; `--install-hook` for a pre-commit hook) | No |
+| `openlore review` | Deterministic structural PR review (structural delta + blast radius) as a Markdown/JSON briefing; pairs with the bundled GitHub Action | No |
+| `openlore preflight` | CI staleness gate: fail when the analysis graph is stale relative to the working tree | No |
+| `openlore export scip` | Export the analysis graph as an SCIP index for the Sourcegraph / Glean ecosystem | No |
+| `openlore telemetry` | Analyze EpistemicLease cognitive-load telemetry | No |
+| `openlore panic-*` | Agent behavioral-governance ("panic") commands — `panic-check`/`panic-level`/`panic-validate`/`panic-hotspots`/`panic-calibrate`/`panic-replay`. Opt-in, off by default; install hooks via `openlore setup --hooks` | No |
+| `openlore gryph-watch` | Background Gryph behavioral observer (opt-in; install via `openlore setup --hooks`) | No |
 
 ### Global Options
 
@@ -48,6 +60,81 @@ Generate-specific options:
 ```bash
 --model <name>         # Override LLM model (e.g. gpt-4o-mini, llama3.2)
 ```
+
+### Orient Options
+
+```bash
+openlore orient [options]
+
+  --task <task>          # Natural-language task (e.g. "add rate limiting")
+  --directory <path>     # Project directory to orient in (default: cwd)
+  --limit <n>            # Number of relevant functions to return (default: 5)
+  --token-budget <n>     # Cap relevantFunctions to ~this many tokens
+  --lean                 # Return only the navigation core (drop heavier sections)
+  --json                 # Emit the full result as JSON instead of the human view
+  --metrics              # Report wall time + output size to stderr (opt-in)
+  --inject               # Emit a bounded, ignorable task-scoped orientation block
+                         #   for a pre-turn agent hook; reads the task from --task
+                         #   or stdin. Fail-open: any failure degrades to a single
+                         #   pointer line at exit 0 (see docs/install.md).
+```
+
+With no `--task`, `orient` prints a session-start primer. Requires `openlore analyze`
+to have run at least once.
+
+### Install Options
+
+```bash
+openlore install [options]   # detect agents, wire surfaces, build the index
+
+  --agent <name>         # Limit to one surface: claude-code, cursor, cline,
+                         #   continue, agents-md
+  --preset <name>        # MCP tool preset to wire: navigation (lean default),
+                         #   minimal, memory, verify, federation, or full
+  --all-tools            # Wire the full 62-tool surface (alias of --preset full)
+  --dry-run              # Print planned changes without writing any files
+  --force                # Overwrite OpenLore-managed blocks even if hand-edited
+  --uninstall            # Remove OpenLore-managed blocks and entries
+  --no-analyze           # Configure surfaces only; skip init + analyze
+```
+
+### Connect Options
+
+```bash
+openlore connect [agent] [options]   # wire ONE agent (no index build by default)
+openlore connect remove [agent]      # disconnect that agent
+
+  <agent>                # Positional: claude-code | cursor | cline | continue |
+                         #   agents-md (omit for an interactive picker)
+  --preset <name>        # MCP tool preset to wire (same names as install)
+  --all-tools            # Wire the full 62-tool surface (alias of --preset full)
+  --dry-run              # Print planned changes without writing any files
+  --force                # Overwrite OpenLore-managed blocks even if hand-edited
+  --no-analyze           # Configure surfaces only; do not build the index
+```
+
+`connect` takes the agent as a positional argument (`openlore connect cursor`), not
+`--agent`, and disconnects via the `remove` subcommand rather than `--uninstall`.
+
+A bare `openlore install` wires the lean `navigation` surface (10 tools) and, for
+Claude Code, both a `SessionStart` primer hook and a `UserPromptSubmit` task-scoped
+injection hook. Restore the prior all-tools default with `--preset full`.
+
+### MCP Server Options
+
+```bash
+openlore mcp [options]             # start the stdio MCP server
+
+  --preset <name>        # Expose a named preset (default: lean navigation, 10 tools)
+  --minimal              # Expose only the core 6 governance tools
+  --all-tools            # Expose the full surface — all 62 tools (alias --preset full)
+  --watch-auto           # Auto-detect + incrementally re-index the project dir
+  --no-watch-auto        # Disable auto-watch (use for one-shot tool calls)
+  --daemon               # Delegate tool calls to a shared `openlore serve` daemon
+```
+
+When the lean default is active, the server advertises the opt-in presets once via
+the MCP `initialize` `instructions` channel (no extra tool schemas).
 
 ### Drift Options
 
@@ -208,7 +295,7 @@ Checks performed:
 
 | Check | What it looks for |
 |-------|------------------|
-| Node.js version | ≥ 20 required |
+| Node.js version | ≥ 22.5 required (`node:sqlite`) |
 | Git repository | `.git` directory and `git` binary on PATH |
 | openlore config | `.openlore/config.json` exists and is parseable |
 | Analysis artifacts | `repo-structure.json` freshness (warns if >24h old) |
@@ -217,6 +304,49 @@ Checks performed:
 | Disk space | Warns < 500 MB, fails < 200 MB |
 
 Run `openlore doctor` whenever setup instructions aren't working — it tells you exactly what to fix and how.
+
+### PR review (`openlore review`)
+
+`openlore review` composes the structural delta (`structural_diff`) and the blast radius
+(`computeBlastRadius` — hubs, layers, tests to run, and the spec/memory/decision drift the change
+introduces) for a `base..head` range into **one deterministic, conclusion-shaped briefing** — no LLM,
+no new MCP tool. It is the same distinctive structural output OpenLore already produces, rendered for a
+human reviewer and bundled as a GitHub Action that posts it as one sticky PR comment.
+
+```bash
+openlore review                                  # markdown briefing for the current diff (auto-detected base)
+openlore review --base main --head HEAD          # explicit range
+openlore review --format json                    # machine-readable briefing on stdout
+openlore review --out review.md                  # write the markdown to a file (used by the Action)
+openlore review --hook                           # honor blastRadius.block and fail on a configured pattern
+```
+
+| Option | Description |
+|--------|-------------|
+| `--base <ref>` | Base ref to compare against (default: auto-detected — requested → `main` → `master` → `HEAD~1`) |
+| `--head <ref>` | Head ref (default: working tree). Blast radius is computed against the working tree; in CI the runner checks out the head SHA so they align (a caveat is printed when an explicit `--head` could differ) |
+| `--format <fmt>` | `markdown` (default, for PR comments) or `json` (programmatic consumers); unknown value exits 2 |
+| `--out <path>` | Write the briefing to a file instead of stdout |
+| `--hook` | Opt-in gating: exit non-zero when a configured `.openlore/config.json` `blastRadius.block` pattern fires. Advisory (exit 0) otherwise |
+
+Advisory by default — it informs, it never fails the check. Degrades honestly: with no analysis index
+it shows the structural delta and says "run `openlore analyze`"; a non-git directory or unreachable
+base is disclosed rather than emitted as a misleading empty briefing. The structural delta works
+without an index (it builds the old/new graphs from just the changed files).
+
+**GitHub Action.** The repo ships `.github/actions/openlore-review` (composite action: checkout →
+`openlore analyze` → `openlore review` → one sticky comment matched by a hidden `<!-- openlore-review -->`
+marker, created once and updated in place — duplicate-proof via paginated comment lookup) and a
+copy-paste workflow (`.github/workflows/openlore-review.yml.example`). Adoption is one file; it needs a
+full-history checkout (`fetch-depth: 0`) and `pull-requests: write` permission. The Action runs
+`npx openlore@<version>`, so it activates once a **published** `openlore` ships `review` (until then it
+no-ops gracefully — no comment, the check stays green). Advisory by default; gate mode fails the job
+**only** when the briefing was produced and a configured `blastRadius.block` pattern fired (a missing
+`openlore`/`review` or an unreachable range never produces a false-positive red check). A comment-post
+failure never fails the check either: on a **fork PR** GitHub gives `pull_request` a read-only token, so
+the comment can't be posted for external contributors — the Action warns and leaves the briefing in the
+job log (use `pull_request_target`, with its security trade-offs, if you need the comment on fork PRs).
+The briefing is always clamped to GitHub's 65,536-char comment limit.
 
 ### Federation (multi-repo)
 

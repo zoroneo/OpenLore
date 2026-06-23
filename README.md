@@ -172,6 +172,8 @@ openlore install --no-analyze   # wire surfaces only; build the index later
 openlore install --dry-run      # preview every change without writing
 ```
 
+**Verify it worked:** run `openlore doctor` — it checks your config, index, MCP wiring, and LLM/embedding setup, and tells you exactly what to fix.
+
 See [docs/install.md](docs/install.md). The MCP server keeps the index fresh as you edit (file watcher on by default — large build dirs like `target/`, `node_modules/`, `dist/` are pruned automatically; disable entirely with `openlore mcp --no-watch-auto`).
 
 Then ask your agent: **`orient("add a new payment method")`**
@@ -316,7 +318,7 @@ If you only install one thing, install `openlore-orient`. The workflow skills ar
 
 Continuously maintains a structural representation of your codebase using pure static analysis. Builds a full call graph persisted to SQLite, runs label-propagation community detection to cluster tightly coupled functions, computes McCabe cyclomatic complexity for every function, and extracts DB schemas, HTTP routes, UI components, middleware chains, and environment variables. Outputs `.openlore/analysis/CODEBASE.md` — a ~600-token structural digest that compresses the equivalent of tens of thousands of exploratory tokens into a small, queryable summary.
 
-With `--watch-auto`, the call graph updates incrementally on every file save: the changed file and its direct callers are re-parsed and the graph is atomically swapped. File creates and deletes are reconciled too, and `dependency-graph.json` import edges (including HTML asset edges) stay live. Orient and BFS queries remain live between full analyze runs.
+With `--watch-auto`, the call graph updates incrementally on every file save and **converges to what `analyze --force` would produce** for the changed region: the changed file plus its reverse-dependency closure — direct callers *and* prior non-callers whose previously-unresolved calls a newly-added symbol should now bind — are re-parsed and the graph is atomically swapped. A bounded per-save work budget keeps a hub edit light; when the closure exceeds it, the un-recomputed files are marked **explicitly stale** (and freshness verdicts over them report non-authoritative) rather than left silently divergent. File creates and deletes are reconciled too, and `dependency-graph.json` import edges (including HTML asset edges) stay live. Orient and BFS queries remain live between full analyze runs.
 
 **Generate** (API key required)
 
@@ -537,6 +539,31 @@ The same `federation` preset also exposes a spec-store arc — binding OpenLore 
 
 ---
 
+## PR review (no agent required)
+
+OpenLore's deterministic structural value is reachable today in exactly one way: an agent decides to
+call an MCP tool. But **everyone opens pull requests** — the single highest-visibility checkpoint in the
+daily loop. `openlore review` drops the same distinctive output into that workflow, no agent required:
+
+```bash
+openlore review --base main           # one Markdown briefing for a base..head range
+openlore review --format json         # machine-readable, for any CI / forge
+```
+
+It composes two analyses that already ship — the **structural delta** (`structural_diff`: removed /
+added / signature-changed symbols and the callers they leave stale) and the **blast radius**
+(`computeBlastRadius`: hubs touched, layers crossed, tests to run, and the spec / decision / memory
+drift the change introduces) — into one conclusion-shaped comment. No LLM, no new MCP tool.
+
+The repo bundles a **GitHub Action** that posts it as **one sticky comment** (created once, updated in
+place on every push, matched by a hidden marker so it never spams) — advisory by default, opt-in gating
+via the same `blastRadius.block` convention. Adoption is one workflow file
+([`.github/workflows/openlore-review.yml.example`](.github/workflows/openlore-review.yml.example)). It
+degrades honestly: with no index it still shows the structural delta and tells you to run
+`openlore analyze`. See [docs/cli-reference.md](docs/cli-reference.md#pr-review-openlore-review).
+
+---
+
 ## OpenSpec plugin (marketplace)
 
 OpenSpec is adding a plugin marketplace so optional, heavyweight "engines" extend it without bloating the core, and **OpenLore is the inaugural engine and reference plugin**. The cold-start path becomes first-class inside OpenSpec — generate specs from existing code, then hand evolution back to core OpenSpec:
@@ -598,7 +625,7 @@ Because OpenLore requires Node ≥22.5 while OpenSpec runs on ≥20.19, a delega
 
 ## Known Limitations
 
-- **Incremental call graph updates are depth-1 only**: the MCP file watcher (`--watch-auto`, on by default) re-indexes signatures and edges on save for the changed file and its direct callers. Transitive callers (A→B→C, C changes, A stays stale) are only refreshed by the next `analyze --force`. For hub files with 100+ callerFiles, re-parse may take several seconds. The watcher prunes build/dependency directories (`target/`, `node_modules/`, `dist/`, `.venv/`, `vendor/`, …) so it stays light even on large repos; turn it off entirely with `openlore mcp --no-watch-auto`.
+- **Incremental call graph updates converge or flag, never silently diverge**: the MCP file watcher (`--watch-auto`, on by default) re-indexes signatures and edges on save by walking the changed file's reverse-dependency closure — its direct callers *and* prior non-callers whose previously-unresolved calls a newly-added symbol should now bind — so the affected region matches what `analyze --force` would produce. A bounded per-save work budget (`INCREMENTAL_CLOSURE_BUDGET`, default 40 files) keeps a hub edit light; when a change's closure exceeds it, the un-recomputed files are marked **explicitly stale** in the graph metadata (freshness verdicts over their symbols report non-authoritative until reconciled) instead of being left silently wrong. Stale marks self-heal as later edits touch those files, and a full `analyze --force` clears the region entirely. The watcher prunes build/dependency directories (`target/`, `node_modules/`, `dist/`, `.venv/`, `vendor/`, …) so it stays light even on large repos; turn it off entirely with `openlore mcp --no-watch-auto`.
 - **Static analysis only**: dynamic dispatch, runtime metaprogramming, and `eval`-based patterns are not captured in the call graph.
 - **LLM spec quality varies**: generated specs reflect the model's understanding. Review sections covering complex business logic before treating them as authoritative.
 - **Embedding is optional**: plain `openlore analyze` (no `--embed`, no `EMBED_*`) builds a keyword (BM25) search index out of the box, so `orient`, `search_code`, `suggest_insertion_points`, and `search_specs` work immediately. Configure an embedding endpoint (`EMBED_BASE_URL`/`EMBED_MODEL` or an `embedding` block in `.openlore/config.json`) to upgrade to hybrid dense+BM25 search, which is more accurate for semantic queries.

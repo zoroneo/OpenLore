@@ -94,6 +94,25 @@ describe('handleRecall — bullet-proof guarantee', () => {
     expect(r.authoritative[0].verify).toBe(true);
   });
 
+  it('marks a memory staleRegion (not "code changed") when its file is in the stale region but unchanged', async () => {
+    await handleRemember(root, 'foo must stay pure', [{ symbol: 'foo', file: 'src/foo.ts' }]);
+    // Mark the file stale WITHOUT changing its content (a budget-exceeded
+    // incremental update would do this). The memory is downgraded but the cause
+    // is "topology not recomputed", not "code changed"
+    // (fix-transitive-incremental-staleness).
+    const dir = join(root, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+    const store = EdgeStore.open(EdgeStore.dbPath(dir));
+    store.markFilesStale(['src/foo.ts']);
+    store.close();
+
+    const r = (await handleRecall(root, 'foo')) as {
+      authoritative: Array<{ freshness: string; verify?: boolean; staleRegion?: boolean }>;
+    };
+    expect(r.authoritative[0].freshness).toBe('drifted');
+    expect(r.authoritative[0].verify).toBe(true);
+    expect(r.authoritative[0].staleRegion).toBe(true); // distinguishes from a real code change
+  });
+
   it('NEVER serves an orphaned memory as authoritative', async () => {
     await handleRemember(root, 'foo must stay pure', [{ symbol: 'foo', file: 'src/foo.ts' }]);
     // The anchored symbol disappears from the graph.

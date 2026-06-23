@@ -308,6 +308,8 @@ describe('doctor command', () => {
       const configCheck = checks.find(c => c.name === 'openlore config')!;
       expect(configCheck.status).toBe('warn');
       expect(configCheck.fix).toContain('openlore init');
+      // Onboarding: an un-set-up repo is steered to the one-command path first.
+      expect(configCheck.fix).toContain('openlore install');
     });
 
     it('should show fail when config file exists but cannot be parsed', async () => {
@@ -353,6 +355,8 @@ describe('doctor command', () => {
       const checks = await runDoctorJson();
       const artifactCheck = checks.find(c => c.name === 'Analysis artifacts')!;
       expect(artifactCheck.status).toBe('warn');
+      // Onboarding: steer to the one-command setup before the manual analyze.
+      expect(artifactCheck.fix).toContain('openlore install');
     });
   });
 

@@ -21,6 +21,18 @@ All notable changes to OpenLore are documented here. This project adheres to
   `staleDecisionRef` signal on the `recall` MCP tool's output. No new MCP tool;
   deterministic, no LLM. Flags: `--hook`, `--install-hook`, `--uninstall-hook`,
   `--json`, `--base`.
+- **`openlore review` — deterministic structural PR review (#188).** A new no-LLM CLI
+  command that composes the structural delta (`structural_diff`: removed/added/
+  signature-changed symbols + the callers they leave stale) and the blast radius
+  (`computeBlastRadius`: hubs, layers, tests to run, and the spec/memory/decision drift
+  the change introduces) for a `base..head` range into one conclusion-shaped Markdown or
+  JSON briefing. No new MCP tool, no new structural computation. Ships with a bundled
+  GitHub Action (`.github/actions/openlore-review`) that posts it as a single sticky PR
+  comment — created once, updated in place by a hidden marker, never duplicated — plus a
+  copy-paste workflow. Advisory by default (exit 0); opt-in gating via the existing
+  `blastRadius.block` convention. Degrades honestly (no index → structural delta only +
+  "run `openlore analyze`"; non-git / unreachable base / unwritable `--out` disclosed,
+  never a crash). The Action activates once a published `openlore` ships `review`.
 - **OpenSpec plugin manifest (marketplace Phase 1)** — OpenLore is the inaugural
   OpenSpec marketplace plugin. It now ships a declarative plugin manifest (the
   `"openspec"` key in `package.json`, vendored schema
@@ -42,6 +54,17 @@ All notable changes to OpenLore are documented here. This project adheres to
   the instruction block (#184).
 
 ### Changed
+
+- **CLI front door now describes the product and steers to one-command setup.**
+  Bare `openlore` / `openlore --help` previously opened with the legacy spec-gen
+  framing ("Reverse-engineer OpenSpec specifications…") and a Quick start that sent
+  new users to `openlore generate` (LLM/API-key-gated). The program description now
+  reads "Persistent architectural memory for coding agents" (served via `orient` +
+  MCP), the `--help` epilog leads with "Get started (one command): `openlore install`"
+  and groups commands into no-API-key **Core** vs optional **Spec authoring**, the
+  stale `test` line now reads "Report spec test coverage" (it never generated tests),
+  and `openlore doctor` recommends `openlore install` when config/analysis is missing.
+  `openlore install` and `openlore doctor` are documented in the CLI reference (#188).
 
 - **The default MCP tool surface is now lean (behavior change).** A bare
   `openlore mcp` and a plain `openlore install` now wire the 10-tool `navigation`
@@ -69,12 +92,39 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 ### Fixed
 
+- **Incremental watch now converges with `analyze --force` (substrate correctness).**
+  With `--watch-auto`, each save re-resolves the changed file's reverse-dependency
+  closure — its direct callers (no longer capped at 10) plus prior non-callers whose
+  previously-unresolved calls a newly-added symbol now binds — so the affected call
+  graph matches a full re-analyze instead of silently diverging (it was depth-1 only:
+  `A→B→C`, edit `C`, callers past the first 10 and newly-resolvable non-callers stayed
+  stale until the next `analyze --force`). A bounded per-save work budget
+  (`INCREMENTAL_CLOSURE_BUDGET`, default 40) keeps a hub edit light; over-budget or
+  unreadable files are marked **explicitly stale** in the graph metadata (freshness
+  verdicts over their symbols report non-authoritative, never silently wrong) and
+  self-heal as later edits touch them. A full `openlore analyze --force` clears the
+  region. Name resolution for duplicate simple names is now deterministic
+  (seed-order-independent), so incremental and from-scratch builds agree. The
+  call-graph store gains an additive `edges(callee_name)` index (keeps the new
+  closure lookups sub-millisecond instead of full table scans) and a
+  `busy_timeout` (a watcher save and a concurrent `analyze --force` no longer
+  throw `database is locked`). A stale-region freshness downgrade is now labeled
+  distinctly (`staleRegion`) and the drift detector no longer reports it as a
+  code change — the anchored code is byte-identical and it self-heals.
 - **Node-version guard** — launching the CLI under an unsupported Node (<22.5) now
   fails fast with one legible stderr line and the stable exit code 78 (never a
   stack trace), protecting subprocess delegation from a host on Node 20/21. The
   guard runs from a bootstrap module so it evaluates before commander loads.
 - **`--json` stream purity** — `verify --json` (and, defensively, `drift`/`decisions`
   `--json`) now keep stdout pure: machine output on stdout, all logs on stderr.
+- **`openlore install --no-analyze` next-step** — it skips `init` as well as
+  `analyze`, so the old advice "Run `openlore analyze`" failed with "Run `openlore
+  init` first." It now advises `openlore init && openlore analyze` (or `openlore
+  install` to do it in one step) (#188).
+- **No-key error surfaces the `claude-code` provider** — `generate` / `run` without an
+  API key previously told the user only to set `ANTHROPIC_API_KEY`/etc., never
+  mentioning that the Claude Code CLI (which `openlore doctor` detects) is a no-key
+  provider. The error now points to `generation.provider: "claude-code"` (#188).
 
 ## [2.1.3] - 2026-06-22
 

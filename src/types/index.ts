@@ -692,6 +692,14 @@ export interface AnchorVerdict {
   freshness: MemoryFreshness;
   /** New location when the anchored symbol was confidently renamed/relocated. */
   relocatedTo?: string;
+  /**
+   * True when this verdict is `drifted` ONLY because the symbol sits in an
+   * explicitly-marked stale region whose topology a budget-exceeded incremental
+   * update did not recompute — the symbol's own span is unchanged. Lets callers
+   * explain "not yet reconciled" vs "the code itself changed"
+   * (fix-transitive-incremental-staleness).
+   */
+  staleRegion?: boolean;
 }
 
 /**

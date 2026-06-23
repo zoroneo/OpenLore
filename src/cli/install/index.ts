@@ -235,7 +235,12 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   if (shouldAnalyze) {
     await buildIndex(cwd);
   } else if (!opts.dryRun && !opts.uninstall) {
-    logger.info('Next step', 'Run "openlore analyze" so orient() works in your next session');
+    // --no-analyze skipped init too, so a bare "openlore analyze" would fail
+    // ("Run openlore init first"). Advise a sequence that actually works.
+    logger.info(
+      'Next step',
+      'Run "openlore init && openlore analyze" to build the index (or "openlore install" to do it in one step) so orient() works in your next session'
+    );
   }
 
   return 0;

@@ -39,7 +39,7 @@ The `// openlore:` tag is location-independent — move the test to any file and
 ### Spec Coverage
 
 ```bash
-$ openlore test --coverage
+$ openlore test
 
    Spec Test Coverage Report
    ─────────────────────────────────────────

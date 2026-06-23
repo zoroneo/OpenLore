@@ -52,7 +52,10 @@ const LEAN_DEFAULT_COUNT = TOOL_PRESETS[LEAN_DEFAULT_PRESET].size;
 const GUARDED_DOCS: Array<{ rel: string; allowPresetCounts?: number[] }> = [
   { rel: 'README.md', allowPresetCounts: [LEAN_DEFAULT_COUNT] },
   { rel: 'docs/mcp-tools.md', allowPresetCounts: [LEAN_DEFAULT_COUNT] },
-  { rel: 'docs/cli-reference.md' },
+  // cli-reference.md documents the per-command surfaces: the lean `navigation` default
+  // (LEAN_DEFAULT_COUNT) for install/mcp and the `minimal` governance core (6); both are
+  // allowlisted preset sizes, while the file is still guarded for its full-surface claims.
+  { rel: 'docs/cli-reference.md', allowPresetCounts: [LEAN_DEFAULT_COUNT, 6] },
   { rel: 'docs/governance-dogfooding.md' },
   { rel: 'docs/agent-setup.md', allowPresetCounts: [6] },
   { rel: 'openspec/specs/cli/spec.md' },

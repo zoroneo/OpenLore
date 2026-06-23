@@ -31,7 +31,7 @@ import {
   compositeScore,
   buildReason,
 } from './semantic.js';
-import { memoryFreshness, decisionAnchors, findUnreconciled, type AnchoredItem, type UnreconciledGroup } from '../../decisions/anchor.js';
+import { memoryFreshness, decisionAnchors, findUnreconciled, isStaleRegionOnly, type AnchoredItem, type UnreconciledGroup } from '../../decisions/anchor.js';
 import { makeFreshnessView } from '../../decisions/anchor-adapter.js';
 import { loadMemoryStore } from '../../decisions/memory-store.js';
 import type { MemoryFreshness } from '../../../types/index.js';
@@ -413,8 +413,16 @@ export async function handleOrient(
     affectedDomains: string[];
     /** Deterministic freshness of the decision against the current graph (spec: code-anchored memory). */
     freshness?: MemoryFreshness;
-    /** Set when freshness is `drifted`: the described code changed since the decision was recorded. */
+    /** Set when freshness is `drifted`: do not treat as authoritative without checking. */
     verify?: boolean;
+    /**
+     * Set when the decision is non-fresh ONLY because its anchored file sits in an
+     * explicitly-marked stale region (a budget-exceeded incremental update has not
+     * recomputed its topology yet). The code is byte-identical and this self-heals —
+     * a "not yet reconciled" signal, not "the code changed" (matches `recall`;
+     * fix-transitive-incremental-staleness).
+     */
+    staleRegion?: boolean;
   }
   let pendingDecisions: DecisionSummary[] | undefined;
   // Decisions whose code anchors are gone — surfaced separately, NEVER as
@@ -474,6 +482,9 @@ export async function handleOrient(
           const f = memoryFreshness(anchors, view);
           base.freshness = f.freshness;
           if (f.freshness === 'drifted') base.verify = true;
+          // Label a pure stale-region downgrade honestly (not "the code changed"),
+          // consistent with recall (fix-transitive-incremental-staleness).
+          if (isStaleRegionOnly(f.verdicts)) base.staleRegion = true;
           if (f.freshness === 'orphaned') { stale.push(base); continue; }
           contradictionItems.push({ id: d.id, anchors, freshness: f.freshness });
         }

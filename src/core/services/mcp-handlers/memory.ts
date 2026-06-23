@@ -22,6 +22,7 @@ import {
   memoryFreshness,
   decisionAnchors,
   findUnreconciled,
+  isStaleRegionOnly,
   type GraphFreshnessView,
   type AnchoredItem,
 } from '../../decisions/anchor.js';
@@ -180,8 +181,20 @@ interface RecalledMemory {
   validFromCommit?: string;
   /** Set on a memory returned by `asOf`/`changedSince` that has since been invalidated. */
   invalidated?: boolean;
-  /** Set on drifted memories: the described code changed since recording. */
+  /**
+   * Set on non-fresh memories: do not treat as authoritative without checking.
+   * When `staleRegion` is also set the cause is a not-yet-recomputed topology, NOT
+   * a code change (the anchored code is byte-identical).
+   */
   verify?: boolean;
+  /**
+   * Set when the memory is non-fresh ONLY because its anchored file sits in an
+   * explicitly-marked stale region (a budget-exceeded incremental update has not
+   * recomputed its topology yet). The code is unchanged and this self-heals — it
+   * is a "not yet reconciled" signal, not "the code changed"
+   * (fix-transitive-incremental-staleness).
+   */
+  staleRegion?: boolean;
   anchors: ReturnType<typeof summarizeVerdict>[];
   recordedAt?: string;
   /** Why this memory ranked where it did (set only when a task was given). */
@@ -308,6 +321,7 @@ export async function handleRecall(
           ...(m.validFromCommit ? { validFromCommit: m.validFromCommit } : {}),
           ...(invalidated ? { invalidated: true } : {}),
           verify: f.freshness === 'drifted' || staleRefs.length > 0 ? true : undefined,
+          ...(isStaleRegionOnly(f.verdicts) ? { staleRegion: true } : {}),
           anchors: f.verdicts.map(summarizeVerdict),
           recordedAt: m.recordedAt,
           match: hasQuery ? { fields: r.matched, anchorBoost: r.anchorBoost } : undefined,
@@ -338,6 +352,7 @@ export async function handleRecall(
             freshness: f.freshness,
             anchored: f.anchored,
             verify: f.freshness === 'drifted' ? true : undefined,
+            ...(isStaleRegionOnly(f.verdicts) ? { staleRegion: true } : {}),
             anchors: f.verdicts.map(summarizeVerdict),
             recordedAt: d.recordedAt,
             match: hasQuery ? { fields: r.matched, anchorBoost: r.anchorBoost } : undefined,
@@ -555,8 +570,16 @@ function summarizeVerdict(v: AnchorVerdict): {
   level: 'symbol' | 'file';
   freshness: 'fresh' | 'drifted' | 'orphaned';
   relocatedTo?: string;
+  staleRegion?: boolean;
 } {
-  return { ...summarizeAnchor(v.anchor), freshness: v.freshness, relocatedTo: v.relocatedTo };
+  return {
+    ...summarizeAnchor(v.anchor),
+    freshness: v.freshness,
+    relocatedTo: v.relocatedTo,
+    // Distinguishes "drifted because its topology wasn't recomputed yet" from
+    // "drifted because the code changed" (fix-transitive-incremental-staleness).
+    ...(v.staleRegion ? { staleRegion: true } : {}),
+  };
 }
 
 function stripScore(i: RecalledMemory): Omit<RecalledMemory, 'score'> {

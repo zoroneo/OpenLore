@@ -133,7 +133,9 @@ export async function openloreGenerate(options: GenerateApiOptions = {}): Promis
 
   if (!noKeyProviders.includes(configuredProvider ?? '') && !anthropicKey && !openaiKey && !openaiCompatKey && !geminiKey) {
     throw new Error(
-      'No LLM API key found. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, OPENAI_COMPAT_API_KEY, or use provider "copilot".'
+      'No LLM API key found. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or OPENAI_COMPAT_API_KEY — ' +
+        'or, with the Claude Code CLI installed, set generation.provider to "claude-code" in .openlore/config.json (no API key needed). ' +
+        'Other no-key providers: copilot, gemini-cli, mistral-vibe, cursor-agent.'
     );
   }
 

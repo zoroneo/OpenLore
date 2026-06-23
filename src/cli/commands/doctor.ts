@@ -118,7 +118,7 @@ async function checkConfig(rootPath: string): Promise<CheckResult> {
       name: 'openlore config',
       status: 'warn',
       detail: `${OPENLORE_CONFIG_REL_PATH} not found`,
-      fix: "Run 'openlore init' to create the configuration",
+      fix: "Run 'openlore install' for one-command setup (wires your agent + builds the index), or 'openlore init' to configure manually",
     };
   }
 }
@@ -141,7 +141,7 @@ async function checkAnalysis(rootPath: string): Promise<CheckResult> {
       name: 'Analysis artifacts',
       status: 'warn',
       detail: 'No analysis found — run openlore analyze first',
-      fix: "Run 'openlore analyze'",
+      fix: "Run 'openlore install' (one-command setup) or 'openlore analyze' to build the index",
     };
   }
 }

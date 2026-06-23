@@ -14,9 +14,11 @@ import {
   aggregateFreshness,
   memoryFreshness,
   decisionAnchors,
+  isStaleRegionOnly,
   type AnchorNode,
   type GraphFreshnessView,
 } from './anchor.js';
+import type { AnchorVerdict } from '../../types/index.js';
 import type { StructuralAnchor } from '../../types/index.js';
 
 const node = (id: string, name: string, filePath: string, contentHash: string): AnchorNode =>
@@ -111,6 +113,29 @@ describe('anchorFreshness — file-level', () => {
     const legacy = fileAnchor('x.ts'); // no contentHash
     expect(anchorFreshness(legacy, viewFrom({ files: { 'x.ts': 'whatever' } })).freshness).toBe('fresh');
     expect(anchorFreshness(legacy, viewFrom({ files: {} })).freshness).toBe('orphaned');
+  });
+});
+
+describe('isStaleRegionOnly', () => {
+  const v = (freshness: AnchorVerdict['freshness'], staleRegion?: boolean): AnchorVerdict =>
+    ({ anchor: { filePath: 'a' }, freshness, ...(staleRegion ? { staleRegion: true } : {}) });
+
+  it('is true when every drifted anchor is a stale-region downgrade', () => {
+    expect(isStaleRegionOnly([v('drifted', true)])).toBe(true);
+    expect(isStaleRegionOnly([v('fresh'), v('drifted', true)])).toBe(true);
+    expect(isStaleRegionOnly([v('drifted', true), v('drifted', true)])).toBe(true);
+  });
+
+  it('is false when a genuine content drift or an orphan is present', () => {
+    expect(isStaleRegionOnly([v('drifted')])).toBe(false);              // real content drift
+    expect(isStaleRegionOnly([v('drifted', true), v('drifted')])).toBe(false); // mixed → real
+    expect(isStaleRegionOnly([v('orphaned')])).toBe(false);
+    expect(isStaleRegionOnly([v('drifted', true), v('orphaned')])).toBe(false);
+  });
+
+  it('is false when nothing is drifted at all (all fresh → not a downgrade)', () => {
+    expect(isStaleRegionOnly([v('fresh')])).toBe(false);
+    expect(isStaleRegionOnly([])).toBe(false);
   });
 });
 
