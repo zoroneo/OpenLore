@@ -93,6 +93,38 @@ An optional `impactCertificate` block declares the **covering surfaces** the cha
 
 A surface is resolved against the indexed graph (plus any symbol the same diff just added). The certificate is advisory by default and decays via the code-anchored freshness lease; when an anchored symbol later moves, `openlore spec-store status` re-fires a persisted certificate as a `certificate-stale` finding.
 
+### Enforcement policy
+
+An optional `enforcement.policy` block is the **single source of truth** for what blocks a commit, what merely advises, and what is deliberately silenced. It maps a stable governance finding **code** to one enforcement class — `blocking`, `advisory`, or `off` — decoupling a finding's *intrinsic severity* (owned by the source that computes it) from this repository's *risk posture* (owned here). It is consumed by [`openlore enforce`](cli-reference.md#enforcement-gate), the unified gate.
+
+```json
+{
+  "enforcement": {
+    "policy": {
+      "stale-decision-reference": "blocking",
+      "surface-critical": "blocking",
+      "orphans-anchored-memory": "off"
+    }
+  }
+}
+```
+
+- **Additive and optional.** An absent or empty policy preserves today's behavior exactly — every finding stays **advisory by default**, so nothing newly blocks.
+- **Deterministic precedence.** A finding's class is a pure function of `(code, policy)`: an explicit `off` wins over an explicit `blocking`, which wins over an explicit `advisory`, which wins over the source-declared default. Resolution is order-independent.
+- **Severity is never changed.** The policy decides *enforcement class* only; the emitting source remains the sole authority on a finding's intrinsic severity.
+- **`off` is visible, not invisible.** A silenced finding is still listed in the gate output (marked `off`), so a deliberate silence is auditable.
+- **Legacy `block` sugar lowers onto it.** `blastRadius.block: ["orphans-anchored-decision"]` and `impactCertificate.block: ["critical"]` are thin equivalents of `enforcement.policy: { "orphans-anchored-decision": "blocking" }` and `{ "surface-critical": "blocking" }`. A direct `enforcement.policy` entry always wins over inherited legacy sugar.
+- **Unknown codes are retained.** Naming a code no installed source emits yet is not an error — the entry is kept and surfaced as an informational note, so a policy may name a code before its source ships.
+
+The governable finding codes (the **finding-code catalogue**):
+
+| Code | Source | Meaning |
+|------|--------|---------|
+| `stale-decision-reference` | enforce | A live, authoritative artifact (approved decision, non-orphaned anchored memory, or spec requirement) references a decision that has since been superseded. |
+| `orphans-anchored-memory` | blast-radius | The change orphans one or more code-anchored memories. |
+| `orphans-anchored-decision` | blast-radius | The change orphans one or more anchored architectural decisions. |
+| `surface-info` / `surface-warn` / `surface-critical` | impact-certificate | The change opens a new path into a declared covering surface of that severity. |
+
 ### Task-scoped context injection
 
 An optional `contextInjection` block controls the per-task orientation that `openlore install` wires as a Claude Code `UserPromptSubmit` hook (`openlore orient --inject`). It runs `orient` against your submitted prompt and places a bounded, ignorable orientation block in context *before the agent's first turn*, so the common task begins already oriented without a manual `orient` call — amortizing the per-task round-trip the [Value Scorecard](AGENT-BENCHMARKS.md) attributes the small/familiar loss case to. Omit the block entirely for the defaults below (injection enabled). See [`openlore install`](install.md#task-scoped-context-injection).

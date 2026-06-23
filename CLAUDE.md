@@ -47,6 +47,13 @@ For all other cases (reading a file, grepping, listing files) use native tools d
 > `src/core/services/mcp-handlers/tool-contract.ts` — `tool-contract.test.ts` fails until you do.
 > Conclusion tools must return the computed answer, not a graph for the agent to traverse.
 
+> **Authoring a new governance finding?** Register its stable `code` (with a source-declared default
+> class + description) in `FINDING_CODE_REGISTRY` in `src/core/services/mcp-handlers/enforcement-policy.ts`,
+> and emit it in the unified `GovernanceFinding` shape (`{ code, severity, source, subject, message }`).
+> A registered code is one an operator's `enforcement.policy` can name and `openlore enforce` can govern;
+> the source owns the finding's intrinsic `severity`, the policy owns its enforcement class. Findings stay
+> advisory by default — blocking is always opt-in (change: add-finding-enforcement-policy).
+
 <!-- openlore-decisions-instructions -->
 ## Architectural decisions
 

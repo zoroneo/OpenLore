@@ -876,6 +876,53 @@ and the task line, which must always be present for the block to be safely attri
 - **WHEN** `openlore orient --inject` runs
 - **THEN** it emits nothing and exits 0, while the MCP server and SessionStart primer remain wired
 
+### Requirement: GateConsultsTheUnifiedEnforcementPolicy
+
+> Status: Implemented (change: add-finding-enforcement-policy, 2026-06-23)
+
+The pre-commit / pre-merge gate (`openlore enforce`) SHALL collect governance findings from all in-scope
+installed sources (the stale-decision-reference check always; the blast-radius guard and the change
+impact certificate when the repository has configured them), resolve each finding's enforcement class
+through the single declared `enforcement.policy` using the deterministic resolver, and fail the gate only
+when at least one finding resolves to the `blocking` class. Findings SHALL be sorted by a stable key so
+identical inputs produce identical, reproducible output. The gate SHALL add no LLM latency for this
+resolution — it is a pure policy pass. Every source SHALL be advisory-safe: a throw degrades to a caveat
+and NEVER blocks a commit.
+
+> Implemented as `openlore enforce` (`src/cli/commands/enforce.ts`), installable as a pre-commit hook that
+> coexists with the decisions gate. Verified e2e in a real git repo: a `stale-decision-reference: blocking`
+> policy blocks the commit; the same change passes with no policy. The diff-heavy blast-radius/impact-cert
+> sources are collected only when configured, keeping the common-case gate cheap.
+
+#### Scenario: A blocking-classed finding fails the gate
+
+- **GIVEN** a repository whose `enforcement.policy` maps `stale-decision-reference` to `blocking`, and a
+  staged change introducing a live artifact that references a superseded decision
+- **WHEN** the gate runs
+- **THEN** the gate fails, citing the `stale-decision-reference` finding, and reports it as `blocking`
+
+#### Scenario: The same finding stays advisory by default
+
+- **GIVEN** the same staged change but a repository with no `enforcement.policy`
+- **WHEN** the gate runs
+- **THEN** the gate does not fail, and the `stale-decision-reference` finding is reported as advisory
+
+### Requirement: SilencedFindingsRemainVisible
+
+> Status: Implemented (change: add-finding-enforcement-policy, 2026-06-23)
+
+A finding whose resolved enforcement class is `off` SHALL NOT fail the gate, and SHALL still be listed in
+the gate's output as informational, so that a deliberately silenced finding is visible to a reviewer and a
+silence is never invisible. The gate output SHALL distinguish `blocking`, `advisory`, and `off` findings.
+
+#### Scenario: An off-classed finding is shown but does not block
+
+- **GIVEN** a repository whose `enforcement.policy` maps a finding code to `off`, and a change that
+  produces that finding
+- **WHEN** the gate runs
+- **THEN** the gate does not fail, and the finding appears in the output marked as silenced (`off`),
+  distinct from advisory findings
+
 ### Serialize the prove scorecard as versioned, stable-keyed JSON
 
 **Status:** Approved
