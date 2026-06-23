@@ -223,6 +223,11 @@ export function effectivePolicy(config: {
   return { ...lowerLegacyBlockConfig(config), ...normalizeEnforcementPolicy(config?.enforcement) };
 }
 
+/** Locale-independent, byte-stable string compare so gate output is reproducible across environments. */
+function stableCompare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** A stable sort key so identical findings produce identical, reproducible gate output. */
 function findingKey(f: GovernanceFinding): string {
   return `${f.code} ${f.subject} ${f.message}`;
@@ -251,7 +256,7 @@ export function classifyFindings(
 ): GateResult {
   const classified: ClassifiedFinding[] = findings
     .map((f) => ({ ...f, enforcementClass: resolveEnforcementClass(f.code, policy, f.severity) }))
-    .sort((a, b) => findingKey(a).localeCompare(findingKey(b)));
+    .sort((a, b) => stableCompare(findingKey(a), findingKey(b)));
   const blocking = classified.filter((f) => f.enforcementClass === 'blocking');
   const advisory = classified.filter((f) => f.enforcementClass === 'advisory');
   const off = classified.filter((f) => f.enforcementClass === 'off');

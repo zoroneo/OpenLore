@@ -165,6 +165,18 @@ describe('enforce gate decision', () => {
     expect(json.unknownPolicyCodes).toEqual(['future-code']);
   });
 
+  it('a malformed enforcement.policy degrades to advisory — never throws or blocks', async () => {
+    const root = await mkRepo();
+    await writeStaleScenario(root);
+    // hostile shapes that must not crash or block the gate
+    await writeFile(join(root, OPENLORE_DIR, OPENLORE_CONFIG_FILENAME),
+      JSON.stringify({ enforcement: { policy: ['blocking'] } }), 'utf-8');
+    const { code, json } = await gateJson(root);
+    expect(code).toBe(0);
+    expect(json.gated).toBe(false);
+    expect(json.advisory.map((f) => f.code)).toContain('stale-decision-reference');
+  });
+
   it('no findings ⇒ clean advisory pass', async () => {
     const root = await mkRepo();
     // a store with no supersession

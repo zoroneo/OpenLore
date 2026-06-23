@@ -67,11 +67,71 @@ export interface RetirementGraph {
  * never disagree about what counts as superseded.
  */
 export function buildRetirementGraph(decisions: readonly PendingDecision[]): RetirementGraph {
-  const supersededBy = new Map<string, string>();
+  // Immediate superseders per target. Two decisions MAY supersede the same target
+  // (e.g. two reversals); pick the lexicographically smallest id as the canonical
+  // immediate superseder so the result is deterministic regardless of store order.
+  const immediate = new Map<string, string>();
   for (const c of decisions) {
-    if (isEffectiveSuperseder(c)) supersededBy.set(c.supersedes!, c.id);
+    if (!isEffectiveSuperseder(c)) continue;
+    const target = c.supersedes!;
+    const existing = immediate.get(target);
+    if (existing === undefined || c.id < existing) immediate.set(target, c.id);
+  }
+  // Resolve each retired target to its LIVE terminal superseder: if the immediate
+  // superseder is itself retired (a chain A←B←C), follow to the live end so the
+  // remediation never points the user at a decision that is also dead. Cycle-guarded.
+  const retiredTargets = new Set(immediate.keys());
+  const supersededBy = new Map<string, string>();
+  for (const target of immediate.keys()) {
+    let cur = immediate.get(target)!;
+    const visited = new Set<string>([target]);
+    while (retiredTargets.has(cur) && !visited.has(cur)) {
+      visited.add(cur);
+      cur = immediate.get(cur)!;
+    }
+    supersededBy.set(target, cur);
   }
   return { supersededBy };
+}
+
+/** Map of retired target → the set of its immediate superseders (a target may have >1). */
+function immediateSupersedersByTarget(decisions: readonly PendingDecision[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const c of decisions) {
+    if (!isEffectiveSuperseder(c)) continue;
+    const set = out.get(c.supersedes!) ?? new Set<string>();
+    set.add(c.id);
+    out.set(c.supersedes!, set);
+  }
+  return out;
+}
+
+/** All 8-hex decision-id tokens present in a piece of text. */
+function hexTokensIn(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(DECISION_ID)) out.add(m[0]);
+  return out;
+}
+
+/** Locale-independent, byte-stable string compare for reproducible output across environments. */
+function stableCompare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Split a markdown spec into heading-delimited blocks. Each block carries its nearest
+ * heading and the full text from that heading up to (excluding) the next one, so the
+ * retirement-record exemption can ask "does THIS block also contain the superseder id?"
+ * — keeping a superseder's own ADR from flagging the id it documents retiring, while a
+ * separate requirement that cites a retired decision still flags.
+ */
+function splitIntoBlocks(text: string): Array<{ heading: string; text: string }> {
+  const blocks: Array<{ heading: string; lines: string[] }> = [{ heading: '', lines: [] }];
+  for (const line of text.split('\n')) {
+    if (/^#{1,6}\s/.test(line)) blocks.push({ heading: line.replace(/^#+\s*/, '').trim(), lines: [line] });
+    else blocks[blocks.length - 1].lines.push(line);
+  }
+  return blocks.map((b) => ({ heading: b.heading, text: b.lines.join('\n') }));
 }
 
 /** A single stale reference: the retired decision a text cites and its active superseder. */
@@ -126,7 +186,9 @@ export function findStaleDecisionReferences(input: StaleReferenceInputs): StaleD
   const retired = new Set(supersededBy.keys());
   if (retired.size === 0) return [];
 
-  const byId = new Map(input.decisions.map((d) => [d.id, d]));
+  // Immediate superseders per target — used to exempt a spec block that is itself the
+  // retirement record (a superseder's synced ADR legitimately names the id it retired).
+  const immediateSuperseders = immediateSupersedersByTarget(input.decisions);
   const findings: StaleDecisionReferenceFinding[] = [];
   const emit = (
     kind: StaleDecisionReferenceFinding['referencingArtifact']['kind'],
@@ -167,20 +229,27 @@ export function findStaleDecisionReferences(input: StaleReferenceInputs): StaleD
     }
   }
 
-  // (c) Spec requirements: attribute to the file + nearest preceding heading.
+  // (c) Spec requirements, scanned per heading-delimited block so a block can be
+  // attributed to its requirement/decision heading AND so the retirement record itself
+  // is exempt: a block that *documents* the supersession (it contains an immediate
+  // superseder of the retired id — e.g. a superseder's own synced ADR) legitimately
+  // names the id it retired and SHALL NOT be flagged. A block citing a retired decision
+  // that is NOT its own superseder is a genuine stale reference and is flagged.
   for (const spec of input.specs) {
-    const lines = spec.text.split('\n');
-    let heading = '';
-    for (const line of lines) {
-      if (/^#{1,6}\s/.test(line)) heading = line.replace(/^#+\s*/, '').trim();
-      for (const retiredId of retiredIdsIn(line, retired)) {
-        const label = heading ? `${spec.file} › ${excerpt(heading, 60)}` : spec.file;
+    for (const block of splitIntoBlocks(spec.text)) {
+      const idsInBlock = hexTokensIn(block.text);
+      for (const retiredId of retiredIdsIn(block.text, retired)) {
+        const supers = immediateSuperseders.get(retiredId);
+        const documentsRetirement = !!supers && [...idsInBlock].some((id) => supers.has(id));
+        if (documentsRetirement) continue; // this block IS the retirement record — exempt
+        const label = block.heading ? `${spec.file} › ${excerpt(block.heading, 60)}` : spec.file;
         emit('spec', spec.file, label, retiredId);
       }
     }
   }
 
-  // Dedup by (kind, id, retired) and sort by a stable key so output is reproducible.
+  // Dedup by (kind, id, retired) and sort by a stable, locale-independent key so output
+  // is reproducible across environments.
   const seen = new Set<string>();
   const deduped = findings.filter((f) => {
     const k = `${f.referencingArtifact.kind}\x00${f.referencingArtifact.id}\x00${f.retiredDecision}`;
@@ -189,7 +258,8 @@ export function findStaleDecisionReferences(input: StaleReferenceInputs): StaleD
     return true;
   });
   deduped.sort((a, b) =>
-    `${a.referencingArtifact.kind} ${a.referencingArtifact.id} ${a.retiredDecision}`.localeCompare(
+    stableCompare(
+      `${a.referencingArtifact.kind} ${a.referencingArtifact.id} ${a.retiredDecision}`,
       `${b.referencingArtifact.kind} ${b.referencingArtifact.id} ${b.retiredDecision}`,
     ),
   );

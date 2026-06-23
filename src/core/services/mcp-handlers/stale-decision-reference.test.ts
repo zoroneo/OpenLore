@@ -141,3 +141,85 @@ describe('findStaleDecisionReferences', () => {
     expect(a).toEqual(b);
   });
 });
+
+// ── adversarial hardening (PR #190 review: H1/H3/M1) ──────────────────────────
+describe('findStaleDecisionReferences — adversarial edge cases', () => {
+  // H1: a superseder's OWN synced ADR legitimately names the id it retired; it must
+  // NOT be flagged. A separate requirement that cites the retired id MUST still flag.
+  it('does NOT flag the spec block that documents the supersession (superseder ADR)', () => {
+    const spec = {
+      file: 'openspec/specs/auth/spec.md',
+      text: [
+        '## Decisions',
+        '',
+        '### Use argon2',
+        '**ID:** cccccccc',
+        'Replaces the prior bcrypt decision (bbbbbbbb) for password hashing.',
+        '> Decision recorded: cccccccc',
+        '',
+        '### Requirement: LegacyHashing',
+        'This requirement still rests on decision bbbbbbbb.',
+      ].join('\n'),
+    };
+    const out = run({ decisions: [B, C], specs: [spec] });
+    // exactly one finding — the LegacyHashing requirement, not the argon2 ADR block
+    expect(out).toHaveLength(1);
+    expect(out[0].referencingArtifact.label).toContain('LegacyHashing');
+  });
+
+  // H3: two active decisions supersede the same target — the chosen superseder must be
+  // deterministic (lexicographically smallest), independent of store order.
+  it('is deterministic when two decisions supersede the same target', () => {
+    const c1 = decision({ id: 'c1c1c1c1', supersedes: 'bbbbbbbb', title: 'first reversal' });
+    const c2 = decision({ id: 'c2c2c2c2', supersedes: 'bbbbbbbb', title: 'second reversal' });
+    const mem = memory({ id: 'm2222222', content: 'per bbbbbbbb' });
+    const a = run({ decisions: [B, c1, c2], memories: [mem] });
+    const b = run({ decisions: [B, c2, c1], memories: [mem] });
+    expect(a).toEqual(b);
+    expect(a[0].supersededBy).toBe('c1c1c1c1'); // smallest id wins
+  });
+
+  it('buildRetirementGraph picks the smallest superseder id deterministically', () => {
+    const c1 = decision({ id: 'c1c1c1c1', supersedes: 'bbbbbbbb' });
+    const c2 = decision({ id: 'c2c2c2c2', supersedes: 'bbbbbbbb' });
+    expect(buildRetirementGraph([c2, c1, B]).supersededBy.get('bbbbbbbb')).toBe('c1c1c1c1');
+  });
+
+  // M1: chain A←B←C. A live decision citing A must report the LIVE terminal C, not the
+  // dead intermediate B.
+  it('resolves a supersession chain to the live terminal superseder', () => {
+    const dA = decision({ id: 'a0a0a0a0', title: 'gen 1' });
+    const dB = decision({ id: 'b0b0b0b0', title: 'gen 2', supersedes: 'a0a0a0a0' });
+    const dC = decision({ id: 'c0c0c0c0', title: 'gen 3', supersedes: 'b0b0b0b0' });
+    const live = decision({ id: 'eeeeeeee', title: 'cites gen 1', rationale: 'still relies on a0a0a0a0' });
+    const out = run({ decisions: [dA, dB, dC, live] });
+    const forA = out.find((f) => f.retiredDecision === 'a0a0a0a0')!;
+    expect(forA).toBeDefined();
+    expect(forA.supersededBy).toBe('c0c0c0c0'); // terminal, not the dead b0b0b0b0
+  });
+
+  it('a chain cycle does not hang (cycle-guarded)', () => {
+    // pathological: X supersedes Y and Y supersedes X
+    const x = decision({ id: 'x0x0x0x0', supersedes: 'y0y0y0y0' });
+    const y = decision({ id: 'y0y0y0y0', supersedes: 'x0x0x0x0' });
+    expect(() => buildRetirementGraph([x, y])).not.toThrow();
+  });
+
+  // H2: a retired id embedded in a longer hex blob (e.g. a 40-char git SHA) has no word
+  // boundary and must NOT match; a standalone token must.
+  it('does not false-match a retired id embedded inside a 40-char git SHA', () => {
+    const retired = decision({ id: 'deadbeef', title: 'old' });
+    const superc = decision({ id: 'cafef00d', supersedes: 'deadbeef' });
+    const embedded = {
+      file: 'openspec/specs/x/spec.md',
+      text: '### Requirement: Embedded\nCommit deadbeef0123456789abcdef0123456789abcdef touched this.',
+    };
+    const standalone = {
+      file: 'openspec/specs/y/spec.md',
+      text: '### Requirement: Standalone\nStill rests on decision deadbeef directly.',
+    };
+    const out = run({ decisions: [retired, superc], specs: [embedded, standalone] });
+    expect(out).toHaveLength(1);
+    expect(out[0].referencingArtifact.label).toContain('Standalone');
+  });
+});
