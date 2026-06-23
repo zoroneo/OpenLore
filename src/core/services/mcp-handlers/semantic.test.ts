@@ -378,10 +378,15 @@ describe('handleSearchSpecs — success path', () => {
     }));
 
     const { handleSearchSpecs } = await import('./semantic.js');
-    const result = await handleSearchSpecs(tmpDir, 'auth') as { error?: string; searchMode: string; note?: string };
+    const result = await handleSearchSpecs(tmpDir, 'auth') as { error?: string; searchMode: string; retrievalMode?: string; note?: string };
     expect(result.error).toBeUndefined();
     expect(result.searchMode).toBe('bm25_fallback');
-    expect(result.note).toContain('keyword');
+    expect(result.retrievalMode).toBe('keyword');
+    // First-class keyword default: the note states the mode + offers the
+    // semantic upgrade, never a degraded-fallback warning.
+    expect(result.note).toContain('Keyword (BM25)');
+    expect(result.note).toContain('embed --local');
+    expect(result.note).not.toContain('unavailable');
     expect(search).toHaveBeenCalledWith(expect.any(String), 'auth', null, expect.anything());
   });
 

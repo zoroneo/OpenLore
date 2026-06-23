@@ -1050,3 +1050,66 @@ block-pattern convention defined for the blast-radius hook; blocking SHALL never
 - **GIVEN** a repository configured to fail the job when a change orphans a governing decision
 - **WHEN** a pull request orphans a governing decision
 - **THEN** the job fails; and for any other high-blast-radius change it remains advisory
+
+### Requirement: FirstRunNeverBlocksOnEmbeddings
+
+The first-run flow (`openlore install` and `openlore analyze`) SHALL complete with a fully working
+first-class keyword index without any embedding configuration, network access, or API key. Embeddings
+SHALL never be on the critical path of obtaining a working index; the semantic upgrade SHALL be offered
+but never required.
+
+> Implemented by `make-embeddings-zero-config` (2026-06-23). `analyze`/`install` build the keyword
+> index when no provider is configured; when the local provider is selected but the optional
+> `@huggingface/transformers` package is unavailable, the build catches the embedder error and falls
+> back to a keyword index with an actionable install hint (validated by hiding the dependency).
+
+#### Scenario: Clean install with no embedding setup produces a working index
+
+- **GIVEN** a fresh repository with no embedding configuration
+- **WHEN** the user runs `openlore install`
+- **THEN** a first-class keyword index is built and `orient` / `search_code` work, with no embedding
+  endpoint, key, or network required
+
+### Requirement: LocalEmbeddingsEnabledByOneCommand
+
+The CLI SHALL provide a single command to enable on-device semantic embeddings with no endpoint and no
+API key (for example `openlore embed --local`), which configures the local provider and builds (or
+rebuilds) the semantic index, lazily fetching and caching the pinned local model on first use. Enabling
+local embeddings SHALL require no further configuration beyond that one command.
+
+> Implemented by `make-embeddings-zero-config` (2026-06-23). `openlore embed --local`
+> (`src/cli/commands/embed.ts`) writes `embedding.provider: "local"` and runs `analyze --force`,
+> rebuilding the index on-device. `--model <id>` overrides the pinned default.
+
+#### Scenario: One command turns on local semantic search
+
+- **GIVEN** a repository with a working keyword index
+- **WHEN** the user runs `openlore embed --local`
+- **THEN** the local model is fetched and cached, the semantic index is built on-device, and
+  subsequent searches use semantic ranking — with no endpoint or API key configured
+
+### Requirement: RetrievalModeIsStatedPlainlyAndLowNoise
+
+The CLI SHALL state the active retrieval mode (`keyword`, `local-semantic`, or `remote-semantic`)
+plainly where it is useful (for example in `analyze` and `orient` summaries), and SHALL NOT emit
+repeated degraded-fallback warnings for the keyword default. A one-time notice SHALL be emitted only
+when a *configured* expectation fails — specifically, when a remote embedding endpoint is configured
+but unreachable — not when keyword mode is simply the unconfigured default.
+
+> Implemented by `make-embeddings-zero-config` (2026-06-23). `analyze` prints a `[keyword]` /
+> `[local-semantic]` / `[remote-semantic]` mode tag; `orient` (CLI) prints "Retrieval mode:" and the
+> orient/search_code/search_specs JSON carries a `retrievalMode` field. The keyword default emits an
+> optional-upgrade hint, never a warning; the configured-but-unreachable remote notice is the existing
+> `analyze` build-time message.
+
+#### Scenario: Keyword default is stated, not warned
+
+- **GIVEN** a repository using the keyword default
+- **WHEN** the user runs `openlore analyze`
+- **THEN** the active mode is stated once as `keyword`, with no degraded-fallback warning
+
+#### Scenario: A configured-but-unreachable remote endpoint is surfaced
+
+- **GIVEN** a configured remote embedding endpoint that is unreachable
+- **WHEN** the index is built
+- **THEN** a one-time notice states the configured endpoint failed and that keyword mode is in use

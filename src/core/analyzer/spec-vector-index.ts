@@ -20,7 +20,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, basename, dirname } from 'node:path';
 import { fileExists } from '../../utils/command-helpers.js';
-import type { EmbeddingService } from './embedding-service.js';
+import type { Embedder } from './embedding-service.js';
 import { tokenize, buildBm25Corpus, bm25Score } from './vector-index.js';
 
 // ============================================================================
@@ -298,7 +298,7 @@ export class SpecVectorIndex {
   static async build(
     outputDir: string,
     specsDir: string,
-    embedSvc: EmbeddingService | null,
+    embedSvc: Embedder | null,
     mappingJsonPath?: string,
     decisionsDir?: string
   ): Promise<{ recordCount: number; hasEmbeddings: boolean }> {
@@ -428,7 +428,7 @@ export class SpecVectorIndex {
   static async search(
     outputDir: string,
     query: string,
-    embedSvc: EmbeddingService | null | undefined,
+    embedSvc: Embedder | null | undefined,
     opts: {
       limit?: number;
       domain?: string;

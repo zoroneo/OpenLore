@@ -749,20 +749,17 @@ export class McpWatcher {
   private async updateVectors(context: CachedContext, changedFiles: ChangedFile[], changedNodes: FunctionNode[]): Promise<void> {
     try {
       const { VectorIndex } = await import('../analyzer/vector-index.js');
-      const { EmbeddingService } = await import('../analyzer/embedding-service.js');
+      const { resolveEmbedder } = await import('../analyzer/embedder.js');
       const { readOpenLoreConfig } = await import('./config-manager.js');
 
       if (!VectorIndex.exists(this.outputPath)) return;
 
-      let embedSvc: InstanceType<typeof EmbeddingService> | null;
-      try {
-        embedSvc = EmbeddingService.fromEnv();
-      } catch {
-        const cfg = await readOpenLoreConfig(this.rootPath);
-        embedSvc = cfg ? EmbeddingService.fromConfig(cfg) : null;
-      }
-      // embedSvc may be null: updateFiles then refreshes the BM25-only corpus
-      // rather than re-embedding, keeping the keyword index live in watch mode.
+      // Same resolution path as analyze/query so watch keeps the configured
+      // provider (env remote → local → remote config). embedSvc may be null:
+      // updateFiles then refreshes the BM25-only corpus rather than re-embedding,
+      // keeping the keyword index live in watch mode.
+      const cfg = await readOpenLoreConfig(this.rootPath);
+      const embedSvc = await resolveEmbedder(cfg);
 
       const cg = context.callGraph;
       if (!cg) return;

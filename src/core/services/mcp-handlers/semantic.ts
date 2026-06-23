@@ -184,7 +184,7 @@ export async function handleSearchCode(
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
   const { VectorIndex } = await import('../../analyzer/vector-index.js');
-  const { EmbeddingService } = await import('../../analyzer/embedding-service.js');
+  const { resolveEmbedder, embedderMode } = await import('../../analyzer/embedder.js');
 
   // Forced literal-text mode: query the separate line index directly, bypassing
   // symbol search. Use when hunting a literal string (UI copy, error text).
@@ -199,20 +199,12 @@ export async function handleSearchCode(
     };
   }
 
-  // Resolve embedding service — fall back to BM25-only search if unavailable
-  let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-  let searchMode = 'hybrid';
-  try {
-    embedSvc = EmbeddingService.fromEnv();
-  } catch {
-    const cfg = await readOpenLoreConfig(absDir);
-    const svcFromConfig = cfg ? EmbeddingService.fromConfig(cfg) : null;
-    if (svcFromConfig) {
-      embedSvc = svcFromConfig;
-    } else {
-      searchMode = 'bm25_fallback';
-    }
-  }
+  // Resolve the active embedder (env → local provider → remote config); null is
+  // the first-class keyword default. retrievalMode is the honest, served mode.
+  const cfg = await readOpenLoreConfig(absDir);
+  const embedSvc = await resolveEmbedder(cfg);
+  const retrievalMode = embedderMode(embedSvc);
+  const searchMode = embedSvc ? 'hybrid' : 'bm25_fallback';
 
   limit = Math.max(1, Math.min(limit, 100));
   const { readCachedContext } = await import('./utils.js');
@@ -297,9 +289,10 @@ export async function handleSearchCode(
   return {
     query,
     searchMode,
-    ...(searchMode === 'bm25_fallback'
+    retrievalMode,
+    ...(retrievalMode === 'keyword'
       ? {
-          note: 'Embedding server unavailable — results based on keyword matching only. Configure EMBED_BASE_URL + EMBED_MODEL for semantic search.',
+          note: 'Keyword (BM25) search — the zero-config default. For semantic ranking, run "openlore embed --local" (on-device, no API key) or set EMBED_* for a remote endpoint.',
         }
       : {}),
     count: budgeted.kept.length,
@@ -533,7 +526,7 @@ export async function handleSearchSpecs(
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
   const { SpecVectorIndex } = await import('../../analyzer/spec-vector-index.js');
-  const { EmbeddingService } = await import('../../analyzer/embedding-service.js');
+  const { resolveEmbedder, embedderMode } = await import('../../analyzer/embedder.js');
 
   if (!SpecVectorIndex.exists(outputDir)) {
     return {
@@ -542,20 +535,12 @@ export async function handleSearchSpecs(
     };
   }
 
-  // Resolve embedding service — null triggers BM25 fallback in SpecVectorIndex.search().
-  let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-  let searchMode = 'hybrid';
-  try {
-    embedSvc = EmbeddingService.fromEnv();
-  } catch {
-    const cfg = await readOpenLoreConfig(absDir);
-    const svcFromConfig = cfg ? EmbeddingService.fromConfig(cfg) : null;
-    if (svcFromConfig) {
-      embedSvc = svcFromConfig;
-    } else {
-      searchMode = 'bm25_fallback';
-    }
-  }
+  // Resolve the active embedder (env → local provider → remote config); null is
+  // the first-class keyword default for spec search.
+  const cfg = await readOpenLoreConfig(absDir);
+  const embedSvc = await resolveEmbedder(cfg);
+  const retrievalMode = embedderMode(embedSvc);
+  const searchMode = embedSvc ? 'hybrid' : 'bm25_fallback';
 
   limit = Math.max(1, Math.min(limit, 50));
   const [results, mappingIdx] = await Promise.all([
@@ -566,9 +551,10 @@ export async function handleSearchSpecs(
   return {
     query,
     searchMode,
-    ...(searchMode === 'bm25_fallback'
+    retrievalMode,
+    ...(retrievalMode === 'keyword'
       ? {
-          note: 'No embedding endpoint — spec results based on keyword matching only. Configure EMBED_BASE_URL + EMBED_MODEL for semantic spec search.',
+          note: 'Keyword (BM25) spec search — the zero-config default. For semantic ranking, run "openlore embed --local" (on-device, no API key) or set EMBED_* for a remote endpoint.',
         }
       : {}),
     count: results.length,

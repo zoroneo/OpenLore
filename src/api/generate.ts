@@ -243,13 +243,8 @@ export async function openloreGenerate(options: GenerateApiOptions = {}): Promis
       const analysisDir = join(rootPath, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
       const { VectorIndex } = await import('../core/analyzer/vector-index.js');
       if (VectorIndex.exists(analysisDir)) {
-        const { EmbeddingService } = await import('../core/analyzer/embedding-service.js');
-        let embedSvc: InstanceType<typeof EmbeddingService> | undefined;
-        try { embedSvc = EmbeddingService.fromEnv(); } catch { /* no env config */ }
-        if (!embedSvc) {
-          const svc = EmbeddingService.fromConfig(openloreConfig);
-          if (svc) embedSvc = svc;
-        }
+        const { resolveEmbedder } = await import('../core/analyzer/embedder.js');
+        const embedSvc = await resolveEmbedder(openloreConfig) ?? undefined;
         if (embedSvc) {
           const svc = embedSvc;
           semanticSearch = (query, limit) => VectorIndex.search(analysisDir, query, svc, { limit });

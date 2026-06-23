@@ -21,7 +21,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FunctionNode } from './call-graph.js';
 import type { FileSignatureMap } from './signature-extractor.js';
-import type { EmbeddingService } from './embedding-service.js';
+import type { Embedder } from './embedding-service.js';
 import { getSkeletonContent, isSkeletonWorthIncluding } from './code-shaper.js';
 
 // ============================================================================
@@ -333,7 +333,7 @@ export class VectorIndex {
     signatures: FileSignatureMap[],
     hubIds: Set<string>,
     entryPointIds: Set<string>,
-    embedSvc: EmbeddingService | null,
+    embedSvc: Embedder | null,
     /** Optional map of filePath → source content for skeleton-based body indexing */
     fileContents?: Map<string, string>,
     /** When true, reuse cached vectors for unchanged functions */
@@ -544,7 +544,7 @@ export class VectorIndex {
     signatures: FileSignatureMap[],
     hubIds: Set<string>,
     entryPointIds: Set<string>,
-    embedSvc: EmbeddingService | null | undefined,
+    embedSvc: Embedder | null | undefined,
     fileContents?: Map<string, string>,
   ): Promise<{ embedded: number; reused: number; total: number; hasEmbeddings: boolean }> {
     if (!VectorIndex.exists(outputDir)) {
@@ -687,7 +687,7 @@ export class VectorIndex {
   static async search(
     outputDir: string,
     query: string,
-    embedSvc: EmbeddingService | null | undefined,
+    embedSvc: Embedder | null | undefined,
     opts: {
       limit?: number;
       language?: string;

@@ -14,7 +14,7 @@
  */
 
 import { join } from 'node:path';
-import type { EmbeddingService } from './embedding-service.js';
+import type { Embedder } from './embedding-service.js';
 import type { SearchResult as CodeSearchResult } from './vector-index.js';
 import type { SpecSearchResult } from './spec-vector-index.js';
 
@@ -239,7 +239,7 @@ export class UnifiedSearch {
   static async unifiedSearch(
     outputDir: string,
     query: string,
-    embedSvc: EmbeddingService | null | undefined,
+    embedSvc: Embedder | null | undefined,
     opts: {
       limit?: number;
       language?: string;

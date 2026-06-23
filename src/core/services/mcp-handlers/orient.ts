@@ -175,7 +175,7 @@ export async function handleOrient(
   const outputDir = join(absDir, '.openlore', 'analysis');
 
   const { VectorIndex } = await import('../../analyzer/vector-index.js');
-  const { EmbeddingService } = await import('../../analyzer/embedding-service.js');
+  const { resolveEmbedder, embedderMode } = await import('../../analyzer/embedder.js');
   const { SpecVectorIndex } = await import('../../analyzer/spec-vector-index.js');
 
   const hasCodeIndex = VectorIndex.exists(outputDir);
@@ -188,20 +188,14 @@ export async function handleOrient(
     };
   }
 
-  // Resolve embedding service — null triggers BM25 fallback in VectorIndex.search()
-  let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-  let searchMode = 'hybrid';
-  try {
-    embedSvc = EmbeddingService.fromEnv();
-  } catch {
-    const cfg = await readOpenLoreConfig(absDir);
-    const svcFromConfig = cfg ? EmbeddingService.fromConfig(cfg) : null;
-    if (svcFromConfig) {
-      embedSvc = svcFromConfig;
-    } else {
-      searchMode = 'bm25_fallback';
-    }
-  }
+  // Resolve the active embedder (env → local provider → remote config); null is
+  // the first-class keyword default, never an error. `searchMode` stays an
+  // internal score-scale token (bounded `hybrid` vs unbounded keyword) for the
+  // relevance gate; `retrievalMode` is the honest, human-facing mode.
+  const cfg = await readOpenLoreConfig(absDir);
+  const embedSvc = await resolveEmbedder(cfg);
+  const retrievalMode = embedderMode(embedSvc);
+  const searchMode = embedSvc ? 'hybrid' : 'bm25_fallback';
 
   const clampedLimit = Math.max(1, Math.min(limit, 20));
 
@@ -796,8 +790,9 @@ export async function handleOrient(
   const core = {
     task,
     searchMode,
-    ...(searchMode === 'bm25_fallback'
-      ? { note: 'Embedding server unavailable — results use keyword matching. Run "openlore analyze --embed" for semantic search.' }
+    retrievalMode,
+    ...(retrievalMode === 'keyword'
+      ? { note: 'Keyword (BM25) search — the zero-config default. For semantic ranking, run "openlore embed --local" (on-device, no API key) or set EMBED_* for a remote endpoint.' }
       : {}),
     ...(graphIndexStale
       ? { graphIndexNote: 'Graph index unavailable — call paths, provenance, decisions, and change-coupling are omitted. Run analyze_codebase to (re)build it (a version upgrade resets the graph index until the next analyze).' }

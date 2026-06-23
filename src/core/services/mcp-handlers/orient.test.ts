@@ -353,15 +353,20 @@ describe('handleOrient', () => {
     expect(linked.some(f => f.name === 'logout')).toBe(true);
   });
 
-  it('includes bm25_fallback note when embedding service is unavailable', async () => {
+  it('states the first-class keyword mode (no degraded warning) when no embedder is configured', async () => {
     vi.mocked(VectorIndex.exists).mockReturnValue(true);
     vi.mocked(VectorIndex.search).mockResolvedValue([makeSearchResult()]);
 
     const result = await handleOrient('/tmp/proj', 'task') as Record<string, unknown>;
 
     expect(result.searchMode).toBe('bm25_fallback');
+    expect(result.retrievalMode).toBe('keyword');
     expect(typeof result.note).toBe('string');
-    expect(result.note as string).toContain('Embedding server unavailable');
+    // Honest, low-noise: name the mode + offer the upgrade, never warn about a
+    // "fallback" or an "unavailable" server for the plain default.
+    expect(result.note as string).toContain('Keyword (BM25)');
+    expect(result.note as string).toContain('embed --local');
+    expect(result.note as string).not.toContain('unavailable');
   });
 
   it('includes specDomains when mapping index provides file-to-spec data', async () => {

@@ -405,15 +405,12 @@ export async function handleGetSubgraph(
   if (seeds.length === 0) {
     try {
       const { VectorIndex } = await import('../../analyzer/vector-index.js');
-      const { EmbeddingService } = await import('../../analyzer/embedding-service.js');
+      const { resolveEmbedder } = await import('../../analyzer/embedder.js');
       const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
       if (VectorIndex.exists(outputDir)) {
-        let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-        try { embedSvc = EmbeddingService.fromEnv(); } catch {
-          const cfg = await readOpenLoreConfig(absDir);
-          if (cfg?.embedding) embedSvc = EmbeddingService.fromConfig(cfg) ?? null;
-        }
+        const cfg = await readOpenLoreConfig(absDir);
+        const embedSvc = await resolveEmbedder(cfg);
         if (embedSvc) {
           const results = await VectorIndex.search(outputDir, functionName, embedSvc, { limit: 1 });
           if (results.length > 0) {
@@ -567,15 +564,12 @@ export async function handleAnalyzeImpact(
   if (seeds.length === 0) {
     try {
       const { VectorIndex } = await import('../../analyzer/vector-index.js');
-      const { EmbeddingService } = await import('../../analyzer/embedding-service.js');
+      const { resolveEmbedder } = await import('../../analyzer/embedder.js');
       const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
       if (VectorIndex.exists(outputDir)) {
-        let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-        try { embedSvc = EmbeddingService.fromEnv(); } catch {
-          const cfg = await readOpenLoreConfig(absDir);
-          if (cfg?.embedding) embedSvc = EmbeddingService.fromConfig(cfg) ?? null;
-        }
+        const cfg = await readOpenLoreConfig(absDir);
+        const embedSvc = await resolveEmbedder(cfg);
         if (embedSvc) {
           const results = await VectorIndex.search(outputDir, symbol, embedSvc, { limit: 1 });
           if (results.length > 0) {

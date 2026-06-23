@@ -42,7 +42,6 @@ import {
   buildArchitectureOverview,
   writeArchitectureMd,
 } from '../../core/analyzer/architecture-writer.js';
-import { EmbeddingService } from '../../core/analyzer/embedding-service.js';
 import { generateCodebaseDigest } from '../../core/analyzer/codebase-digest.js';
 import { extractUIComponents } from '../../core/analyzer/ui-component-extractor.js';
 import { extractSchemas } from '../../core/analyzer/schema-extractor.js';
@@ -249,7 +248,7 @@ export const analyzeCommand = new Command('analyze')
   )
   .option(
     '--embed',
-    'Build a semantic vector index after analysis (requires EMBED_BASE_URL + EMBED_MODEL)',
+    'Build a semantic vector index after analysis using the configured embedding provider (local on-device, or remote EMBED_*). Falls back to the first-class keyword (BM25) index when none is configured.',
     true
   )
   .option(
@@ -778,20 +777,16 @@ async function runEmbedStep(
 ): Promise<void> {
   console.log(keywordOnly ? '  Building keyword (BM25) search index...' : '  Building semantic vector index...');
   try {
-    const { EmbeddingService } = await import('../../core/analyzer/embedding-service.js');
+    const { resolveEmbedder } = await import('../../core/analyzer/embedder.js');
     const { VectorIndex } = await import('../../core/analyzer/vector-index.js');
 
-    // Resolve embedding service — best-effort. When --no-embed was passed
+    // Resolve the active embedder — best-effort. When --no-embed was passed
     // (keywordOnly) or none is configured we build a keyword-only (BM25) index
     // rather than aborting the whole index build.
-    let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
+    let embedSvc: import('../../core/analyzer/embedding-service.js').Embedder | null = null;
     if (!keywordOnly) {
-      try {
-        embedSvc = EmbeddingService.fromEnv();
-      } catch {
-        const cfg = openloreConfig ?? await readOpenLoreConfig(rootPath);
-        embedSvc = cfg ? EmbeddingService.fromConfig(cfg) : null;
-      }
+      const cfg = openloreConfig ?? await readOpenLoreConfig(rootPath);
+      embedSvc = await resolveEmbedder(cfg);
     }
 
     // Load context from disk if not provided (cache hit path)
@@ -844,10 +839,13 @@ async function runEmbedStep(
       }
 
       if (result.hasEmbeddings) {
+        const mode = embedSvc && embedSvc.modelName.startsWith('local:') ? 'local-semantic' : 'remote-semantic';
         const cacheNote = result.reused > 0 ? ` (${result.embedded} embedded, ${result.reused} cached)` : '';
-        console.log(`    ✓ Function index built (${result.total} functions${cacheNote}, ${fileContents.size} files with skeleton bodies)`);
+        console.log(`    ✓ Function index built [${mode}] (${result.total} functions${cacheNote}, ${fileContents.size} files with skeleton bodies)`);
       } else {
-        console.log(`    ✓ Built keyword (BM25) search index (${result.total} functions) — set EMBED_BASE_URL/EMBED_MODEL or add "embedding" to .openlore/config.json for semantic search.`);
+        // Keyword (BM25) is a first-class default, not a degraded fallback. State
+        // the mode plainly and offer the semantic upgrade — never warn.
+        console.log(`    ✓ Function index built [keyword] (${result.total} functions). Semantic ranking is optional: run "openlore embed --local" (on-device, no API key).`);
       }
       console.log(`    → ${outputPath.replace(rootPath + '/', '')}vector-index/`);
     }
@@ -923,18 +921,15 @@ async function runSpecIndexing(
   const { join: pathJoin } = await import('node:path');
   const { SpecVectorIndex } = await import('../../core/analyzer/spec-vector-index.js');
   const { readOpenLoreConfig } = await import('../../core/services/config-manager.js');
+  const { resolveEmbedder } = await import('../../core/analyzer/embedder.js');
 
-  // Resolve embedding service — best-effort. When --no-embed was passed
+  // Resolve the active embedder — best-effort. When --no-embed was passed
   // (keywordOnly) or none is configured we build a keyword-only (BM25) spec
   // index rather than skipping spec search entirely.
-  let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
+  let embedSvc: import('../../core/analyzer/embedding-service.js').Embedder | null = null;
   if (!keywordOnly) {
-    try {
-      embedSvc = EmbeddingService.fromEnv();
-    } catch {
-      const cfg = openloreConfig ?? await readOpenLoreConfig(rootPath);
-      embedSvc = cfg ? EmbeddingService.fromConfig(cfg) : null;
-    }
+    const cfg = openloreConfig ?? await readOpenLoreConfig(rootPath);
+    embedSvc = await resolveEmbedder(cfg);
   }
 
   // Locate specs directory
@@ -949,8 +944,10 @@ async function runSpecIndexing(
   try {
     const decisionsDir = pathJoin(rootPath, OPENSPEC_DIR, OPENSPEC_DECISIONS_SUBDIR);
     const { recordCount, hasEmbeddings } = await SpecVectorIndex.build(outputPath, specsDir, embedSvc, mappingJsonPath, decisionsDir);
-    const specNote = hasEmbeddings ? '' : ' (keyword/BM25 — set EMBED_* for semantic spec search)';
-    console.log(`    ✓ Spec index built (${recordCount} sections)${specNote}`);
+    const mode = hasEmbeddings
+      ? (embedSvc && embedSvc.modelName.startsWith('local:') ? 'local-semantic' : 'remote-semantic')
+      : 'keyword';
+    console.log(`    ✓ Spec index built [${mode}] (${recordCount} sections)`);
     console.log(`    → ${outputPath.replace(rootPath + '/', '')}vector-index/`);
   } catch (err) {
     console.log(`    ⚠ Spec index skipped: ${(err as Error).message}`);
