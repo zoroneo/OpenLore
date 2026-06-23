@@ -80,6 +80,12 @@ export interface GraphFreshnessView {
    * views, where nothing is ever stale-by-region.
    */
   inStaleRegion?(nodeId: string): boolean;
+  /**
+   * True when the FILE is in an explicitly-marked stale region — the file-level
+   * counterpart of {@link inStaleRegion}, used for file-level anchors that carry
+   * no `nodeId` (fix-transitive-incremental-staleness).
+   */
+  fileInStaleRegion?(filePath: string): boolean;
 }
 
 /**
@@ -171,12 +177,21 @@ export function anchorFreshness(
   if (!view.fileExists(anchor.filePath)) {
     return { anchor, freshness: 'orphaned' };
   }
+  // A file in an explicitly-marked stale region is not authoritative even when
+  // its content hash matches — its topology was not recomputed. Mirror the
+  // symbol-level rule: downgrade only the otherwise-`fresh` outcomes, so a file
+  // that genuinely changed stays plain `drifted`
+  // (fix-transitive-incremental-staleness, FreshnessVerdictsHonorTheStaleRegion).
+  const stale = view.fileInStaleRegion?.(anchor.filePath) ?? false;
   // A truly legacy anchor has no baseline hash — existence is all we can prove.
   if (anchor.contentHash === undefined) {
-    return { anchor, freshness: 'fresh' };
+    return stale ? { anchor, freshness: 'drifted', staleRegion: true } : { anchor, freshness: 'fresh' };
   }
   const current = view.fileHash(anchor.filePath);
-  return { anchor, freshness: current === anchor.contentHash ? 'fresh' : 'drifted' };
+  if (current === anchor.contentHash) {
+    return stale ? { anchor, freshness: 'drifted', staleRegion: true } : { anchor, freshness: 'fresh' };
+  }
+  return { anchor, freshness: 'drifted' };
 }
 
 const FRESHNESS_RANK: Record<MemoryFreshness, number> = {

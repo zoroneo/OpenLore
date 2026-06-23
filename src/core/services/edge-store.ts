@@ -312,6 +312,24 @@ export class EdgeStore {
   }
 
   /**
+   * Distinct caller FILES that resolve this exact name at `name_only` confidence
+   * (the lowest, ambiguity-tolerant tier — no import, no receiver type). When an
+   * incremental edit ADDS a symbol, the winning candidate for a `name_only`
+   * call to that name can change (the tiebreak is by symbol id across all
+   * candidates), so these consumers must be re-resolved alongside the
+   * `external` ones to converge with `analyze --force` — even though they are
+   * not callers of the changed file (their edge points at a *different* file)
+   * (fix-transitive-incremental-staleness).
+   */
+  getNameOnlyConsumerFiles(symbolName: string): string[] {
+    return (
+      this.db
+        .prepare("SELECT DISTINCT caller_file FROM edges WHERE callee_name = ? AND confidence = 'name_only'")
+        .all(symbolName) as unknown as Array<{ caller_file: string }>
+    ).map((r) => r.caller_file);
+  }
+
+  /**
    * The distinct names of every unresolved external reference this repo makes
    * (`confidence === 'external'`) — the upstream interfaces this repo consumes from
    * the rest of the fleet. The producer side of federation resolves each of these to

@@ -6,19 +6,23 @@
 
 The incremental call-graph update path (the file watcher's per-batch update) SHALL, for the region
 affected by a change, converge to the same graph that a full `analyze --force` would produce. It SHALL
-propagate invalidation along the reverse-dependency closure of the changed symbols and edges —
-re-parsing and re-resolving every file whose edge resolution could change as a consequence — rather
-than re-parsing only the changed file and its direct callers. Where the update cannot complete the
-closure within a bounded work budget, it SHALL explicitly mark the un-recomputed region as `stale` in
+re-parse and re-resolve the changed file's direct dependents — its direct callers AND prior non-callers
+whose previously-`external` call sites a newly-added symbol should now bind — rather than re-parsing
+only the changed file and a fixed-size slice of its direct callers. (Because a batch fully determines
+the set of symbols it adds or removes, this single bounded expansion is sufficient to converge the
+affected region; no multi-hop fixpoint iteration is required.) Where the update cannot complete that
+expansion within a bounded work budget, it SHALL explicitly mark the un-recomputed files as `stale` in
 the graph metadata; it SHALL NOT leave a divergent region unmarked. The update SHALL be sound: it MAY
 mark more than the minimal dirty set as stale, but it SHALL NOT report a stale region as current.
 
-#### Scenario: A transitive change converges the upstream graph
+#### Scenario: A direct-caller resolution change converges
 
-- **GIVEN** a chain `A → B → C` where editing `C` changes how `B` resolves its call to `C`
+- **GIVEN** a file `B` that directly calls a symbol in `C`, where editing `C` changes how `B` resolves
+  that call
 - **WHEN** the incremental watcher processes the save
-- **THEN** the resulting graph over `A`, `B`, and `C` equals the graph that `analyze --force` would
-  produce for that region
+- **THEN** the resulting graph over `B` and `C` equals the graph that `analyze --force` would produce
+  for that region (`B`, a direct caller, is recomputed; callers of `B` that do not themselves call `C`
+  are unaffected)
 
 #### Scenario: A newly-introduced symbol is resolved by a prior non-caller
 

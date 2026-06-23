@@ -18,9 +18,13 @@
 - [x] Compute the dirty set from the batch's actually-changed symbols/edges (diff new vs old node names
       of the changed file in `mcp-watcher.handleBatch`).
 - [x] Walk the reverse-dependency closure via `EdgeStore.getCallerFiles` (direct callers) PLUS
-      `EdgeStore.getExternalConsumerFiles` (prior non-callers an added symbol now binds); replace the
-      fixed `CALLER_REPARSE_LIMIT` with `this.closureBudget`. One expansion is provably sufficient (the
-      added/removed symbol set is fixed by the batch), so no iteration loop is required.
+      `EdgeStore.getExternalConsumerFiles` and `EdgeStore.getNameOnlyConsumerFiles` (prior non-callers
+      an added symbol now binds or whose ambiguous `name_only` winner it flips); replace the fixed
+      `CALLER_REPARSE_LIMIT` with `this.closureBudget`. Consumer discovery runs even when the budget is
+      full (overflow → stale), so it is never silently skipped. One expansion is provably sufficient
+      (the added/removed symbol set is fixed by the batch), so no iteration loop is required. Tiebreak
+      determinism: `FunctionRegistryTrie.findBySimpleName` sorts candidates by symbol id so incremental
+      and full builds pick the same duplicate-name target.
 - [x] Apply edge replacement (`deleteEdgesForFile` / `deleteOutgoingEdgesForFile` / `insertEdges`)
       across the whole recomputed closure, not just depth-1.
 - [x] Handle the newly-introduced-symbol case — re-resolve previously-`external` call sites that could

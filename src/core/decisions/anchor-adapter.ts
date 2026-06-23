@@ -108,6 +108,7 @@ export function makeFreshnessView(
       const node = store.getNode(nodeId);
       return node ? store.isFileStale(node.filePath) : false;
     },
+    fileInStaleRegion: (filePath: string): boolean => store.isFileStale(filePath),
     renameOf,
   };
 }

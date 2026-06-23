@@ -244,6 +244,117 @@ describe('budget-exceeded incremental update marks the remainder stale (not sile
   });
 });
 
+describe('adversarial regressions (PR #189 review findings)', () => {
+  beforeEach(() => {
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  });
+
+  it('F1: an external consumer of a newly-added symbol is never left silently divergent when the budget is full', async () => {
+    // c has placeholder(); two direct callers of c fill a budget of 2. x calls
+    // addSym() → external. Editing c to ADD addSym must NOT leave x silently
+    // external just because direct callers used up the budget — x is either
+    // re-resolved or marked stale.
+    const v1: Files = {
+      'src/c.ts': 'export function placeholder() { return 0; }\n',
+      'src/d0.ts': 'export function call0() { return placeholder(); }\n',
+      'src/d1.ts': 'export function call1() { return placeholder(); }\n',
+      'src/x.ts': 'export function useAdd() { return addSym(); }\n',
+    };
+    await writeFiles(v1);
+    const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    seedStore(store, v1, await fullBuild(v1));
+    store.close();
+
+    await writeFiles({ 'src/c.ts': 'export function placeholder() { return 0; }\nexport function addSym() { return 1; }\n' });
+    const { McpWatcher } = await import('./mcp-watcher.js');
+    await new McpWatcher({ rootPath: root, outputPath, embed: false, closureBudget: 2 })
+      .handleChange(join(root, 'src/c.ts'));
+
+    const s = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    const xResolved = outgoingSig(s, 'src/x.ts').join('\n').includes('src/c.ts::addSym');
+    const xStale = s.isFileStale('src/x.ts');
+    s.close();
+    // Converge-or-flag: either x now resolves to c::addSym, OR x is flagged stale.
+    expect(xResolved || xStale).toBe(true);
+  });
+
+  it('F2: adding a duplicate of an existing name_only symbol converges its consumers to analyze --force', async () => {
+    // Only zzz defines foo; w calls foo() at name_only. Adding foo() in aaa
+    // (sorts before zzz) flips the deterministic tiebreak — w must converge.
+    const v1: Files = {
+      'src/zzz.ts': 'export function foo() { return 9; }\n',
+      'src/w.ts': 'export function useFoo() { return foo(); }\n',
+    };
+    await writeFiles(v1);
+    const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    seedStore(store, v1, await fullBuild(v1));
+    store.close();
+
+    const v2: Files = { ...v1, 'src/aaa.ts': 'export function foo() { return 1; }\n' };
+    await writeFiles({ 'src/aaa.ts': v2['src/aaa.ts'] });
+    const { McpWatcher } = await import('./mcp-watcher.js');
+    await new McpWatcher({ rootPath: root, outputPath, embed: false }).handleChange(join(root, 'src/aaa.ts'));
+
+    const oracle = await fullBuild(v2);
+    const s = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    const got = outgoingSig(s, 'src/w.ts');
+    const stale = s.isFileStale('src/w.ts');
+    s.close();
+    // w converges to the same target analyze --force picks (or is honestly stale).
+    expect(got.length === 0 || stale || JSON.stringify(got) === JSON.stringify(oracleOutgoingSig(oracle.edges, 'src/w.ts'))).toBe(true);
+    if (!stale) expect(got).toEqual(oracleOutgoingSig(oracle.edges, 'src/w.ts'));
+  });
+
+  it('deletion clears any stale mark for the removed file (no phantom stale rows)', async () => {
+    const v1: Files = { 'src/c.ts': 'export function target() { return 1; }\n' };
+    for (let i = 0; i < 5; i++) v1[`src/caller${i}.ts`] = `export function call${i}() { return target(); }\n`;
+    await writeFiles(v1);
+    const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    seedStore(store, v1, await fullBuild(v1));
+    store.close();
+
+    await writeFiles({ 'src/c.ts': 'export function renamed() { return 1; }\n' });
+    const { McpWatcher } = await import('./mcp-watcher.js');
+    const watcher = new McpWatcher({ rootPath: root, outputPath, embed: false, closureBudget: 2 });
+    await watcher.handleChange(join(root, 'src/c.ts'));
+
+    let s = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    const stale = s.getStaleFiles();
+    expect(stale.length).toBe(3);
+    s.close();
+
+    // Delete one stale file → its stale row must be cleared (handleDeletions).
+    const victim = stale[0];
+    await rm(join(root, victim), { force: true });
+    await watcher['handleDeletions']([join(root, victim)]);
+
+    s = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    expect(s.isFileStale(victim)).toBe(false);
+    expect(s.getStaleFiles()).not.toContain(victim);
+    s.close();
+  });
+
+  it('a file-level anchor in a stale region is not reported fresh', async () => {
+    const files: Files = { 'src/c.ts': 'export function target() { return 1; }\n' };
+    await writeFiles(files);
+    const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    seedStore(store, files, await fullBuild(files));
+    store.close();
+
+    const { makeFreshnessView } = await import('../decisions/anchor-adapter.js');
+    const { anchorFreshness, hashSpan } = await import('../decisions/anchor.js');
+    const s = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    const fileAnchor = { filePath: 'src/c.ts', contentHash: hashSpan(files['src/c.ts']) };
+
+    expect(anchorFreshness(fileAnchor, makeFreshnessView(s, root)).freshness).toBe('fresh');
+    s.markFilesStale(['src/c.ts']);
+    const v = anchorFreshness(fileAnchor, makeFreshnessView(s, root));
+    expect(v.freshness).toBe('drifted');
+    expect(v.staleRegion).toBe(true);
+    s.close();
+  });
+});
+
 describe('freshness verdicts honor the stale region (FreshnessVerdictsHonorTheStaleRegion)', () => {
   beforeEach(() => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);

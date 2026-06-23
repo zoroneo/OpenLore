@@ -19,6 +19,17 @@
 > Self-heal is opportunistic (a stale file's mark clears when it is next recomputed); `analyze --force`
 > (`clearAll`) clears the whole region. Verified by `src/core/services/mcp-watcher-parity.test.ts`
 > against a from-scratch build oracle, and dogfooded end-to-end on the real compiled CLI + SQLite.
+>
+> **Review hardening (adversarial pass).** Four issues found by adversarial e2e review were fixed: (1)
+> the class-P consumer discovery ran only when the budget had room, so a hub edit that filled the budget
+> with direct callers left an added symbol's external consumers *silently* divergent — discovery now
+> runs unconditionally and overflow consumers are marked stale. (2) `name_only` resolution picked a
+> duplicate-name winner by insertion order, which differs between a from-scratch and an incremental
+> build — `FunctionRegistryTrie.findBySimpleName` now sorts candidates by symbol id (deterministic), and
+> the closure also re-resolves `name_only` consumers of an added name (`getNameOnlyConsumerFiles`), not
+> just `external` ones. (3) `handleDeletions` now clears stale marks for deleted files (no phantom
+> rows). (4) freshness honors the stale region for file-level anchors too (`fileInStaleRegion`), not
+> only symbol anchors. All four have regression tests and were dogfooded on the real CLI.
 
 ## Why
 

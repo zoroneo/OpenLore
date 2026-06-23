@@ -486,23 +486,32 @@ export class McpWatcher {
 
           // Class-P closure: a symbol this edit ADDED can newly bind a previously-
           // `external` call site in a file that is NOT a caller of this one, so
-          // getCallerFiles misses it. Find those consumer files and, within the
-          // remaining budget, re-resolve them alongside the changed file so the
-          // new edge resolves internally — exactly as `analyze --force` would.
+          // getCallerFiles misses it. These consumers must NEVER be left silently
+          // divergent — so discovery runs even when direct callers already filled
+          // the budget: re-resolve as many as the remaining budget allows and mark
+          // the rest stale (the same converge-or-flag contract the budget enforces
+          // for direct callers). Re-resolving runs them alongside the changed file
+          // so the new edge resolves internally — exactly as `analyze --force` would.
           const addedNames = sub.nodes.map((n) => n.name).filter((n) => !oldNames.has(n));
-          if (addedNames.length > 0 && recompute.length < this.closureBudget) {
+          if (addedNames.length > 0) {
             const extra = new Set<string>();
             for (const name of addedNames) {
-              for (const cf of store.getExternalConsumerFiles(name)) {
+              // `external` consumers (previously unresolved) AND `name_only`
+              // consumers (already resolving the name to a DIFFERENT file, whose
+              // winning candidate the new symbol can flip) both need re-resolving.
+              for (const cf of [...store.getExternalConsumerFiles(name), ...store.getNameOnlyConsumerFiles(name)]) {
                 if (cf !== f.rel && cf !== 'external' && !recompute.includes(cf)) extra.add(cf);
               }
             }
             if (extra.size > 0) {
-              const room = this.closureBudget - recompute.length;
+              const room = Math.max(0, this.closureBudget - recompute.length);
               const extraList = [...extra];
-              recompute = [...recompute, ...extraList.slice(0, room)];
+              const take = extraList.slice(0, room);
               dropped = dropped.concat(extraList.slice(room));
-              sub = await buildGraphSubset(f.rel, f.content, recompute, this.rootPath, resolutionNodes);
+              if (take.length > 0) {
+                recompute = [...recompute, ...take];
+                sub = await buildGraphSubset(f.rel, f.content, recompute, this.rootPath, resolutionNodes);
+              }
             }
           }
 
@@ -905,6 +914,10 @@ export class McpWatcher {
             store.deleteCfgForFile(rel);
             store.deleteClassesForFile(rel);
           }
+          // A deleted file leaves no topology to be stale about — drop any stale
+          // mark so the region doesn't accumulate phantom rows for gone files
+          // (fix-transitive-incremental-staleness).
+          store.clearFilesStale(rels);
         });
       } catch (err) {
         process.stderr.write(`[mcp-watcher] delete (graph) error: ${(err as Error).message}\n`);
