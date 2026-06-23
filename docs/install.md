@@ -97,6 +97,18 @@ Task-scoped injection is on by default. To disable it (while leaving the MCP ser
 
 With `mode: "off"`, `openlore orient --inject` emits nothing and exits 0.
 
+### Performance and activation notes
+
+- **It runs on every prompt and blocks the turn until it returns**, so it is built to be fast: `orient`
+  is a local, deterministic lookup (~300 ms for the work itself; the `npx` wrapper that resolves the
+  package adds ~200 ms). That is well under Claude Code's 30 s `UserPromptSubmit` timeout. On a weak
+  match it short-circuits to the one-line pointer, so the slow path is the rare strong-match case.
+- **Activation tracks the installed version.** The wired command is `npx --yes openlore orient
+  --inject`, which resolves the `openlore` your environment already has. If that is an older published
+  version without `--inject`, the hook is a clean no-op (it prints nothing to stdout, writes a short
+  notice to stderr, and exits non-zero — which does **not** block your prompt) until an `openlore`
+  carrying `--inject` is what `npx` resolves. Run `openlore --version` to check.
+
 ## Known follow-ups
 
 - **Continue MCP registration**: Continue's MCP config path varies across recent versions, so

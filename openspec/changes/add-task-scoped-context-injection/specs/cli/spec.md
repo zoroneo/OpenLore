@@ -84,7 +84,10 @@ the user's other configuration byte-for-byte (merge-not-clobber, decision `df27e
 The system SHALL read a repository configuration switch controlling task-scoped context injection
 (default: enabled), and when injection is disabled `openlore orient --inject` SHALL emit nothing and
 exit 0. Disabling injection SHALL NOT affect the MCP server registration or the `SessionStart` primer.
-The injected block SHALL never exceed the configured token budget regardless of match size.
+The injected block's data SHALL never exceed the configured token budget regardless of match size
+(detail lines are added only while they fit); the small fixed framing floor — the attribution header
+and the task line, which must always be present for the block to be safely attributable and ignorable
+— is exempt, so a pathologically small budget yields just that floor.
 
 #### Scenario: Injection can be turned off without disabling the rest
 

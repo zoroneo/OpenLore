@@ -79,9 +79,13 @@ export function resolveInjectionConfig(ci: ContextInjectionConfig | undefined): 
   };
 }
 
+// These shapes mirror the lean `handleOrient` result, which reaches us through
+// an unchecked `as` cast (the handler returns `unknown`). Fields that should be
+// present are typed optional so the renderer's defensive guards against a
+// partial/forward-incompatible payload are type-checked, not lint noise.
 interface OrientFn {
-  name: string;
-  filePath: string;
+  name?: string;
+  filePath?: string;
   score?: number;
   fanIn?: number;
   fanOut?: number;
@@ -89,12 +93,12 @@ interface OrientFn {
 }
 
 interface CallNeighbour {
-  name: string;
+  name?: string;
   filePath?: string;
 }
 
 interface OrientCallPath {
-  function: string;
+  function?: string;
   callers?: CallNeighbour[];
   callees?: CallNeighbour[];
 }
@@ -152,44 +156,57 @@ function take<T>(arr: T[] | undefined, n: number): T[] {
 
 /**
  * Render the full injection block from a lean orient result, hard-capped to the
- * token budget. The header, framing, and task line are mandatory; detail lines
- * are added in priority order (functions → files → call neighbours → specs →
- * tools) only while they fit, so the block can never exceed the budget.
+ * token budget. The header, framing, and task line are mandatory (a small fixed
+ * floor that is always present so an injected block is unambiguously attributed
+ * and ignorable); detail lines are added in priority order (functions → files →
+ * call neighbours → specs → tools) only while they fit, so the data — regardless
+ * of match size — never pushes the block over budget.
+ *
+ * Every interpolated field is defensively filtered: although `handleOrient`
+ * declares its name/file fields as required strings, a partial/forward-incompat
+ * result must never leak a literal `undefined`, `[object Object]`, or a stray
+ * leading comma into the agent's context.
  */
 export function renderInjectionBlock(result: LeanOrientResult, cfg: ResolvedInjectionConfig): string {
   const task = (result.task ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
   const mandatory = [BLOCK_HEADER, `Task: ${task}`];
 
   const optional: string[] = [];
+  const clean = (xs: Array<string | undefined> | undefined, n: number): string[] =>
+    (xs ?? []).filter((x): x is string => typeof x === 'string' && x.length > 0).slice(0, n);
 
-  const fns = take(result.relevantFunctions, 8);
+  const fns = take(result.relevantFunctions, 8).filter(f => f.name && f.filePath);
   if (fns.length > 0) {
     optional.push('Relevant functions:');
     for (const f of fns) optional.push(`  • ${f.name} — ${f.filePath}`);
   }
 
-  const files = take(result.relevantFiles, 8);
+  const files = clean(result.relevantFiles, 8);
   if (files.length > 0) optional.push(`Relevant files: ${files.join(', ')}`);
 
   const names = (ns: CallNeighbour[] | undefined): string =>
-    [...new Set((ns ?? []).map(n => n.name).filter(Boolean))].slice(0, 3).join(', ');
-  const paths = take(result.callPaths, 5).filter(p => (p.callers?.length ?? 0) + (p.callees?.length ?? 0) > 0);
-  if (paths.length > 0) {
+    [...new Set((ns ?? []).map(n => n?.name).filter((x): x is string => typeof x === 'string' && x.length > 0))]
+      .slice(0, 3)
+      .join(', ');
+  const paths = take(result.callPaths, 5).filter(p => p.function);
+  const pathLines: string[] = [];
+  for (const p of paths) {
+    const callers = names(p.callers);
+    const callees = names(p.callees);
+    const parts: string[] = [];
+    if (callers) parts.push(`← ${callers}`);
+    if (callees) parts.push(`→ ${callees}`);
+    if (parts.length > 0) pathLines.push(`  ${p.function}: ${parts.join('  ')}`);
+  }
+  if (pathLines.length > 0) {
     optional.push('Call neighbours:');
-    for (const p of paths) {
-      const callers = names(p.callers);
-      const callees = names(p.callees);
-      const parts: string[] = [];
-      if (callers) parts.push(`← ${callers}`);
-      if (callees) parts.push(`→ ${callees}`);
-      if (parts.length > 0) optional.push(`  ${p.function}: ${parts.join('  ')}`);
-    }
+    optional.push(...pathLines);
   }
 
-  const specs = take(result.specDomains, 8);
+  const specs = clean(result.specDomains, 8);
   if (specs.length > 0) optional.push(`Spec domains: ${specs.join(', ')}`);
 
-  const tools = take(result.suggestedTools, 6);
+  const tools = clean(result.suggestedTools, 6);
   if (tools.length > 0) optional.push(`Suggested tools: ${tools.join(', ')}`);
 
   optional.push(BLOCK_FOOTER);

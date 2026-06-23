@@ -145,6 +145,34 @@ describe('renderInjectionBlock', () => {
     expect(large.length).toBeGreaterThan(small.length);
     expect(large).toContain('Suggested tools');
   });
+
+  it('never leaks "undefined", "[object Object]", or stray commas from a partial result', () => {
+    // A forward-incompatible / partial orient payload: missing names, null array
+    // elements, a call path with no function name. None must reach the agent.
+    const partial = {
+      task: 'partial result',
+      searchMode: 'hybrid',
+      relevantFiles: [undefined, 'src/a.ts'] as unknown as string[],
+      relevantFunctions: [
+        { name: undefined as unknown as string, filePath: 'src/a.ts', score: 0.5, fanIn: 2 },
+        { name: 'ok', filePath: undefined as unknown as string },
+      ],
+      specDomains: [undefined as unknown as string, 'auth'],
+      suggestedTools: [null as unknown as string, 'orient'],
+      callPaths: [
+        { function: undefined as unknown as string, callers: [{ name: 'c' }], callees: [] },
+        { function: 'realFn', callers: [{ name: undefined as unknown as string }], callees: [{ name: 'd' }] },
+      ],
+    };
+    const block = renderInjectionBlock(partial, cfg());
+    expect(block).not.toContain('undefined');
+    expect(block).not.toContain('[object Object]');
+    expect(block).not.toMatch(/:\s*,/); // no "Spec domains: , auth" style leading comma
+    expect(block).not.toMatch(/•\s+—/); // no "• — file" with a blank name
+    // The well-formed bits still render.
+    expect(block).toContain('src/a.ts');
+    expect(block).toContain('realFn: ');
+  });
 });
 
 describe('extractPrompt', () => {
