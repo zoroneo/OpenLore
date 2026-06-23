@@ -534,6 +534,31 @@ The same `federation` preset also exposes a spec-store arc — binding OpenLore 
 
 ---
 
+## PR review (no agent required)
+
+OpenLore's deterministic structural value is reachable today in exactly one way: an agent decides to
+call an MCP tool. But **everyone opens pull requests** — the single highest-visibility checkpoint in the
+daily loop. `openlore review` drops the same distinctive output into that workflow, no agent required:
+
+```bash
+openlore review --base main           # one Markdown briefing for a base..head range
+openlore review --format json         # machine-readable, for any CI / forge
+```
+
+It composes two analyses that already ship — the **structural delta** (`structural_diff`: removed /
+added / signature-changed symbols and the callers they leave stale) and the **blast radius**
+(`computeBlastRadius`: hubs touched, layers crossed, tests to run, and the spec / decision / memory
+drift the change introduces) — into one conclusion-shaped comment. No LLM, no new MCP tool.
+
+The repo bundles a **GitHub Action** that posts it as **one sticky comment** (created once, updated in
+place on every push, matched by a hidden marker so it never spams) — advisory by default, opt-in gating
+via the same `blastRadius.block` convention. Adoption is one workflow file
+([`.github/workflows/openlore-review.yml.example`](.github/workflows/openlore-review.yml.example)). It
+degrades honestly: with no index it still shows the structural delta and tells you to run
+`openlore analyze`. See [docs/cli-reference.md](docs/cli-reference.md#pr-review-openlore-review).
+
+---
+
 ## OpenSpec plugin (marketplace)
 
 OpenSpec is adding a plugin marketplace so optional, heavyweight "engines" extend it without bloating the core, and **OpenLore is the inaugural engine and reference plugin**. The cold-start path becomes first-class inside OpenSpec — generate specs from existing code, then hand evolution back to core OpenSpec:

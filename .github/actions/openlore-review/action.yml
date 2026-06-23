@@ -1,0 +1,82 @@
+name: 'OpenLore structural review'
+description: >
+  Post a deterministic structural PR briefing (structural delta + blast radius) as ONE sticky comment.
+  Advisory by default — informs, never fails the check (unless you opt into blastRadius.block).
+author: 'OpenLore'
+
+inputs:
+  github-token:
+    description: 'Token used to create/update the sticky PR comment.'
+    required: false
+    default: ${{ github.token }}
+  base:
+    description: 'Base git ref to compare against.'
+    required: false
+    default: ${{ github.event.pull_request.base.sha }}
+  head:
+    description: 'Head git ref (the PR head). Defaults to the checked-out commit.'
+    required: false
+    default: ${{ github.event.pull_request.head.sha }}
+  analyze:
+    description: 'Run `openlore analyze` before the review so the blast radius is fully populated.'
+    required: false
+    default: 'true'
+  openlore-version:
+    description: 'npm version/tag of openlore to run (e.g. "latest", "2.1.4").'
+    required: false
+    default: 'latest'
+  gate:
+    description: 'Pass `--hook` so a configured blastRadius.block pattern fails the job (opt-in gating).'
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Build the OpenLore index (optional, for full blast radius)
+      if: ${{ inputs.analyze == 'true' }}
+      shell: bash
+      run: npx --yes openlore@${{ inputs.openlore-version }} analyze --no-embed || echo "analyze failed — review will show the structural delta only"
+
+    - name: Run openlore review
+      id: review
+      shell: bash
+      run: |
+        set -o pipefail
+        ARGS=(review --base "${{ inputs.base }}" --head "${{ inputs.head }}" --format markdown --out "$RUNNER_TEMP/openlore-review.md")
+        if [ "${{ inputs.gate }}" = "true" ]; then ARGS+=(--hook); fi
+        # Advisory by default: never fail the job on the review itself unless gating is on.
+        if [ "${{ inputs.gate }}" = "true" ]; then
+          npx --yes openlore@${{ inputs.openlore-version }} "${ARGS[@]}"
+        else
+          npx --yes openlore@${{ inputs.openlore-version }} "${ARGS[@]}" || true
+        fi
+
+    - name: Post or update the sticky review comment
+      if: ${{ github.event_name == 'pull_request' }}
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs');
+          const path = `${process.env.RUNNER_TEMP}/openlore-review.md`;
+          if (!fs.existsSync(path)) { core.info('No review output to post.'); return; }
+          const body = fs.readFileSync(path, 'utf8');
+          const marker = '<!-- openlore-review -->';
+          const { owner, repo } = context.repo;
+          const issue_number = context.issue.number;
+          if (!issue_number) { core.info('Not a PR context; skipping comment.'); return; }
+          const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+          const existing = comments.find(c => typeof c.body === 'string' && c.body.includes(marker));
+          if (existing) {
+            await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            core.info(`Updated sticky review comment #${existing.id}`);
+          } else {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            core.info('Created sticky review comment');
+          }

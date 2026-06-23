@@ -37,6 +37,7 @@
 | `openlore doctor` | Check environment and configuration for common issues | No |
 | `openlore refresh-stories` | Refresh story files with latest structural context after each commit | No |
 | `openlore blast-radius` | Pre-flight structural blast-radius briefing for the current diff (advisory; `--install-hook` for a pre-commit hook) | No |
+| `openlore review` | Deterministic structural PR review (structural delta + blast radius) as a Markdown/JSON briefing; pairs with the bundled GitHub Action | No |
 | `openlore preflight` | CI staleness gate: fail when the analysis graph is stale relative to the working tree | No |
 | `openlore export scip` | Export the analysis graph as an SCIP index for the Sourcegraph / Glean ecosystem | No |
 | `openlore telemetry` | Analyze EpistemicLease cognitive-load telemetry | No |
@@ -302,6 +303,41 @@ Checks performed:
 | Disk space | Warns < 500 MB, fails < 200 MB |
 
 Run `openlore doctor` whenever setup instructions aren't working — it tells you exactly what to fix and how.
+
+### PR review (`openlore review`)
+
+`openlore review` composes the structural delta (`structural_diff`) and the blast radius
+(`computeBlastRadius` — hubs, layers, tests to run, and the spec/memory/decision drift the change
+introduces) for a `base..head` range into **one deterministic, conclusion-shaped briefing** — no LLM,
+no new MCP tool. It is the same distinctive structural output OpenLore already produces, rendered for a
+human reviewer and bundled as a GitHub Action that posts it as one sticky PR comment.
+
+```bash
+openlore review                                  # markdown briefing for the current diff (auto-detected base)
+openlore review --base main --head HEAD          # explicit range
+openlore review --format json                    # machine-readable briefing on stdout
+openlore review --out review.md                  # write the markdown to a file (used by the Action)
+openlore review --hook                           # honor blastRadius.block and fail on a configured pattern
+```
+
+| Option | Description |
+|--------|-------------|
+| `--base <ref>` | Base ref to compare against (default: auto-detected — requested → `main` → `master` → `HEAD~1`) |
+| `--head <ref>` | Head ref (default: working tree). Blast radius is computed against the working tree; in CI the runner checks out the head SHA so they align (a caveat is printed when an explicit `--head` could differ) |
+| `--format <fmt>` | `markdown` (default, for PR comments) or `json` (programmatic consumers); unknown value exits 2 |
+| `--out <path>` | Write the briefing to a file instead of stdout |
+| `--hook` | Opt-in gating: exit non-zero when a configured `.openlore/config.json` `blastRadius.block` pattern fires. Advisory (exit 0) otherwise |
+
+Advisory by default — it informs, it never fails the check. Degrades honestly: with no analysis index
+it shows the structural delta and says "run `openlore analyze`"; a non-git directory or unreachable
+base is disclosed rather than emitted as a misleading empty briefing. The structural delta works
+without an index (it builds the old/new graphs from just the changed files).
+
+**GitHub Action.** The repo ships `.github/actions/openlore-review` (composite action: checkout →
+`openlore analyze` → `openlore review` → one sticky comment matched by a hidden `<!-- openlore-review -->`
+marker, created once and updated in place, never duplicated) and a copy-paste workflow
+(`.github/workflows/openlore-review.yml.example`). Adoption is one file; it needs a full-history
+checkout (`fetch-depth: 0`) and `pull-requests: write` permission.
 
 ### Federation (multi-repo)
 

@@ -10,6 +10,7 @@
 | Need call topology across many files | `get_subgraph` / `analyze_impact` |
 | "Which tests must I run for this change?" | `select_tests` — backward reachability to the reaching tests |
 | "What's the blast radius of my diff before I commit?" | `blast_radius` — one advisory briefing: callers/layers, tests to run, anchored memories/decisions that will drift, stale specs |
+| "Post a deterministic structural review on a PR" (CLI, no MCP/agent) | `openlore review` — composes `structural_diff` + `blast_radius` into a Markdown/JSON briefing; bundled GitHub Action posts it as one sticky comment. Advisory by default; opt-in gating via `blastRadius.block`. No new MCP tool |
 | "What's unreachable / what dies if I delete X?" | `find_dead_code` — cross-language reachability (candidates) |
 | Reviewing a change: structural delta + stale callers | `structural_diff` |
 | "What changes together with this / what's volatile?" | `get_change_coupling` — co-change + churn from git |
