@@ -448,6 +448,12 @@ The system SHALL compute a deterministic, graph-derived estimate scorecard when 
 
 > Decision recorded: 66feae62
 > Date: 2026-06-22
+### Requirement: ProveSavescorecardWritesAtomicallyWxAndDegradesFsErrorsInsteadOfCrashing
+
+The system SHALL write prove scorecards atomically with O_CREAT|O_EXCL and degrade filesystem errors to stderr + exit 1 without discarding the printed scorecard.
+
+> Decision recorded: dfe33d94
+> Date: 2026-06-23
 
 ## Technical Notes
 
@@ -745,3 +751,13 @@ The honesty contract is "date-stamped and re-measured after each optimization ph
 An API-key-less first-touch user needs a real, honest signal. The estimate counts the distinct answer-bearing files the auto-derived orientation tasks span (from-scratch reads) versus one orient call, with a few named, documented assumption constants. It must never be presented as a measured agent run.
 
 **Consequences:** Adds estimate.ts (pure, deterministic) producing WITH/WITHOUT Cells fed to computeScorecard with mode=estimate; renderers carry an unmistakable estimate label; assumptions are named constants, not hidden tuning.
+
+### prove saveScorecard writes atomically (wx) and degrades fs errors instead of crashing
+
+**Status:** Approved
+**Date:** 2026-06-23
+**ID:** dfe33d94
+
+Round-3 adversarial QA found two saveScorecard defects: an existsSync-then-write loop raced under concurrency and silently overwrote a prior run (violating the documented non-clobber guarantee), and .openlore/prove existing as a file made mkdirSync throw an unhandled stack-trace crash that discarded the computed scorecard. Fix: pick the non-clobbering name atomically via O_CREAT|O_EXCL (writeFileSync flag wx), advancing the suffix on EEXIST; and wrap the save call so any filesystem error degrades to a clear stderr message + exit 1 while the scorecard is still printed.
+
+**Consequences:** Concurrent --save calls never clobber; a filesystem failure never crashes the process. Docs (cli-reference, AGENT-BENCHMARKS, --json schema) aligned with shipped behavior. Refines the prove persistence decision (670b5f0b).
