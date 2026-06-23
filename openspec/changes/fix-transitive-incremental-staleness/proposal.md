@@ -30,6 +30,24 @@
 > just `external` ones. (3) `handleDeletions` now clears stale marks for deleted files (no phantom
 > rows). (4) freshness honors the stale region for file-level anchors too (`fileInStaleRegion`), not
 > only symbol anchors. All four have regression tests and were dogfooded on the real CLI.
+>
+> **Review hardening (second adversarial pass).** Two more fixes: (5) `name_only` consumer
+> re-resolution was pruned to only the consumers an added symbol can actually flip — a consumer keeps a
+> `name_only` edge to the lowest-id candidate, so the new symbol matters only when its id sorts before
+> the consumer's current target (`getNameOnlyConsumers` now returns the callee id for the comparison).
+> Without this, a common-name add (`get`/`run`) needlessly re-parsed and stale-flagged dozens of
+> unaffected consumers (measured ~20 needless stale + a ~30x latency spike on a 60-consumer corpus); the
+> prune drops both to zero. (6) a file that the closure intends to recompute but cannot READ
+> (permissions / transient I/O / a lock) is no longer emptied-and-asserted-fresh — `buildGraphSubset`
+> reports `skipped` files, whose edges are preserved and which are marked stale (the one silent-
+> divergence the contract forbids). Both have regression tests and were dogfooded on the real CLI.
+>
+> **Accepted, documented behavior (sound over-approximation).** A budget-exceeded edit marks the
+> un-recomputed files stale, which (a) flips file-level *decision* anchors on those files to `drifted`
+> (with the `staleRegion` marker) even though their content is byte-identical, and (b) excludes any
+> downgraded memory from `findUnreconciled` contradiction detection until the region self-heals. Both
+> are sound (the topology genuinely was not recomputed) and, after fix (5), only occur on a genuine
+> large-fan-in hub edit — honest "verify this, it wasn't recomputed" signals, not silent loss.
 
 ## Why
 

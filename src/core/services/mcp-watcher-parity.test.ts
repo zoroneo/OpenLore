@@ -334,6 +334,87 @@ describe('adversarial regressions (PR #189 review findings)', () => {
     s.close();
   });
 
+  it('round2: adding a symbol that LOSES the name_only tiebreak does not needlessly stale-flag its consumers', async () => {
+    // zzz defines foo; 5 consumers resolve foo -> zzz (lowest id). Adding foo in
+    // zzzz (sorts AFTER zzz) cannot become the winner, so NONE of the 5 consumers
+    // change — they must not be re-resolved or marked stale, even under a tiny budget.
+    const v1: Files = { 'src/zzz.ts': 'export function foo() { return 9; }\n' };
+    for (let i = 0; i < 5; i++) v1[`src/w${i}.ts`] = `export function use${i}() { return foo(); }\n`;
+    await writeFiles(v1);
+    const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    seedStore(store, v1, await fullBuild(v1));
+    store.close();
+
+    await writeFiles({ 'src/zzzz.ts': 'export function foo() { return 1; }\n' });
+    const { McpWatcher } = await import('./mcp-watcher.js');
+    await new McpWatcher({ rootPath: root, outputPath, embed: false, closureBudget: 2 })
+      .handleChange(join(root, 'src/zzzz.ts'));
+
+    const s = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    // The prune: zero needless stale flags (without it, 5 consumers − budget 2 = 3 stale).
+    expect(s.getStaleFiles().filter((f) => f.startsWith('src/w'))).toHaveLength(0);
+    // And every consumer still correctly resolves to zzz (matches analyze --force).
+    for (let i = 0; i < 5; i++) {
+      expect(outgoingSig(s, `src/w${i}.ts`).join('\n')).toContain('src/zzz.ts::foo');
+    }
+    s.close();
+  });
+
+  it('round2: adding a symbol that WINS the tiebreak converges consumers within budget and flags the overflow stale', async () => {
+    const v1: Files = { 'src/zzz.ts': 'export function foo() { return 9; }\n' };
+    for (let i = 0; i < 5; i++) v1[`src/w${i}.ts`] = `export function use${i}() { return foo(); }\n`;
+    await writeFiles(v1);
+    const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    seedStore(store, v1, await fullBuild(v1));
+    store.close();
+
+    // aaa sorts BEFORE zzz → becomes the new winner for every consumer.
+    await writeFiles({ 'src/aaa.ts': 'export function foo() { return 1; }\n' });
+    const { McpWatcher } = await import('./mcp-watcher.js');
+    await new McpWatcher({ rootPath: root, outputPath, embed: false, closureBudget: 2 })
+      .handleChange(join(root, 'src/aaa.ts'));
+
+    const s = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    const stale = s.getStaleFiles().filter((f) => f.startsWith('src/w'));
+    expect(stale).toHaveLength(3); // 5 consumers − budget 2 = 3 over budget → stale
+    // The 2 recomputed consumers converged to aaa (the new winner).
+    for (let i = 0; i < 5; i++) {
+      const rel = `src/w${i}.ts`;
+      if (!stale.includes(rel)) expect(outgoingSig(s, rel).join('\n')).toContain('src/aaa.ts::foo');
+    }
+    s.close();
+  });
+
+  it('round2: a present-but-unreadable consumer file is marked stale (not silently emptied + asserted fresh)', async () => {
+    const v1: Files = {
+      'src/c.ts': 'export function bar() { return 1; }\n',
+      'src/x.ts': 'export function useFoo() { return foo(); }\n', // foo external → consumer of an added foo
+    };
+    await writeFiles(v1);
+    const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    seedStore(store, v1, await fullBuild(v1));
+    store.close();
+
+    // Edit c to ADD foo (x becomes an external consumer in the recompute set),
+    // but make x unreadable before the watcher tries to read it.
+    await writeFiles({ 'src/c.ts': 'export function bar() { return 1; }\nexport function foo() { return 2; }\n' });
+    const { chmod } = await import('node:fs/promises');
+    await chmod(join(root, 'src/x.ts'), 0o000);
+    try {
+      const { McpWatcher } = await import('./mcp-watcher.js');
+      await new McpWatcher({ rootPath: root, outputPath, embed: false }).handleChange(join(root, 'src/c.ts'));
+
+      const s = EdgeStore.open(EdgeStore.dbPath(outputPath));
+      // Soundness: x could not be recomputed → it is flagged stale, never cleared…
+      expect(s.isFileStale('src/x.ts')).toBe(true);
+      // …and its existing edge is PRESERVED (not deleted to empty).
+      expect(outgoingSig(s, 'src/x.ts').join('\n')).toContain('external::foo');
+      s.close();
+    } finally {
+      await chmod(join(root, 'src/x.ts'), 0o644); // restore so afterEach cleanup works
+    }
+  });
+
   it('a file-level anchor in a stale region is not reported fresh', async () => {
     const files: Files = { 'src/c.ts': 'export function target() { return 1; }\n' };
     await writeFiles(files);

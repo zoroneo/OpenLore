@@ -485,22 +485,34 @@ export class McpWatcher {
           let sub = await buildGraphSubset(f.rel, f.content, recompute, this.rootPath, resolutionNodes);
 
           // Class-P closure: a symbol this edit ADDED can newly bind a previously-
-          // `external` call site in a file that is NOT a caller of this one, so
-          // getCallerFiles misses it. These consumers must NEVER be left silently
-          // divergent — so discovery runs even when direct callers already filled
-          // the budget: re-resolve as many as the remaining budget allows and mark
-          // the rest stale (the same converge-or-flag contract the budget enforces
-          // for direct callers). Re-resolving runs them alongside the changed file
-          // so the new edge resolves internally — exactly as `analyze --force` would.
-          const addedNames = sub.nodes.map((n) => n.name).filter((n) => !oldNames.has(n));
-          if (addedNames.length > 0) {
+          // `external` call site, or flip the lowest-id `name_only` winner, in a
+          // file that is NOT a caller of this one (getCallerFiles misses it).
+          // Discovery runs even when direct callers already filled the budget —
+          // these consumers must never be left silently divergent: re-resolve
+          // within the remaining budget, mark the rest stale. Re-resolving runs
+          // them alongside the changed file so the new edge resolves internally —
+          // exactly as `analyze --force` would.
+          const addedIdByName = new Map<string, string>(); // added name → lowest new id
+          for (const n of sub.nodes) {
+            if (oldNames.has(n.name)) continue;
+            const cur = addedIdByName.get(n.name);
+            if (cur === undefined || n.id < cur) addedIdByName.set(n.name, n.id);
+          }
+          if (addedIdByName.size > 0) {
             const extra = new Set<string>();
-            for (const name of addedNames) {
-              // `external` consumers (previously unresolved) AND `name_only`
-              // consumers (already resolving the name to a DIFFERENT file, whose
-              // winning candidate the new symbol can flip) both need re-resolving.
-              for (const cf of [...store.getExternalConsumerFiles(name), ...store.getNameOnlyConsumerFiles(name)]) {
+            for (const [name, addedId] of addedIdByName) {
+              // `external` consumers were unresolved — they always rebind to the new symbol.
+              for (const cf of store.getExternalConsumerFiles(name)) {
                 if (cf !== f.rel && cf !== 'external' && !recompute.includes(cf)) extra.add(cf);
+              }
+              // `name_only` consumers already resolve the name to another file by
+              // lowest candidate id; the added symbol only flips that pick when its
+              // id sorts BEFORE the consumer's current target. Re-resolving the rest
+              // is a verified no-op (and a needless stale flag), so prune them — this
+              // is what keeps a common-name add (`get`/`run`) from re-parsing and
+              // stale-flagging dozens of unaffected files.
+              for (const { file: cf, calleeId } of store.getNameOnlyConsumers(name)) {
+                if (cf !== f.rel && cf !== 'external' && !recompute.includes(cf) && addedId < calleeId) extra.add(cf);
               }
             }
             if (extra.size > 0) {
@@ -515,12 +527,19 @@ export class McpWatcher {
             }
           }
 
-          const { edges: newEdges, nodes: newNodes, cfgs: newCfgs } = sub;
+          const { edges: newEdges, nodes: newNodes, cfgs: newCfgs, skipped } = sub;
+          // A file we INTENDED to recompute but could not READ (permissions /
+          // transient I/O / a lock) must not have its edges deleted and then be
+          // asserted fresh — that is the one silent-divergence the converge-or-flag
+          // contract forbids. Preserve its existing edges (skip the delete) and mark
+          // it stale instead, so it is honestly flagged until it can be re-read.
+          const skippedSet = new Set(skipped);
+          const recomputed = recompute.filter((cf) => !skippedSet.has(cf));
 
           // Atomic swap so concurrent MCP reads never see a torn graph.
           store.transaction(() => {
             store.deleteEdgesForFile(f.rel);
-            for (const cf of recompute) store.deleteOutgoingEdgesForFile(cf);
+            for (const cf of recomputed) store.deleteOutgoingEdgesForFile(cf);
             store.deleteNodesForFile(f.rel);
             // Recompute only THIS file's overlay records — intra-procedural, so
             // caller files' overlays stay valid (spec: add-intraprocedural-cfg-dataflow-overlay).
@@ -529,20 +548,23 @@ export class McpWatcher {
             store.insertEdges(newEdges);
             store.insertCfgs(newCfgs);
             store.setFileHash(f.rel, newHash);
-            // Self-heal: every file we just recomputed has converged, so it leaves
-            // the explicit stale region. Soundness fallback: files we could not
-            // afford to recompute are marked stale (over-approximate, never silent).
-            store.clearFilesStale([f.rel, ...recompute]);
-            if (dropped.length > 0) store.markFilesStale(dropped);
+            // Self-heal: every file we actually recomputed has converged, so it
+            // leaves the explicit stale region. Soundness fallback: files we could
+            // not afford to recompute (over budget) OR could not read (skipped) are
+            // marked stale (over-approximate, never silent).
+            store.clearFilesStale([f.rel, ...recomputed]);
+            const staleNow = skipped.length > 0 ? [...dropped, ...skipped] : dropped;
+            if (staleNow.length > 0) store.markFilesStale(staleNow);
           });
 
           changedFiles.push({ rel: f.rel, content: f.content });
           for (const n of newNodes) changedNodes.push(n);
           if (this.debug) {
+            const staleCount = dropped.length + skipped.length;
             process.stderr.write(
               `[mcp-watcher] graph: ${f.rel} (+${newNodes.length} nodes, +${newEdges.length} edges, ` +
-              `${recompute.length} re-resolved` +
-              `${dropped.length ? `, ${dropped.length} over budget → stale` : ''})\n`,
+              `${recomputed.length} re-resolved` +
+              `${staleCount ? `, ${staleCount} → stale${skipped.length ? ` (${skipped.length} unreadable)` : ''}` : ''})\n`,
             );
           }
         }
@@ -1065,6 +1087,14 @@ export async function buildGraphSubset(
   edges: import('../analyzer/call-graph.js').CallEdge[];
   nodes: import('../analyzer/call-graph.js').FunctionNode[];
   cfgs: Array<{ functionId: string; filePath: string; cfg: import('../analyzer/cfg.js').FunctionCfg }>;
+  /**
+   * callerFiles the caller asked to re-resolve but that could NOT be read
+   * (permissions / transient I/O / a lock). The caller must NOT delete-and-empty
+   * these — it preserves their edges and marks them stale instead, so an
+   * unreadable file is never silently emptied-and-asserted-fresh
+   * (fix-transitive-incremental-staleness).
+   */
+  skipped: string[];
 }> {
   let lang = detectLanguage(changedRel);
   let content = changedContent;
@@ -1075,11 +1105,11 @@ export async function buildGraphSubset(
   if (lang === 'unknown' && HTML_EXTENSIONS.test(changedRel)) {
     const { extractHtmlScripts } = await import('../analyzer/html-script-extractor.js');
     const blanked = extractHtmlScripts(changedContent);
-    if (!blanked) return { edges: [], nodes: [], cfgs: [] }; // no inline JS
+    if (!blanked) return { edges: [], nodes: [], cfgs: [], skipped: [] }; // no inline JS
     content = blanked;
     lang = 'JavaScript';
   }
-  if (!CALL_GRAPH_LANGS.has(lang)) return { edges: [], nodes: [], cfgs: [] };
+  if (!CALL_GRAPH_LANGS.has(lang)) return { edges: [], nodes: [], cfgs: [], skipped: [] };
 
   const { CallGraphBuilder } = await import('../analyzer/call-graph.js');
   // Use relative paths as node IDs (consistent with analyze output)
@@ -1087,14 +1117,17 @@ export async function buildGraphSubset(
     { path: changedRel, content, language: lang },
   ];
 
+  const skipped: string[] = [];
   for (const cf of callerFiles) {
     const cfLang = detectLanguage(cf);
-    if (!CALL_GRAPH_LANGS.has(cfLang)) continue;
+    if (!CALL_GRAPH_LANGS.has(cfLang)) continue; // ungraphable lang — never had edges; not stale
     try {
       const cfContent = await readFile(join(rootDir, cf), 'utf-8');
       files.push({ path: cf, content: cfContent, language: cfLang });
     } catch {
-      // skip unreadable files
+      // Present-but-unreadable: report it so the caller marks it stale rather
+      // than deleting its edges and asserting it fresh.
+      skipped.push(cf);
     }
   }
 
@@ -1115,5 +1148,5 @@ export async function buildGraphSubset(
     }
   }
 
-  return { edges: result.edges, nodes: changedNodes, cfgs };
+  return { edges: result.edges, nodes: changedNodes, cfgs, skipped };
 }

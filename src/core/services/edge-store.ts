@@ -312,21 +312,21 @@ export class EdgeStore {
   }
 
   /**
-   * Distinct caller FILES that resolve this exact name at `name_only` confidence
-   * (the lowest, ambiguity-tolerant tier — no import, no receiver type). When an
-   * incremental edit ADDS a symbol, the winning candidate for a `name_only`
-   * call to that name can change (the tiebreak is by symbol id across all
-   * candidates), so these consumers must be re-resolved alongside the
-   * `external` ones to converge with `analyze --force` — even though they are
-   * not callers of the changed file (their edge points at a *different* file)
-   * (fix-transitive-incremental-staleness).
+   * Caller FILE + current resolved callee id for every `name_only` edge to this
+   * exact name (the lowest, ambiguity-tolerant tier — no import, no receiver
+   * type). When an incremental edit ADDS a symbol, the winning candidate for a
+   * `name_only` call is the lowest candidate id, so the new symbol only flips a
+   * consumer whose current target id sorts AFTER the new id. The caller compares
+   * `calleeId` to prune the no-op majority (a common-name add would otherwise
+   * needlessly re-resolve and stale-flag every consumer)
+   * (fix-transitive-incremental-staleness). One row per (file, target) pair.
    */
-  getNameOnlyConsumerFiles(symbolName: string): string[] {
+  getNameOnlyConsumers(symbolName: string): Array<{ file: string; calleeId: string }> {
     return (
       this.db
-        .prepare("SELECT DISTINCT caller_file FROM edges WHERE callee_name = ? AND confidence = 'name_only'")
-        .all(symbolName) as unknown as Array<{ caller_file: string }>
-    ).map((r) => r.caller_file);
+        .prepare("SELECT DISTINCT caller_file, callee_id FROM edges WHERE callee_name = ? AND confidence = 'name_only'")
+        .all(symbolName) as unknown as Array<{ caller_file: string; callee_id: string }>
+    ).map((r) => ({ file: r.caller_file, calleeId: r.callee_id }));
   }
 
   /**

@@ -11,8 +11,8 @@ whose previously-`external` call sites a newly-added symbol should now bind — 
 only the changed file and a fixed-size slice of its direct callers. (Because a batch fully determines
 the set of symbols it adds or removes, this single bounded expansion is sufficient to converge the
 affected region; no multi-hop fixpoint iteration is required.) Where the update cannot complete that
-expansion within a bounded work budget, it SHALL explicitly mark the un-recomputed files as `stale` in
-the graph metadata; it SHALL NOT leave a divergent region unmarked. The update SHALL be sound: it MAY
+expansion within a bounded work budget (`INCREMENTAL_CLOSURE_BUDGET`), it SHALL explicitly mark the
+un-recomputed files as `stale` in the graph metadata; it SHALL NOT leave a divergent region unmarked. The update SHALL be sound: it MAY
 mark more than the minimal dirty set as stale, but it SHALL NOT report a stale region as current.
 
 #### Scenario: A direct-caller resolution change converges
@@ -44,11 +44,11 @@ mark more than the minimal dirty set as stale, but it SHALL NOT report a stale r
 A freshness verdict over a symbol SHALL account for the staleness of the symbol's surrounding
 topology, not only the symbol's own existence and content hash. A symbol that lies within an
 explicitly-marked stale region SHALL NOT be reported as `fresh`/authoritative; it SHALL be reported as
-`stale` (or otherwise non-authoritative) until the region is reconciled.
+`drifted` (or otherwise non-authoritative) until the region is reconciled.
 
 #### Scenario: A memory anchored above a stale subgraph is not reported fresh
 
-- **GIVEN** a memory anchored to `A`, where `A`'s downstream subgraph has been marked `stale` by a
+- **GIVEN** a memory anchored to `A`, where `A`'s file has been marked `stale` by a
   budget-exceeded incremental update
 - **WHEN** the memory's freshness is evaluated
 - **THEN** the verdict is not `fresh`; it reflects that `A`'s topology is stale

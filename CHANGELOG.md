@@ -55,6 +55,19 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 ### Fixed
 
+- **Incremental watch now converges with `analyze --force` (substrate correctness).**
+  With `--watch-auto`, each save re-resolves the changed file's reverse-dependency
+  closure — its direct callers (no longer capped at 10) plus prior non-callers whose
+  previously-unresolved calls a newly-added symbol now binds — so the affected call
+  graph matches a full re-analyze instead of silently diverging (it was depth-1 only:
+  `A→B→C`, edit `C`, callers past the first 10 and newly-resolvable non-callers stayed
+  stale until the next `analyze --force`). A bounded per-save work budget
+  (`INCREMENTAL_CLOSURE_BUDGET`, default 40) keeps a hub edit light; over-budget or
+  unreadable files are marked **explicitly stale** in the graph metadata (freshness
+  verdicts over their symbols report non-authoritative, never silently wrong) and
+  self-heal as later edits touch them. A full `openlore analyze --force` clears the
+  region. Name resolution for duplicate simple names is now deterministic
+  (seed-order-independent), so incremental and from-scratch builds agree.
 - **Node-version guard** — launching the CLI under an unsupported Node (<22.5) now
   fails fast with one legible stderr line and the stable exit code 78 (never a
   stack trace), protecting subprocess delegation from a host on Node 20/21. The
