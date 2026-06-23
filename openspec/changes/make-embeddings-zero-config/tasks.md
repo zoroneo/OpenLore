@@ -49,5 +49,25 @@
       optional dep hidden, `analyze` falls back to keyword with an actionable message (never blocks).
 
 ## 6. Docs
-- [x] Documented the lexical-default stance and `openlore embed --local` in the README. (The
+- [x] Documented the lexical-default stance and `openlore embed --local` in the README, plus
+      docs/semantic-search.md, docs/mcp-tools.md, docs/configuration.md, docs/install.md,
+      docs/cli-reference.md, docs/output.md, docs/providers.md, and CHANGELOG.md. (The
       `first-run-hardening` skill is a global Claude skill, not tracked in this repo.)
+
+## 7. Round-2 hardening (adversarial review of PR #191)
+- [x] **Model/dimension-switch safety.** `VectorIndex.build` now gates cached-vector reuse on an exact
+      model match (`existingMeta.model === embedSvc.modelName`), `VectorIndex.updateFiles` (watch)
+      refuses to mix dimensions when the model changed, and both `VectorIndex.search` /
+      `SpecVectorIndex.search` degrade to keyword (BM25) instead of throwing when a stale index is
+      queried with a mismatched-dimension embedder. Regression: `vector-index-model-switch.test.ts`.
+- [x] **Precedence.** An explicit `embedding.provider: 'local'` now wins over ambient `EMBED_*` env in
+      `resolveEmbedder`, so `openlore embed --local` is never silently overridden (it also warns when
+      `EMBED_*` is set). Regression: `embedder.test.ts`.
+- [x] **Honest mode reporting.** `servedRetrievalMode` reports `keyword` whenever the on-disk index has
+      no vectors (e.g. a build fell back after a missing optional dep), even if config names a semantic
+      provider; `searchMode` is derived from it. Regression: `embedder.test.ts`.
+- [x] **Reversibility.** Added `openlore embed --off` (revert to keyword + forced rebuild). `doctor`
+      now reports a configured local provider instead of silently skipping. Tests: `embed.test.ts`.
+- [x] Validated all of the above e2e on a clean repo: keyword default (no warning), `embed --local`
+      ignoring stale `EMBED_*`, incremental re-analyze staying dimension-safe, `embed --off`, and the
+      missing-dep path producing a working keyword index with an honest `keyword` mode.

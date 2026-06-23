@@ -7,6 +7,33 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 ### Added
 
+- **Zero-config local embeddings** (`openlore embed --local`) — an on-device,
+  no-API-key, CPU-only semantic-search upgrade. It lazily downloads and caches a
+  small pinned model (`Xenova/all-MiniLM-L6-v2`, ~23 MB, under `~/.openlore/models`)
+  on first use via the optional `@huggingface/transformers` package. Revert with
+  `openlore embed --off`. The package is an optional dependency loaded lazily; if it
+  is absent the index build falls back to keyword (BM25) with an actionable install
+  hint and never blocks. A new `embedding.provider: 'local' | 'remote'` config field
+  selects the provider; an explicit local provider wins over `EMBED_*` env. The
+  remote OpenAI-compatible path (`EMBED_*` / `embedding` block) is unchanged.
+- **Keyword (BM25) is now an explicit first-class default**, not a degraded fallback.
+  `analyze` / `orient` / `search_code` / `search_specs` state the active retrieval
+  mode plainly (`keyword` / `local-semantic` / `remote-semantic`) via a new
+  `retrievalMode` field and CLI summaries, and the keyword default no longer emits a
+  degraded-fallback warning. The reported mode is honest about what the index actually
+  serves (it reads `keyword` when the index has no vectors, even if a provider is
+  configured).
+
+### Fixed
+
+- **Embedding model switches can no longer corrupt the vector index.** Switching the
+  embedding provider/model (e.g. remote 1536-dim → local 384-dim) previously reused
+  cached vectors of the old dimension on an incremental rebuild or watch update,
+  producing a mixed-dimension table that crashed ANN search. Vector reuse is now gated
+  on an exact model match, the watch updater refuses to mix dimensions, and `search`
+  degrades to keyword (BM25) instead of throwing if a stale index is queried with a
+  mismatched embedder.
+
 - **Unified finding-enforcement policy** — a single `enforcement.policy` block in
   `.openlore/config.json` maps a stable governance finding `code` to one enforcement
   class (`blocking | advisory | off`), decoupling a finding's intrinsic severity

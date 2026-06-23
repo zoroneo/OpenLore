@@ -457,8 +457,20 @@ export class SpecVectorIndex {
       return SpecVectorIndex._bm25Only(table, query, limit, domain, section);
     }
 
-    const [queryVector] = await embedSvc.embed([query]);
+    let queryVector: number[];
+    try {
+      [queryVector] = await embedSvc.embed([query]);
+    } catch {
+      // Embedder unreachable / unavailable — degrade to BM25 rather than erroring.
+      return SpecVectorIndex._bm25Only(table, query, limit, domain, section);
+    }
     if (!queryVector) throw new Error('Failed to embed query');
+
+    // Dimension safety-net: a model switch without a spec-index rebuild would make
+    // the query vector's dimension disagree with the stored vectors and crash ANN.
+    if (meta && meta.dim > 0 && queryVector.length !== meta.dim) {
+      return SpecVectorIndex._bm25Only(table, query, limit, domain, section);
+    }
 
     const fetchLimit = Math.min(limit * 10, 500);
     const rows = await table.query().nearestTo(queryVector).limit(fetchLimit).toArray();

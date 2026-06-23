@@ -429,14 +429,20 @@ export class VectorIndex {
     // ── Incremental cache lookup ─────────────────────────────────────────────
     let cachedVectors = new Map<string, number[]>(); // id → vector
 
-    // Only reuse vectors from an existing index that actually has them. A
-    // previously BM25-only index (hasEmbeddings:false) has no `vector` column,
-    // so rebuild it fully as a hybrid index (upgrade path).
+    // Only reuse vectors from an existing index that actually has them AND was
+    // built with the SAME model. A previously BM25-only index (hasEmbeddings:false)
+    // has no `vector` column, so rebuild it fully as a hybrid index (upgrade path).
+    // A model change (e.g. remote 1536-dim → local 384-dim, or one local model →
+    // another) means the cached vectors are a different dimension; reusing them
+    // would write a mixed-dimension table that crashes ANN search. Require an exact
+    // model match — a sidecar-less legacy index (model unknown) is rebuilt in full.
     const existingMeta = incremental ? readMeta(outputDir) : null;
     const canReuseVectors =
       incremental &&
       VectorIndex.exists(outputDir) &&
-      (existingMeta === null || existingMeta.hasEmbeddings);
+      existingMeta !== null &&
+      existingMeta.hasEmbeddings &&
+      existingMeta.model === embedSvc.modelName;
 
     if (canReuseVectors) {
       try {
@@ -553,6 +559,16 @@ export class VectorIndex {
     const dbPath = join(outputDir, DB_FOLDER);
     const existingMeta = readMeta(outputDir);
     const indexHasEmbeddings = existingMeta === null ? true : existingMeta.hasEmbeddings;
+
+    // A changed embedding model means the on-disk vectors are a different dimension;
+    // a row-level add would create a mixed-dimension table. Refuse the incremental
+    // vector update (signatures still refresh on their own lane) and leave the index
+    // dimension-consistent until a full `analyze --force` rebuilds it under the new
+    // model. Watch-mode freshness is best-effort; correctness wins over staleness.
+    if (embedSvc && existingMeta !== null && existingMeta.hasEmbeddings &&
+        existingMeta.model !== embedSvc.modelName) {
+      return { embedded: 0, reused: 0, total: 0, hasEmbeddings: true };
+    }
 
     // ── Build candidate records for the changed files' functions ──────────────
     const sigIndex = buildSignatureIndex(signatures);
@@ -733,6 +749,14 @@ export class VectorIndex {
       return VectorIndex._bm25Only(table, dbPath, query, limit, language, minFanIn);
     }
     if (!queryVector) throw new Error('Failed to embed query');
+
+    // Dimension safety-net: if the query embedder's dimension disagrees with the
+    // index's recorded dimension (e.g. the embedding model was switched without a
+    // full rebuild), ANN search would throw deep inside LanceDB. Degrade to BM25
+    // rather than crashing the tool — the index is stale, not broken.
+    if (meta && meta.dim > 0 && queryVector.length !== meta.dim) {
+      return VectorIndex._bm25Only(table, dbPath, query, limit, language, minFanIn);
+    }
 
     const denseFetch = hybrid ? Math.min(limit * 5, 500) : Math.min(limit * 10, 1000);
     const denseRows = await table.query().nearestTo(queryVector).limit(denseFetch).toArray() as Record<string, unknown>[];

@@ -175,7 +175,7 @@ export async function handleOrient(
   const outputDir = join(absDir, '.openlore', 'analysis');
 
   const { VectorIndex } = await import('../../analyzer/vector-index.js');
-  const { resolveEmbedder, embedderMode } = await import('../../analyzer/embedder.js');
+  const { resolveEmbedder, servedRetrievalMode } = await import('../../analyzer/embedder.js');
   const { SpecVectorIndex } = await import('../../analyzer/spec-vector-index.js');
 
   const hasCodeIndex = VectorIndex.exists(outputDir);
@@ -194,8 +194,8 @@ export async function handleOrient(
   // relevance gate; `retrievalMode` is the honest, human-facing mode.
   const cfg = await readOpenLoreConfig(absDir);
   const embedSvc = await resolveEmbedder(cfg);
-  const retrievalMode = embedderMode(embedSvc);
-  const searchMode = embedSvc ? 'hybrid' : 'bm25_fallback';
+  const retrievalMode = servedRetrievalMode(embedSvc, outputDir, 'code');
+  const searchMode = retrievalMode === 'keyword' ? 'bm25_fallback' : 'hybrid';
 
   const clampedLimit = Math.max(1, Math.min(limit, 20));
 

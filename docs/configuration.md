@@ -32,11 +32,13 @@
 | `GEMINI_API_KEY` | `gemini` | Google Gemini API key |
 | `COPILOT_API_BASE_URL` | `copilot` | Base URL of the copilot-api proxy (default: `http://localhost:4141/v1`) |
 | `COPILOT_API_KEY` | `copilot` | API key if the proxy requires auth (default: `copilot`) |
-| `EMBED_BASE_URL` | embedding | Base URL for the embedding API (e.g. `http://localhost:11434/v1`) |
-| `EMBED_MODEL` | embedding | Embedding model name (e.g. `nomic-embed-text`) |
-| `EMBED_API_KEY` | embedding | API key for the embedding service (defaults to `OPENAI_API_KEY`) |
+| `EMBED_BASE_URL` | embedding (remote) | Base URL for a remote OpenAI-compatible embedding API (e.g. `http://localhost:11434/v1`) |
+| `EMBED_MODEL` | embedding (remote) | Remote embedding model name (e.g. `nomic-embed-text`) |
+| `EMBED_API_KEY` | embedding (remote) | API key for the remote embedding service (defaults to `OPENAI_API_KEY`) |
 | `DEBUG` | -- | Enable stack traces on errors |
 | `CI` | -- | Auto-detected; enables timestamps in output |
+
+> The `EMBED_*` variables configure the **remote** embedding provider only. For on-device embeddings with no endpoint or key, run `openlore embed --local` (or set `embedding.provider: "local"` in `.openlore/config.json`). Keyword (BM25) search is the first-class default and needs none of these. See [docs/semantic-search.md](semantic-search.md#retrieval-modes) for the full embedding/retrieval-mode reference.
 
 ### Spec-store binding
 
@@ -155,4 +157,4 @@ An optional `contextInjection` block controls the per-task orientation that `ope
 
 The relevance gate is deterministic and never learned: when a task's graph match is weak (the small/familiar/shallow case), injection degrades to a single pointer line rather than taxing a task that needs no orientation. Injection is fail-open — any failure (no graph, parse error, empty/weak match) emits the pointer line and exits 0, so the hook can never break the agent's turn.
 
-> **Without embeddings** (the default keyword/BM25 index) the gate is *structural only* — it uses matched-function count and fan-in/hub centrality, not score. A central function can be matched by spurious keyword overlap, so an off-topic prompt may occasionally still emit a block. Running `openlore analyze --embed` enables the semantic-score path (`relevanceMinScore`), which discriminates relevance far better. The injected block is always explicitly ignorable, so a false positive costs only a few tokens.
+> **Without embeddings** (the default keyword/BM25 index) the gate is *structural only* — it uses matched-function count and fan-in/hub centrality, not score. A central function can be matched by spurious keyword overlap, so an off-topic prompt may occasionally still emit a block. Running `openlore embed --local` (one command, on-device, no API key) — or configuring a remote `EMBED_*` endpoint — enables the semantic-score path (`relevanceMinScore`), which discriminates relevance far better. The injected block is always explicitly ignorable, so a false positive costs only a few tokens.

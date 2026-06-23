@@ -184,7 +184,7 @@ export async function handleSearchCode(
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
   const { VectorIndex } = await import('../../analyzer/vector-index.js');
-  const { resolveEmbedder, embedderMode } = await import('../../analyzer/embedder.js');
+  const { resolveEmbedder, servedRetrievalMode } = await import('../../analyzer/embedder.js');
 
   // Forced literal-text mode: query the separate line index directly, bypassing
   // symbol search. Use when hunting a literal string (UI copy, error text).
@@ -203,8 +203,8 @@ export async function handleSearchCode(
   // the first-class keyword default. retrievalMode is the honest, served mode.
   const cfg = await readOpenLoreConfig(absDir);
   const embedSvc = await resolveEmbedder(cfg);
-  const retrievalMode = embedderMode(embedSvc);
-  const searchMode = embedSvc ? 'hybrid' : 'bm25_fallback';
+  const retrievalMode = servedRetrievalMode(embedSvc, outputDir, 'code');
+  const searchMode = retrievalMode === 'keyword' ? 'bm25_fallback' : 'hybrid';
 
   limit = Math.max(1, Math.min(limit, 100));
   const { readCachedContext } = await import('./utils.js');
@@ -522,7 +522,7 @@ export async function handleSearchSpecs(
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
   const { SpecVectorIndex } = await import('../../analyzer/spec-vector-index.js');
-  const { resolveEmbedder, embedderMode } = await import('../../analyzer/embedder.js');
+  const { resolveEmbedder, servedRetrievalMode } = await import('../../analyzer/embedder.js');
 
   if (!SpecVectorIndex.exists(outputDir)) {
     return {
@@ -535,8 +535,8 @@ export async function handleSearchSpecs(
   // the first-class keyword default for spec search.
   const cfg = await readOpenLoreConfig(absDir);
   const embedSvc = await resolveEmbedder(cfg);
-  const retrievalMode = embedderMode(embedSvc);
-  const searchMode = embedSvc ? 'hybrid' : 'bm25_fallback';
+  const retrievalMode = servedRetrievalMode(embedSvc, outputDir, 'spec');
+  const searchMode = retrievalMode === 'keyword' ? 'bm25_fallback' : 'hybrid';
 
   limit = Math.max(1, Math.min(limit, 50));
   const [results, mappingIdx] = await Promise.all([
