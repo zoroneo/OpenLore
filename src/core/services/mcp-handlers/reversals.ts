@@ -55,7 +55,7 @@ export const MAX_REVERSALS = 10;
  * consolidation has not run (e.g. no LLM configured), so supersession is determined by
  * the link, not by waiting for the target's status to flip to `rejected`.
  */
-function isEffectiveSuperseder(b: PendingDecision): boolean {
+export function isEffectiveSuperseder(b: PendingDecision): boolean {
   // `supersedes !== id` mirrors the memory path's self-supersede guard (memory.ts): a
   // decision that names its own (content-derived) id supersedes nothing and must not
   // retire itself.
