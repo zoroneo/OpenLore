@@ -30,6 +30,37 @@ export const HOST_OWNED_CONFIG_KEYS = [
   'plugins',
 ] as const;
 
+/**
+ * Replace (or append) a single top-level YAML block by name in `raw`, touching no
+ * other bytes. The block spans the `<key>:` line at column 0 plus all following
+ * indented lines; replacement stops at the next column-0 line (a new top-level key,
+ * a blank line, or a column-0 comment) or EOF. When the key is absent the block is
+ * appended. This is a literal text edit — not a YAML re-serialization — so host
+ * content (other keys, comments, CRLF, folded scalars) is preserved byte-for-byte.
+ *
+ * @param blockText  the serialized `<key>: …` YAML (LF-separated)
+ * @param eol        the file's detected line ending (`\n` or `\r\n`)
+ */
+export function spliceTopLevelBlock(raw: string, key: string, blockText: string, eol: string): string {
+  const blockLines = blockText.replace(/\n+$/, '').split('\n');
+  const keyLine = new RegExp(`^${key}\\s*:`);
+  const lines = raw.split(/\r?\n/);
+  const startIdx = lines.findIndex((l) => keyLine.test(l));
+
+  // Key absent → append, keeping `raw` byte-for-byte and adding a newline separator
+  // only when it does not already end with one.
+  if (startIdx === -1) {
+    const block = blockLines.join(eol) + eol;
+    if (raw.length === 0) return block;
+    return raw + (raw.endsWith('\n') ? '' : eol) + block;
+  }
+
+  // Key present → replace the `<key>:` line plus its indented body.
+  let endIdx = startIdx + 1;
+  while (endIdx < lines.length && /^[ \t]/.test(lines[endIdx])) endIdx++;
+  return [...lines.slice(0, startIdx), ...blockLines, ...lines.slice(endIdx)].join(eol);
+}
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -433,18 +464,36 @@ export class OpenSpecConfigManager {
       raw = null;
     }
 
-    // Existing file → edit in place so host-owned keys and comments survive byte
-    // for byte. Only the `openlore` key (and, standalone-only, `context`) is set.
     if (raw !== null) {
       const doc = parseDocument(raw);
+      if (doc.errors.length > 0) {
+        // Never clobber a host file we cannot parse — fail loudly instead of
+        // re-serializing (or truncating) malformed YAML.
+        throw new Error(
+          `Refusing to update ${this.configPath}: it is not valid YAML (${doc.errors[0].message}). ` +
+            `Fix the file and retry.`
+        );
+      }
       const hostManaged = HOST_OWNED_CONFIG_KEYS.some((key) => doc.has(key));
 
-      doc.set('openlore', metadata);
+      if (hostManaged) {
+        // Byte-exact: splice ONLY the top-level `openlore:` block into the raw
+        // text. Every other byte — host keys, comments, CRLF line endings, folded
+        // scalars — is left untouched. `context` is host-owned, so it is not
+        // injected here.
+        const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+        const block = stringifyYaml({ openlore: metadata }, { lineWidth: 100 });
+        const next = spliceTopLevelBlock(raw, 'openlore', block, eol);
+        await mkdir(this.openspecRoot, { recursive: true });
+        await writeFile(this.configPath, next, 'utf-8');
+        logger.success(`Updated ${this.configPath}`);
+        return parseYaml(next) as OpenSpecConfig;
+      }
 
-      // Context auto-injection is a standalone affordance only. Under a
-      // host-managed config OpenSpec owns `context`, so OpenLore stays strictly
-      // additive to its own key.
-      if (!hostManaged && detectedContext && options.appendDetectedInfo) {
+      // Standalone OpenLore-owned file (no host keys): re-serialization is fine —
+      // it is our file — and context auto-injection is allowed.
+      doc.set('openlore', metadata);
+      if (detectedContext && options.appendDetectedInfo) {
         const existing = doc.get('context');
         doc.set(
           'context',

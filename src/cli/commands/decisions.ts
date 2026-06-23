@@ -16,6 +16,7 @@ const execFileAsync = promisify(execFile);
 import { join } from 'node:path';
 
 import { logger } from '../../utils/logger.js';
+import { redirectConsoleToStderr } from '../../utils/quiet-stdout.js';
 import { fileExists, resolveLLMProvider } from '../../utils/command-helpers.js';
 import { readOpenLoreConfig } from '../../core/services/config-manager.js';
 import { createLLMService } from '../../core/services/llm-service.js';
@@ -464,6 +465,9 @@ Examples:
     // Top-level error boundary: an unexpected throw (LLM consolidate/verify, spec-map
     // build, git, or a spec write) becomes a friendly message + exit 1 rather than an
     // unhandled-rejection stack trace — matching drift/generate/verify.
+    // --json: keep stdout pure (logs → stderr) by construction; all JSON payloads
+    // are written via process.stdout.write, which bypasses the redirect.
+    const restoreStdout = options.json ? redirectConsoleToStderr() : null;
     try {
     const globalOpts = this.parent?.opts() ?? {};
     const rootPath = process.cwd();
@@ -1006,5 +1010,7 @@ Examples:
       logger.error(`decisions command failed: ${(err as Error).message}`);
       if (process.env.DEBUG) console.error(err);
       process.exitCode = 1;
+    } finally {
+      restoreStdout?.();
     }
   });

@@ -419,9 +419,9 @@ What landed:
 | Vendored plugin-manifest JSON schema | `schemas/openspec-plugin-manifest-v1.json` |
 | `openlore plugin-manifest emit\|validate` | `src/cli/plugin-manifest/{index,manifest}.ts` |
 | CI coherence guard (bin/id/compat/commands/skills) | `src/cli/plugin-manifest/manifest.test.ts` |
-| Node-version guard (stderr + exit 78) | `src/cli/node-version-guard.ts` (+ `.test.ts`), wired first in `src/cli/index.ts` |
-| Config-key ownership (surgical `openlore`-only write) | `src/core/generator/openspec-compat.ts` (+ tests) |
-| Stream-separation util; `verify --json` fix | `src/utils/quiet-stdout.ts`, `src/cli/commands/{orient,verify}.ts` |
+| Node-version guard (stderr + exit 78) | `src/cli/node-version-guard.ts` + `node-version-bootstrap.ts` (+ `.test.ts`), wired first in `src/cli/index.ts` |
+| Config-key ownership (byte-exact `openlore`-only splice) | `src/core/generator/openspec-compat.ts` (`spliceTopLevelBlock`, + tests) |
+| Stream-separation util (+ unit test); `verify`/`drift`/`decisions --json` | `src/utils/quiet-stdout.ts` (+ `.test.ts`), `src/cli/commands/{orient,verify,drift,decisions}.ts` |
 | Spec deltas | `specs/cli/spec.md`, `specs/config/spec.md` |
 | Integration docs + recommended registry entry | `docs/OPENSPEC-INTEGRATION.md` |
 
@@ -430,6 +430,22 @@ Node guard's failure path (legible stderr + code 78 under simulated Node 20); a 
 `config.yaml` write preserving `version`/`profile`/`workflows`/`featureFlags`/comment byte-for-byte
 while adding only the `openlore` block; and `verify --json` / `drift --json` / `decisions --json`
 emitting only valid JSON on stdout.
+
+**Hardening pass (adversarial QA, 2026-06-22).** A multi-agent adversarial e2e sweep drove three fixes
+(decisions `b7a630d8`, `798b8634`):
+- **Truly byte-exact config writes.** The original `parseDocument`+`toString` was comment-preserving
+  but re-serialized host content (normalized CRLF→LF, collapsed inline-comment spacing, reflowed folded
+  scalars). Replaced with a top-level-block string splice (`spliceTopLevelBlock`) that touches no host
+  bytes; malformed host YAML is now refused (throw), never clobbered.
+- **Guard truly runs first.** ESM hoists static imports, so the old top-level `assertSupportedNode()`
+  call ran *after* commander/command-module bodies. Moved into a dependency-free
+  `src/cli/node-version-bootstrap.ts` imported first, so the check genuinely precedes commander.
+- **Validator containment.** `validatePluginManifest` now enforces the host's skill `dir`/`source`
+  path-containment rule (previously only the self-guard checked it), so `validate <packageRoot>` is
+  strict for third-party manifests too.
+- Defense-in-depth: extended the stdout-purity redirect to `drift`/`decisions` `--json` (and switched
+  their JSON emit to `process.stdout.write`), with a `quiet-stdout` unit test. README, cli-reference,
+  and CHANGELOG updated.
 
 Deferred to **Phase 2** (lands with the host loader): hand skill/workflow distribution fully to
 OpenSpec and retire/gate the OpenLore installer (one writer per artifact); contribute the

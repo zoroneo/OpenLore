@@ -16,6 +16,7 @@ import {
   validateFullSpec,
   validateSpecsDirectory,
   createOpenSpecCompat,
+  spliceTopLevelBlock,
   type OpenSpecConfig,
   type OpenLoreMetadata,
 } from './openspec-compat.js';
@@ -577,6 +578,89 @@ describe('OpenSpecConfigManager', () => {
       const parsed = await manager.readConfig();
       expect(parsed?.schema).toBe('spec-driven');
       expect(parsed?.['openlore']).toEqual(metadata);
+    });
+
+    it('preserves CRLF line endings in a host-managed config', async () => {
+      await mkdir(join(tempDir, 'openspec'), { recursive: true });
+      const crlf = 'version: 1\r\nprofile: default\r\n';
+      await writeFile(join(tempDir, 'openspec', 'config.yaml'), crlf);
+
+      await manager.updateWithOpenLoreMetadata(metadata);
+
+      const after = await readFile(join(tempDir, 'openspec', 'config.yaml'), 'utf-8');
+      expect(after).toContain('version: 1\r\n');
+      expect(after).toContain('profile: default\r\n');
+      expect(after).toContain('\r\nopenlore:\r\n'); // our block also uses the file's EOL
+      expect(/[^\r]\n/.test(after)).toBe(false); // every LF is part of a CRLF — no bare-LF intrusion
+    });
+
+    it('preserves inline-comment spacing and folded scalars byte-for-byte', async () => {
+      await mkdir(join(tempDir, 'openspec'), { recursive: true });
+      const host = 'version: 1  # pinned\nprofile: default\nnote: >\n  line one\n  line two\n';
+      await writeFile(join(tempDir, 'openspec', 'config.yaml'), host);
+
+      await manager.updateWithOpenLoreMetadata(metadata);
+
+      const after = await readFile(join(tempDir, 'openspec', 'config.yaml'), 'utf-8');
+      // The host region is untouched, byte for byte.
+      expect(after.startsWith(host)).toBe(true);
+      expect(after).toContain('version: 1  # pinned'); // two spaces NOT collapsed
+      expect(after).toContain('note: >\n  line one\n  line two'); // folded scalar NOT reflowed
+      expect(after).toContain('openlore:');
+    });
+
+    it('replaces (not duplicates) an existing openlore block, preserving host keys', async () => {
+      await mkdir(join(tempDir, 'openspec'), { recursive: true });
+      const host = 'version: 1\nopenlore:\n  version: old\n  domains: []\n  confidence: 0.1\nprofile: default\n';
+      await writeFile(join(tempDir, 'openspec', 'config.yaml'), host);
+
+      await manager.updateWithOpenLoreMetadata(metadata);
+
+      const after = await readFile(join(tempDir, 'openspec', 'config.yaml'), 'utf-8');
+      expect((after.match(/^openlore:/gm) ?? []).length).toBe(1); // exactly one block
+      expect(after).toContain('version: 2.0.0'); // new metadata.version
+      expect(after).not.toContain('version: old');
+      expect(after).toContain('profile: default'); // host key after the block survives
+      const parsed = await manager.readConfig();
+      expect(parsed?.['openlore']).toEqual(metadata);
+    });
+
+    it('refuses to overwrite a malformed host config (never clobbers)', async () => {
+      await mkdir(join(tempDir, 'openspec'), { recursive: true });
+      const malformed = 'version: : :\nprofile: [unterminated\n';
+      await writeFile(join(tempDir, 'openspec', 'config.yaml'), malformed);
+
+      await expect(manager.updateWithOpenLoreMetadata(metadata)).rejects.toThrow(/not valid YAML/);
+
+      // The malformed file is left exactly as it was.
+      const after = await readFile(join(tempDir, 'openspec', 'config.yaml'), 'utf-8');
+      expect(after).toBe(malformed);
+    });
+  });
+
+  describe('spliceTopLevelBlock', () => {
+    const block = 'openlore:\n  version: 1\n';
+
+    it('appends when the key is absent, leaving prior bytes intact', () => {
+      expect(spliceTopLevelBlock('version: 1\n', 'openlore', block, '\n')).toBe('version: 1\nopenlore:\n  version: 1\n');
+    });
+
+    it('adds a separator newline when the source lacks a trailing newline', () => {
+      expect(spliceTopLevelBlock('version: 1', 'openlore', block, '\n')).toBe('version: 1\nopenlore:\n  version: 1\n');
+    });
+
+    it('replaces an existing block in the middle, keeping following keys', () => {
+      const src = 'version: 1\nopenlore:\n  version: old\nprofile: x\n';
+      expect(spliceTopLevelBlock(src, 'openlore', block, '\n')).toBe('version: 1\nopenlore:\n  version: 1\nprofile: x\n');
+    });
+
+    it('honors a CRLF end-of-line', () => {
+      const out = spliceTopLevelBlock('version: 1\r\n', 'openlore', block, '\r\n');
+      expect(out).toBe('version: 1\r\nopenlore:\r\n  version: 1\r\n');
+    });
+
+    it('returns just the block for empty input', () => {
+      expect(spliceTopLevelBlock('', 'openlore', block, '\n')).toBe('openlore:\n  version: 1\n');
     });
   });
 

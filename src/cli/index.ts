@@ -7,12 +7,13 @@
  * Philosophy: "Archaeology over Creativity" — Extract the truth of what code does.
  */
 
-// Guard the Node version BEFORE anything heavy loads. Imported first so it
-// evaluates ahead of commander and the command modules: a host on an unsupported
-// Node (e.g. `openspec lore generate` under Node 20) gets one legible stderr line
-// and a stable exit code, never a stack trace. Keep this the first import.
-import { assertSupportedNode } from './node-version-guard.js';
-assertSupportedNode();
+// Guard the Node version BEFORE anything heavy loads. This bootstrap import runs
+// the guard as a side effect; because ESM evaluates dependencies in source order
+// (each fully before the next), keeping it the FIRST import makes it run ahead of
+// commander and the command modules. A host on an unsupported Node (e.g.
+// `openspec lore generate` under Node 20) gets one legible stderr line and a
+// stable exit code, never a stack trace. Keep this the first import.
+import './node-version-bootstrap.js';
 
 import { Command } from 'commander';
 import { createRequire } from 'node:module';

@@ -529,6 +529,29 @@ The same `federation` preset also exposes a spec-store arc — binding OpenLore 
 
 ---
 
+## OpenSpec plugin (marketplace)
+
+OpenSpec is adding a plugin marketplace so optional, heavyweight "engines" extend it without bloating the core, and **OpenLore is the inaugural engine and reference plugin**. The cold-start path becomes first-class inside OpenSpec — generate specs from existing code, then hand evolution back to core OpenSpec:
+
+```bash
+openspec init
+openspec lore generate      # delegates to OpenLore: code archaeology → specs
+openspec validate --specs   # core OpenSpec takes over
+```
+
+OpenSpec discovers OpenLore by a declarative **plugin manifest** (the `"openspec"` key in OpenLore's `package.json`) and invokes it as a **subprocess** — it never imports OpenLore's code. Inspect or validate that manifest with:
+
+```bash
+openlore plugin-manifest emit --json   # print the manifest (stdout only)
+openlore plugin-manifest validate      # schema + semantic check, exit 0/1
+```
+
+> **Two manifests, never confused.** `openlore plugin-manifest` is the OpenSpec *plugin* contract (the marketplace reads it). `openlore manifest` (above) is the unrelated *federation* manifest (`.well-known/openlore.json`). Distinct names, distinct schemas.
+
+Because OpenLore requires Node ≥22.5 while OpenSpec runs on ≥20.19, a delegated `openlore` launched under an unsupported Node **fails fast** with one legible stderr line and a stable exit code (78) — never a stack trace — so the host surfaces a clean failure. Config writes stay confined to OpenLore's own `openlore` key in `openspec/config.yaml`, preserving every host key and comment byte-for-byte. See [docs/OPENSPEC-INTEGRATION.md](docs/OPENSPEC-INTEGRATION.md) for the full contract. (Phase 1; the host loader and curated registry ship in the OpenSpec repo.)
+
+---
+
 ## Documentation
 
 | Topic | Doc |
@@ -578,7 +601,7 @@ The same `federation` preset also exposes a spec-store arc — binding OpenLore 
 
 ## Requirements
 
-- Node.js 22.5+
+- Node.js 22.5+ (launching the CLI under an older Node fails fast with a one-line message and exit code 78, never a stack trace)
 - API key for `generate`, `verify`, and `drift --use-llm`:
   ```bash
   export ANTHROPIC_API_KEY=sk-ant-...    # default provider

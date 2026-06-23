@@ -23,6 +23,7 @@
 | `openlore spec-store status` | Report the health of the spec-store binding (read-only, advisory) | No |
 | `openlore working-set context` | Assemble the working-set briefing for an active change across its targets (read-only, advisory) | Targets indexed |
 | `openlore impact-certificate` | Certify what the current diff opens into declared covering surfaces, before it lands (advisory; opt-in blocking) | Yes |
+| `openlore plugin-manifest emit\|validate` | Inspect/validate the OpenSpec plugin manifest (distinct from the federation `manifest`) | No |
 | `openlore mcp` | Start MCP server (stdio, for Cline / Claude Code) | No |
 | `openlore serve` | Start a warm local HTTP daemon exposing tools (loopback, for Pi / editors) | No |
 | `openlore doctor` | Check environment and configuration for common issues | No |
@@ -242,6 +243,37 @@ openlore impact-certificate --uninstall-hook      # remove the pre-commit hook b
 ```
 
 Advisory by default — it emits the certificate and exits 0; an infrastructure failure (no index, not a repo) never blocks. A repository MAY opt into blocking specific surface severities with `impactCertificate.block: ["critical"]`, in which case the `--hook` exits non-zero only when the diff opens a new path into a surface of that severity. Newly-opened-path detection is differential and deterministic (no LLM): only the changed files are re-parsed, renamed files read their base-ref content, untracked files are folded in, and an ambiguous added callee is reported, never guessed. The certificate decays via the freshness lease — when an anchored symbol later moves, `openlore spec-store status` re-fires it as a `certificate-stale` finding. The matching MCP tool `change_impact_certificate` is exposed under `openlore mcp --preset federation`.
+
+---
+
+## OpenSpec plugin manifest
+
+`openlore plugin-manifest` inspects and validates the OpenSpec **plugin** manifest
+OpenLore publishes — the `"openspec"` key in its `package.json` — so the OpenSpec
+marketplace can discover, surface, gate, and invoke OpenLore as a subprocess
+without importing its code. It is **distinct** from `openlore manifest` (the
+federation `.well-known/openlore.json`); the names never collide.
+
+```bash
+openlore plugin-manifest emit            # human-readable summary
+openlore plugin-manifest emit --json     # the manifest as JSON, stdout only
+openlore plugin-manifest validate        # schema + semantic check of OpenLore's own manifest
+openlore plugin-manifest validate <dir>  # validate another package's manifest
+```
+
+`validate` exits `0` when the manifest is valid, `1` on a schema/semantic failure
+(missing required field, no `bin`/`binArgs`, non-token `namespace`, a traversing
+skill `dir`/`source`), and `2` when no manifest is found. The manifest declares the
+namespace (`lore`), the executable (`bin: openlore`), `openspecCompat` (kept
+coherent with the `@fission-ai/openspec` peer-dep range), the help-only surfaced
+commands, the contributed skill, and `ownsConfigKeys: ["openlore"]`. See
+[OPENSPEC-INTEGRATION.md](OPENSPEC-INTEGRATION.md) for the full marketplace contract.
+
+> **Node-version guard.** OpenLore requires Node ≥22.5. The CLI checks this before
+> any command runs; under an older Node it prints one stderr line naming the
+> required and actual versions and exits with the stable code **78** — never a
+> stack trace — so a host delegating to OpenLore (e.g. `openspec lore generate` on
+> Node 20) surfaces a clean, legible failure.
 
 ---
 

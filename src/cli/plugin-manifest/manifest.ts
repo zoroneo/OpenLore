@@ -92,7 +92,11 @@ export function readPluginManifest(packageRoot: string): PluginManifest | null {
  * required fields, top-level passthrough preserved for forward-compat) with the
  * semantic checks the tiny schema validator cannot express:
  *   - exactly one executable form is declared (`bin` OR `binArgs`),
- *   - `namespace` is a single lowercase token (host reserves it as a top-level verb).
+ *   - `namespace` is a single lowercase token (host reserves it as a top-level verb),
+ *   - each contributed skill's `dir` is a single safe path segment and its `source`
+ *     stays inside the package (the host's path-containment rule — enforced here so
+ *     `validate <packageRoot>` is as strict for third parties as the self-guard is
+ *     for OpenLore's own manifest).
  * Returns the (possibly empty) error list, same shape as the federation validator.
  */
 export function validatePluginManifest(manifest: unknown): ValidationError[] {
@@ -111,6 +115,25 @@ export function validatePluginManifest(manifest: unknown): ValidationError[] {
       errors.push({
         path: '/namespace',
         message: 'namespace must be a single lowercase token (a-z, 0-9, hyphen)',
+      });
+    }
+
+    if (Array.isArray(m.skills)) {
+      m.skills.forEach((skill, i) => {
+        if (!skill || typeof skill !== 'object') return; // shape handled by the schema
+        const s = skill as Record<string, unknown>;
+        if (typeof s.dir === 'string' && /[/\\]|\.\./.test(s.dir)) {
+          errors.push({
+            path: `/skills/${i}/dir`,
+            message: 'skill dir must be a single path segment (no "/", "\\", or "..")',
+          });
+        }
+        if (typeof s.source === 'string' && (/^([/\\]|[a-zA-Z]:)/.test(s.source) || s.source.includes('..'))) {
+          errors.push({
+            path: `/skills/${i}/source`,
+            message: 'skill source must be a package-relative path inside the package (no absolute path or "..")',
+          });
+        }
       });
     }
   }

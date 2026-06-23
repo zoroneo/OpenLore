@@ -493,10 +493,13 @@ trace or a partial run, so the host propagates a legible failure.
 
 OpenLore declares `ownsConfigKeys: ["openlore"]` and writes **only** the `openlore` key in
 `openspec/config.yaml`. When OpenSpec already created the config (host-owned keys such as `version`,
-`profile`, `delivery`, `workflows`, `featureFlags`, `plugins` are present), OpenLore updates only its
-own key and leaves every other key and comment **byte-for-byte unchanged** — it never introduces or
-overwrites a host-owned key, and it skips context auto-injection (the host owns `context`). When no
-config exists, standalone OpenLore is the legitimate creator and may seed `schema`/`context` as before.
+`profile`, `delivery`, `workflows`, `featureFlags`, `plugins` are present), OpenLore splices in only
+its own block and leaves every other key and comment **byte-for-byte unchanged** — CRLF line endings,
+inline-comment spacing, and folded scalars are all preserved, because the write is a top-level-block
+text splice, not a YAML re-serialization. It never introduces or overwrites a host-owned key, and it
+skips context auto-injection (the host owns `context`). A host config that is not valid YAML is
+**refused with a clear error, never clobbered**. When no config exists, standalone OpenLore is the
+legitimate creator and may seed `schema`/`context` as before.
 
 ### The MCP server stays separately wired
 

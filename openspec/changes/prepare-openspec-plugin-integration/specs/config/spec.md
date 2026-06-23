@@ -24,3 +24,19 @@ creator.
 - **GIVEN** no `openspec/config.yaml` exists
 - **WHEN** OpenLore writes its metadata
 - **THEN** OpenLore creates the file with `schema: spec-driven` and its `openlore` block
+
+#### Scenario: Host formatting is preserved exactly
+
+- **GIVEN** a host-managed `openspec/config.yaml` using CRLF line endings, an inline
+  comment, and a folded scalar
+- **WHEN** OpenLore writes its metadata
+- **THEN** the `openlore` block is spliced in using the file's line ending and the host
+  region — line endings, inline-comment spacing, and the folded scalar — is unchanged
+  byte-for-byte
+
+#### Scenario: Malformed host config is never clobbered
+
+- **GIVEN** an `openspec/config.yaml` that is not valid YAML
+- **WHEN** OpenLore attempts to write its metadata
+- **THEN** OpenLore refuses with a clear error and leaves the file exactly as it was,
+  rather than re-serializing or truncating it

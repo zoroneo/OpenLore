@@ -125,3 +125,41 @@ describe('OpenSpec plugin manifest', () => {
     expect(pkg.openspec?.ownsConfigKeys).toEqual(['openlore']);
   });
 });
+
+describe('validatePluginManifest containment + semantic rules', () => {
+  const base = {
+    manifestVersion: 1,
+    id: 'x',
+    namespace: 'x',
+    bin: 'x',
+    openspecCompat: '>=0.1.0',
+  };
+
+  it('rejects a traversing or multi-segment skill dir', () => {
+    expect(validatePluginManifest({ ...base, skills: [{ dir: 'a/b', source: 'skills/x' }] }).some((e) => e.path === '/skills/0/dir')).toBe(true);
+    expect(validatePluginManifest({ ...base, skills: [{ dir: '..', source: 'skills/x' }] }).some((e) => e.path === '/skills/0/dir')).toBe(true);
+    expect(validatePluginManifest({ ...base, skills: [{ dir: 'a\\b', source: 'skills/x' }] }).some((e) => e.path === '/skills/0/dir')).toBe(true);
+  });
+
+  it('rejects an absolute or traversing skill source', () => {
+    expect(validatePluginManifest({ ...base, skills: [{ dir: 'x', source: '/etc/passwd' }] }).some((e) => e.path === '/skills/0/source')).toBe(true);
+    expect(validatePluginManifest({ ...base, skills: [{ dir: 'x', source: '../../x' }] }).some((e) => e.path === '/skills/0/source')).toBe(true);
+    expect(validatePluginManifest({ ...base, skills: [{ dir: 'x', source: 'C:\\x' }] }).some((e) => e.path === '/skills/0/source')).toBe(true);
+  });
+
+  it('accepts a single-segment skill dir with a package-relative source', () => {
+    expect(validatePluginManifest({ ...base, skills: [{ dir: 'openlore-orient', source: 'skills/openlore-orient' }] })).toEqual([]);
+  });
+
+  it('rejects a manifest with neither bin nor binArgs', () => {
+    const noExec = { manifestVersion: 1, id: 'x', namespace: 'x', openspecCompat: '>=0.1.0' };
+    expect(validatePluginManifest(noExec).some((e) => e.path === '/bin')).toBe(true);
+    expect(validatePluginManifest({ ...noExec, binArgs: ['npx', 'openlore'] })).toEqual([]);
+  });
+
+  it('rejects a non-token namespace', () => {
+    expect(validatePluginManifest({ ...base, namespace: 'Lore' }).some((e) => e.path === '/namespace')).toBe(true);
+    expect(validatePluginManifest({ ...base, namespace: 'a/b' }).some((e) => e.path === '/namespace')).toBe(true);
+    expect(validatePluginManifest({ ...base, namespace: '1lore' }).some((e) => e.path === '/namespace')).toBe(true);
+  });
+});

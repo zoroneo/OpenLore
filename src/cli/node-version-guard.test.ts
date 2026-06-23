@@ -51,3 +51,30 @@ describe('Node floor coherence', () => {
     expect(Number(match![2])).toBe(MIN_NODE.minor);
   });
 });
+
+describe('guard load ordering', () => {
+  // ESM hoists static imports, so the guard only runs ahead of commander if the
+  // FIRST import is the side-effecting bootstrap. Tie that ordering to code.
+  const cliDir = join(repoRoot, 'src', 'cli');
+
+  it('node-version-guard.ts has no top-level side effect (import-safe for tests)', () => {
+    const src = readFileSync(join(cliDir, 'node-version-guard.ts'), 'utf-8');
+    // No bare top-level `assertSupportedNode();` call in the pure module.
+    expect(/^\s*assertSupportedNode\(\);/m.test(src)).toBe(false);
+  });
+
+  it('the bootstrap runs the guard as its side effect', () => {
+    const boot = readFileSync(join(cliDir, 'node-version-bootstrap.ts'), 'utf-8');
+    expect(boot).toMatch(/assertSupportedNode\(\);/);
+  });
+
+  it('index.ts imports the bootstrap first — before commander', () => {
+    const idx = readFileSync(join(cliDir, 'index.ts'), 'utf-8');
+    const imports = [...idx.matchAll(/^import\s.*$/gm)].map((m) => m[0]);
+    expect(imports[0], 'first import must be the node-version bootstrap').toMatch(/node-version-bootstrap/);
+    const bootIdx = idx.indexOf('node-version-bootstrap');
+    const commanderIdx = idx.indexOf("from 'commander'");
+    expect(bootIdx).toBeGreaterThanOrEqual(0);
+    expect(bootIdx).toBeLessThan(commanderIdx);
+  });
+});
