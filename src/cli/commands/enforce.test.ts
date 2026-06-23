@@ -18,7 +18,10 @@ import {
   installEnforcementHook,
   uninstallEnforcementHook,
   runEnforceCli,
+  blastRadiusFindings,
+  impactCertificateFindings,
 } from './enforce.js';
+import { classifyFindings } from '../../core/services/mcp-handlers/enforcement-policy.js';
 import {
   OPENLORE_DIR,
   OPENLORE_DECISIONS_SUBDIR,
@@ -121,6 +124,69 @@ describe('enforce git hook install/uninstall', () => {
     h = await readHook(root);
     expect(h).toContain('# openlore-decisions-hook');
     expect(h).not.toContain('# openlore-enforcement-hook');
+  });
+});
+
+// ── source mapping: blast-radius + impact-certificate → unified findings ───────
+// These are the gate's collection paths for the diff-heavy sources, exercised as
+// pure functions over synthetic briefings (the same style as triggeredBlockPatterns).
+describe('blastRadiusFindings — orphan patterns map to unified findings', () => {
+  const briefing = (memOrphaned: number, decOrphaned: number) => ({
+    memory: { orphaned: memOrphaned, drifted: 0, willDrift: [] },
+    decisions: { affected: decOrphaned, orphaned: decOrphaned, items: [] },
+  }) as never;
+
+  it('emits orphans-anchored-memory only when memory is orphaned', () => {
+    expect(blastRadiusFindings(briefing(2, 0)).map((f) => f.code)).toEqual(['orphans-anchored-memory']);
+  });
+  it('emits orphans-anchored-decision only when a decision is orphaned', () => {
+    expect(blastRadiusFindings(briefing(0, 1)).map((f) => f.code)).toEqual(['orphans-anchored-decision']);
+  });
+  it('emits both when both are orphaned, neither when clean', () => {
+    expect(blastRadiusFindings(briefing(1, 1)).map((f) => f.code).sort())
+      .toEqual(['orphans-anchored-decision', 'orphans-anchored-memory']);
+    expect(blastRadiusFindings(briefing(0, 0))).toEqual([]);
+  });
+  it('a lowered blastRadius.block / policy entry classifies the finding as blocking', () => {
+    const findings = blastRadiusFindings(briefing(1, 0));
+    const r = classifyFindings(findings, { 'orphans-anchored-memory': 'blocking' });
+    expect(r.gated).toBe(true);
+    expect(r.blocking.map((f) => f.code)).toEqual(['orphans-anchored-memory']);
+  });
+});
+
+describe('impactCertificateFindings — surface severities map to per-severity codes', () => {
+  const cert = (paths: Array<{ surface: string; surfaceSeverity: string }>) =>
+    ({ newlyOpenedPaths: paths }) as never;
+
+  it('groups newly-opened paths into surface-<severity> codes', () => {
+    const out = impactCertificateFindings(cert([
+      { surface: 'client', surfaceSeverity: 'critical' },
+      { surface: 'data', surfaceSeverity: 'warn' },
+    ]));
+    expect(out.map((f) => f.code).sort()).toEqual(['surface-critical', 'surface-warn']);
+  });
+  it('dedups multiple paths into one finding per severity, surfaces sorted', () => {
+    const out = impactCertificateFindings(cert([
+      { surface: 'zeta', surfaceSeverity: 'critical' },
+      { surface: 'alpha', surfaceSeverity: 'critical' },
+    ]));
+    expect(out).toHaveLength(1);
+    expect(out[0].subject).toBe('alpha,zeta'); // deterministic sort
+  });
+  it('intrinsic severity mirrors the surface severity (info→info, warn→warn, critical→error)', () => {
+    const sev = (s: string) => impactCertificateFindings(cert([{ surface: 'x', surfaceSeverity: s }]))[0].severity;
+    expect(sev('info')).toBe('info');
+    expect(sev('warn')).toBe('warn');
+    expect(sev('critical')).toBe('error');
+  });
+  it('block:["critical"] equivalent — surface-critical classifies as blocking', () => {
+    const out = impactCertificateFindings(cert([{ surface: 'client', surfaceSeverity: 'critical' }]));
+    const r = classifyFindings(out, { 'surface-critical': 'blocking' });
+    expect(r.gated).toBe(true);
+  });
+  it('empty certificate ⇒ no findings', () => {
+    expect(impactCertificateFindings(cert([]))).toEqual([]);
   });
 });
 

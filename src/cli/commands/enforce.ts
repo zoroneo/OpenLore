@@ -37,8 +37,8 @@ import {
   type GovernanceFinding,
 } from '../../core/services/mcp-handlers/enforcement-policy.js';
 import { detectStaleDecisionReferences } from '../../core/services/mcp-handlers/stale-decision-reference.js';
-import { computeBlastRadius } from '../../core/services/mcp-handlers/blast-radius.js';
-import { computeImpactCertificate } from '../../core/services/mcp-handlers/impact-certificate.js';
+import { computeBlastRadius, type BlastRadiusBriefing } from '../../core/services/mcp-handlers/blast-radius.js';
+import { computeImpactCertificate, type ImpactCertificate } from '../../core/services/mcp-handlers/impact-certificate.js';
 import type { OpenLoreConfig } from '../../types/index.js';
 
 const HOOK_MARKER = '# openlore-enforcement-hook';
@@ -125,6 +125,62 @@ function impactCertificateInUse(config: OpenLoreConfig | null): boolean {
 }
 
 /**
+ * Map a blast-radius briefing onto unified governance findings — one per orphan
+ * pattern the briefing triggers. Reads the SAME uncapped `*.orphaned` counts the
+ * legacy `blast-radius --hook` blocks on (`triggeredBlockPatterns`), so the gate
+ * and the legacy hook block on exactly the same diffs. Pure; no I/O.
+ */
+export function blastRadiusFindings(b: BlastRadiusBriefing): GovernanceFinding[] {
+  const out: GovernanceFinding[] = [];
+  if (b.memory.orphaned > 0) {
+    out.push({
+      code: 'orphans-anchored-memory', severity: 'error', source: 'blast-radius',
+      subject: 'anchored-memory',
+      message: `the change orphans ${b.memory.orphaned} anchored memor${b.memory.orphaned === 1 ? 'y' : 'ies'}.`,
+    });
+  }
+  if (b.decisions.orphaned > 0) {
+    out.push({
+      code: 'orphans-anchored-decision', severity: 'error', source: 'blast-radius',
+      subject: 'anchored-decision',
+      message: `the change orphans ${b.decisions.orphaned} anchored decision(s).`,
+    });
+  }
+  return out;
+}
+
+/** The intrinsic severity a surface finding carries, mirroring the certificate's own convention. */
+const SURFACE_SEVERITY: Record<string, string> = { info: 'info', warn: 'warn', critical: 'error' };
+
+/**
+ * Map an impact certificate onto unified governance findings — one per declared
+ * surface severity the change opens a new path into. Reads the SAME
+ * `newlyOpenedPaths[].surfaceSeverity` the legacy `impact-certificate --hook`
+ * blocks on (`triggeredBlockSeverities`), grouped into the per-severity
+ * `surface-<sev>` codes a policy can name, so the two block on identical diffs.
+ * Deterministic: surfaces are sorted; the intrinsic severity reflects the actual
+ * surface severity (info→info, warn→warn, critical→error). Pure; no I/O.
+ */
+export function impactCertificateFindings(cert: ImpactCertificate): GovernanceFinding[] {
+  const bySeverity = new Map<string, Set<string>>();
+  for (const p of cert.newlyOpenedPaths) {
+    const set = bySeverity.get(p.surfaceSeverity) ?? new Set<string>();
+    set.add(p.surface);
+    bySeverity.set(p.surfaceSeverity, set);
+  }
+  const out: GovernanceFinding[] = [];
+  for (const [sev, surfaces] of bySeverity) {
+    const named = [...surfaces].sort();
+    out.push({
+      code: `surface-${sev}`, severity: SURFACE_SEVERITY[sev] ?? 'warn', source: 'impact-certificate',
+      subject: named.join(','),
+      message: `the change opens a new path into ${named.length} ${sev} surface(s): ${named.join(', ')}.`,
+    });
+  }
+  return out;
+}
+
+/**
  * Collect governance findings from every in-scope source, mapping each native
  * finding onto the unified {@link GovernanceFinding} shape. Each source is
  * advisory-safe — a throw is recorded as a caveat and contributes no finding,
@@ -158,24 +214,8 @@ export async function collectGovernanceFindings(
   if (blastRadiusInUse(config, policy)) {
     try {
       const b = await computeBlastRadius({ directory: cwd, baseRef });
-      if (!('error' in b)) {
-        if (b.memory.orphaned > 0) {
-          findings.push({
-            code: 'orphans-anchored-memory', severity: 'error', source: 'blast-radius',
-            subject: 'anchored-memory',
-            message: `the change orphans ${b.memory.orphaned} anchored memor${b.memory.orphaned === 1 ? 'y' : 'ies'}.`,
-          });
-        }
-        if (b.decisions.orphaned > 0) {
-          findings.push({
-            code: 'orphans-anchored-decision', severity: 'error', source: 'blast-radius',
-            subject: 'anchored-decision',
-            message: `the change orphans ${b.decisions.orphaned} anchored decision(s).`,
-          });
-        }
-      } else {
-        caveats.push(`blast-radius unavailable: ${b.error}`);
-      }
+      if (!('error' in b)) findings.push(...blastRadiusFindings(b));
+      else caveats.push(`blast-radius unavailable: ${b.error}`);
     } catch (err) {
       caveats.push(`blast-radius unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -185,23 +225,8 @@ export async function collectGovernanceFindings(
   if (impactCertificateInUse(config)) {
     try {
       const cert = await computeImpactCertificate({ directory: cwd, baseRef });
-      if (!('error' in cert)) {
-        const bySeverity = new Map<string, Set<string>>();
-        for (const p of cert.newlyOpenedPaths) {
-          const set = bySeverity.get(p.surfaceSeverity) ?? new Set<string>();
-          set.add(p.surface);
-          bySeverity.set(p.surfaceSeverity, set);
-        }
-        for (const [sev, surfaces] of bySeverity) {
-          findings.push({
-            code: `surface-${sev}`, severity: 'error', source: 'impact-certificate',
-            subject: [...surfaces].sort().join(','),
-            message: `the change opens a new path into ${surfaces.size} ${sev} surface(s): ${[...surfaces].sort().join(', ')}.`,
-          });
-        }
-      } else {
-        caveats.push(`impact-certificate unavailable: ${cert.error}`);
-      }
+      if (!('error' in cert)) findings.push(...impactCertificateFindings(cert));
+      else caveats.push(`impact-certificate unavailable: ${cert.error}`);
     } catch (err) {
       caveats.push(`impact-certificate unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
