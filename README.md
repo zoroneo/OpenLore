@@ -165,6 +165,7 @@ That single command:
 1. **Auto-detects** which agent surfaces are present (Claude Code, Cursor, Cline, Continue, AGENTS.md) and wires each one to call `orient()` — no manual `CLAUDE.md` editing.
 2. **Registers the MCP server** so it starts automatically when your agent launches (you don't run `openlore mcp` yourself).
 3. **Builds the index** (`init` + `analyze` → a keyword/BM25 graph, no network needed) so `orient()` returns real results in your very first session — no separate `analyze` step.
+4. **Wires task-scoped orientation** (Claude Code): a `UserPromptSubmit` hook runs `orient` against each new prompt and injects a bounded, ignorable orientation block *before* the first turn — so the common task begins already oriented without a manual `orient()` call or a spent tool round-trip. A deterministic relevance gate keeps it out of the small/familiar case (degrading to a one-line pointer); disable with `contextInjection.mode: "off"` in `.openlore/config.json`. See [docs/install.md](docs/install.md#task-scoped-context-injection).
 
 ```bash
 openlore install --no-analyze   # wire surfaces only; build the index later

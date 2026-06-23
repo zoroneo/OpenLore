@@ -3,6 +3,22 @@
 All notable changes to OpenLore are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Task-scoped context injection** — `openlore install` now wires a Claude Code
+  `UserPromptSubmit` hook running `openlore orient --inject`, which orients on your
+  submitted prompt and injects a bounded, deterministic, ignorable orientation
+  block *before the agent's first turn* — amortizing the per-task `orient`
+  round-trip the Value Scorecard attributes the small/familiar loss case to. A
+  deterministic relevance gate keeps it out of weak/shallow tasks (degrading to a
+  one-line pointer); it is fail-open (never breaks a turn) and reuses the lean
+  `orient` output (no new MCP tool). Disable or tune via the `contextInjection`
+  block in `.openlore/config.json` (`mode: "off"`, `tokenBudget`, gate thresholds).
+  Adapters without a pre-turn hook (Cursor/Cline/Continue/AGENTS.md) fall back to
+  the instruction block (#184).
+
 ## [2.1.3] - 2026-06-22
 
 Everything merged since v2.1.2: a batch of new agent-facing capabilities plus a
