@@ -32,11 +32,14 @@ export const HOST_OWNED_CONFIG_KEYS = [
 
 /**
  * Replace (or append) a single top-level YAML block by name in `raw`, touching no
- * other bytes. The block spans the `<key>:` line at column 0 plus all following
- * indented lines; replacement stops at the next column-0 line (a new top-level key,
- * a blank line, or a column-0 comment) or EOF. When the key is absent the block is
- * appended. This is a literal text edit — not a YAML re-serialization — so host
- * content (other keys, comments, CRLF, folded scalars) is preserved byte-for-byte.
+ * other bytes. The block spans the `<key>:` line at column 0 through the LAST
+ * following indented (non-blank) line — blank lines *within* the body are kept as
+ * part of the block, while trailing blank lines that merely separate it from the
+ * next top-level key are preserved as host content. Replacement stops at the next
+ * column-0 non-blank line (a new top-level key or a column-0 comment) or EOF. When
+ * the key is absent the block is appended. This is a literal text edit — not a YAML
+ * re-serialization — so host content (other keys, comments, CRLF, folded scalars)
+ * is preserved byte-for-byte.
  *
  * @param blockText  the serialized `<key>: …` YAML (LF-separated)
  * @param eol        the file's detected line ending (`\n` or `\r\n`)
@@ -55,10 +58,18 @@ export function spliceTopLevelBlock(raw: string, key: string, blockText: string,
     return raw + (raw.endsWith('\n') ? '' : eol) + block;
   }
 
-  // Key present → replace the `<key>:` line plus its indented body.
-  let endIdx = startIdx + 1;
-  while (endIdx < lines.length && /^[ \t]/.test(lines[endIdx])) endIdx++;
-  return [...lines.slice(0, startIdx), ...blockLines, ...lines.slice(endIdx)].join(eol);
+  // Key present → replace the `<key>:` line plus its indented body. Scan forward
+  // until the next column-0 non-blank line (or EOF), tracking the last indented,
+  // non-blank line: that is the true end of the block. A blank line alone never
+  // ends a YAML mapping value, so blanks embedded in the body are absorbed; trailing
+  // blanks after the body stay with the following host content.
+  let lastBody = startIdx;
+  let scan = startIdx + 1;
+  while (scan < lines.length && !/^\S/.test(lines[scan])) {
+    if (/^[ \t]/.test(lines[scan]) && lines[scan].trim() !== '') lastBody = scan;
+    scan++;
+  }
+  return [...lines.slice(0, startIdx), ...blockLines, ...lines.slice(lastBody + 1)].join(eol);
 }
 
 // ============================================================================
@@ -484,10 +495,21 @@ export class OpenSpecConfigManager {
         const eol = raw.includes('\r\n') ? '\r\n' : '\n';
         const block = stringifyYaml({ openlore: metadata }, { lineWidth: 100 });
         const next = spliceTopLevelBlock(raw, 'openlore', block, eol);
+
+        // Safety net: never let a splice that produced invalid YAML reach disk.
+        // The on-disk file stays the (valid) original if anything is off.
+        const verified = parseDocument(next);
+        if (verified.errors.length > 0) {
+          throw new Error(
+            `Internal error updating ${this.configPath} (${verified.errors[0].message}); ` +
+              `left the file unchanged.`
+          );
+        }
+
         await mkdir(this.openspecRoot, { recursive: true });
         await writeFile(this.configPath, next, 'utf-8');
         logger.success(`Updated ${this.configPath}`);
-        return parseYaml(next) as OpenSpecConfig;
+        return verified.toJSON() as OpenSpecConfig;
       }
 
       // Standalone OpenLore-owned file (no host keys): re-serialization is fine —

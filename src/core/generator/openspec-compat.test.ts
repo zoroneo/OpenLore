@@ -625,6 +625,27 @@ describe('OpenSpecConfigManager', () => {
       expect(parsed?.['openlore']).toEqual(metadata);
     });
 
+    it('replaces a hand-edited openlore block with an embedded blank line without corrupting the file', async () => {
+      await mkdir(join(tempDir, 'openspec'), { recursive: true });
+      // The old block has a blank line followed by more indented content — the
+      // case that previously orphaned the tail and wrote invalid YAML to disk.
+      const host = 'version: 1\nopenlore:\n  version: old\n\n  note: hand-edited\nprofile: prod\n';
+      await writeFile(join(tempDir, 'openspec', 'config.yaml'), host);
+
+      await manager.updateWithOpenLoreMetadata(metadata);
+
+      const after = await readFile(join(tempDir, 'openspec', 'config.yaml'), 'utf-8');
+      expect((after.match(/^openlore:/gm) ?? []).length).toBe(1); // exactly one block
+      expect(after).not.toContain('note: hand-edited'); // old body fully replaced
+      expect(after).not.toContain('version: old');
+      expect(after).toContain('profile: prod'); // host key after the block survives
+      // The result is valid YAML with host keys intact.
+      const parsed = (await manager.readConfig()) as Record<string, unknown>;
+      expect(parsed.openlore).toEqual(metadata);
+      expect(parsed.version).toBe(1);
+      expect(parsed.profile).toBe('prod');
+    });
+
     it('refuses to overwrite a malformed host config (never clobbers)', async () => {
       await mkdir(join(tempDir, 'openspec'), { recursive: true });
       const malformed = 'version: : :\nprofile: [unterminated\n';
@@ -661,6 +682,22 @@ describe('OpenSpecConfigManager', () => {
 
     it('returns just the block for empty input', () => {
       expect(spliceTopLevelBlock('', 'openlore', block, '\n')).toBe('openlore:\n  version: 1\n');
+    });
+
+    it('replaces a block with an embedded blank line without orphaning its tail', () => {
+      const src = 'version: 1\nopenlore:\n  a: 1\n\n  stale: 99\nprofile: x\n';
+      expect(spliceTopLevelBlock(src, 'openlore', block, '\n')).toBe('version: 1\nopenlore:\n  version: 1\nprofile: x\n');
+    });
+
+    it('preserves a trailing blank line that separates the block from the next key', () => {
+      const src = 'version: 1\nopenlore:\n  a: 1\n\nprofile: x\n';
+      expect(spliceTopLevelBlock(src, 'openlore', block, '\n')).toBe('version: 1\nopenlore:\n  version: 1\n\nprofile: x\n');
+    });
+
+    it('does not match a sibling key whose name only starts with the target', () => {
+      const src = 'openlore_meta: keep\nprofile: x\n';
+      // No top-level `openlore:` → append, leaving the sibling untouched.
+      expect(spliceTopLevelBlock(src, 'openlore', block, '\n')).toBe('openlore_meta: keep\nprofile: x\nopenlore:\n  version: 1\n');
     });
   });
 

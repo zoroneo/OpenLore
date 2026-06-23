@@ -84,7 +84,7 @@ zero extra files, scannable from `node_modules`). The proposed manifest:
     "skills": [
       { "dir": "openlore-orient", "source": "skills/openlore-orient" }
     ],
-    "workflows": ["onboard-from-code"],
+    "workflows": ["onboard-from-code"],   // Phase 2 — the SHIPPED key omits this until the host accepts plugin-contributed workflows
     "ownsConfigKeys": ["openlore"]
   }
 }
