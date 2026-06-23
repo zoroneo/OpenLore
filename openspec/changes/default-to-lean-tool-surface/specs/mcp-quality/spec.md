@@ -1,5 +1,11 @@
 # mcp-quality spec delta
 
+> Applied (2026-06-22): the live `openspec/specs/mcp-quality/spec.md` requirement this modifies is
+> named **`Tool Surface Size and Progressive Disclosure`** (not the working title below). That live
+> requirement was updated in place to make the lean `navigation` default normative (SHALL, not the
+> prior aspirational SHOULD), invert it from `MINIMAL_TOOLS` to the `navigation` preset, and correct a
+> stale `~45 tools` count to 62. The text below is the authoring intent and reads identically.
+
 ## MODIFIED Requirements
 
 ### Requirement: MinimizeToolSurfaceTheAgentMustConsider

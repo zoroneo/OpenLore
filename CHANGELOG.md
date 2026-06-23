@@ -3,6 +3,29 @@
 All notable changes to OpenLore are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The default MCP tool surface is now lean (behavior change).** A bare
+  `openlore mcp` and a plain `openlore install` now wire the 10-tool `navigation`
+  preset — the Spec 14 benchmark-winning graph-traversal core — instead of all 62
+  tools. Schemas for tools the agent never calls are pure per-request overhead, so
+  breadth is now opt-in. The full 62-tool surface is one explicit selector away:
+  `openlore mcp --preset full` / `--all-tools`, or `openlore install --preset full`.
+  No tool was removed; every capability stays reachable via its named preset
+  (`minimal`, `memory`, `verify`, `federation`, `full`). When the lean default is
+  active, the server advertises the opt-in once through the MCP `initialize`
+  `instructions` channel (zero extra tool schemas). `openlore serve` now also
+  accepts `full` as an alias of `all`, and `openlore install` / `connect` accept
+  `--all-tools` (#185).
+
+  **Migration — repos that gate commits.** The lean default does **not** include the
+  governance tools the decisions pre-commit gate uses (`record_decision`,
+  `check_spec_drift`, `detect_changes`). If you rely on that workflow, re-install
+  with `openlore install --preset full` (all 62) or `--preset minimal` (the
+  governance core) to wire them back.
+
 ## [2.1.3] - 2026-06-22
 
 Everything merged since v2.1.2: a batch of new agent-facing capabilities plus a

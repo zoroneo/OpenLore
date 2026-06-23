@@ -116,7 +116,20 @@ function serializeManaged(
   nextObject: Record<string, unknown>,
   edits: JsonPathEdit[],
 ): string {
-  if (isJsonObjectText(rawOriginal)) return editJsonPreservingFormat(rawOriginal as string, edits);
+  if (isJsonObjectText(rawOriginal)) {
+    try {
+      return editJsonPreservingFormat(rawOriginal as string, edits);
+    } catch {
+      // The format-preserving editor (jsonc-parser `modify`) throws when a managed
+      // PARENT path resolves to a non-container — e.g. a hostile `.mcp.json` of
+      // `{"mcpServers":"oops"}`: the top level is an object (so isJsonObjectText is
+      // true) but `mcpServers` is a string, so `modify([...,'mcpServers','openlore'])`
+      // can't index into it. `nextObject` is already the safely-merged result (the
+      // in-memory merge coerces non-objects to {}), so fall back to a fresh write
+      // rather than crashing mid-install with a partial state.
+      return JSON.stringify(nextObject, null, 2) + '\n';
+    }
+  }
   return JSON.stringify(nextObject, null, 2) + '\n';
 }
 

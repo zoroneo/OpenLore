@@ -723,3 +723,13 @@ OpenLore exposed all 62 MCP tools by default (selectActiveTools with no selector
 Adversarial e2e on the default-to-lean-tool-surface change (a6c916ed) found four contract gaps: (1) The breadth pointer was gated on 'no selector at all', so `openlore install` (which wires `--preset navigation` explicitly) suppressed the pointer — installed agents got the lean surface but were never told breadth exists. Now both selectActiveTools and leanDefaultActive resolve through a single resolvePresetName() helper, and the pointer fires whenever the resolved surface is the lean default regardless of how it was reached. (2) `openlore mcp --preset <bad>` threw uncaught (exit 1 + stack trace); now exits 2 with a clean stderr message. (3) The cursor install adapter early-returned when its preset-independent .mdc was unchanged, skipping MCP wiring and silently ignoring preset switches on re-install; now falls through to MCP registration. (4) Selector vocabulary parity: serve accepts `full` as alias of `all`; install/connect accept `--all-tools`; the `all` alias normalizes to canonical `full` in wired args so .mcp.json never stores two strings for one surface.
 
 **Consequences:** Single source of truth (resolvePresetName) means the active tool set and the breadth pointer can never disagree. Installed agents on the lean default reliably see the breadth pointer. Bad presets fail as CLI usage errors (exit 2, no stack). Cursor users can switch presets on re-install. `full`/`all`/`--all-tools` are interchangeable across mcp/serve/install/connect, always wired as canonical `full`.
+
+### Install JSON format-preserving editor falls back to clean merged write on non-container managed parent
+
+**Status:** Approved
+**Date:** 2026-06-23
+**ID:** 96f55beb
+
+jsonc-parser modify() throws when indexing into a non-container parent (e.g. mcpServers is a string/number/null/array instead of an object). Since mergeEntries already coerces the non-object value to {} and produces the correct nextObject, serializeManaged wraps the format-preserving path in try/catch and falls back to JSON.stringify(nextObject) — the same fresh-write path used for unparseable files. This trades formatting preservation (only in the hostile case) for never crashing or half-installing.
+
+**Consequences:** A malformed/hostile .mcp.json no longer crashes install mid-flight; the OpenLore server is wired correctly (exit 0) and existing content is reconstructed from the merged object. Formatting is preserved in every normal case; only the previously-crashing non-container-parent case loses byte-exact formatting.

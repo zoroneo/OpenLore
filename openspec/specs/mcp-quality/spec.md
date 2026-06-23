@@ -107,33 +107,35 @@ intent.
 
 ### Requirement: Tool Surface Size and Progressive Disclosure
 
-The server SHALL minimize the number of tools an agent must consider at once. A small,
-high-value default tool set SHALL be the recommended configuration, with the full set
-available opt-in. The existing `--minimal` mode (orient, search_code, record_decision,
-detect_changes, check_spec_drift) is the baseline; the server SHALL document which set is
-appropriate for which use case and SHOULD make the lean set the default for first-time users.
+The server SHALL minimize the number of tools an agent must consider at once. The **default**
+MCP surface (no preset selected) SHALL be a small, high-value subset — the Spec 14 benchmark-winning
+`navigation` preset (the 10-tool graph-traversal core) — and SHALL NOT be the full `TOOL_DEFINITIONS`
+registry. Breadth (the full surface and every governance/memory/verify/federation capability) SHALL
+remain available strictly by opt-in: a named preset, or the explicit full-surface selector
+(`--preset full` / `--all-tools`). The server SHALL document which set is appropriate for which use
+case. (Changed by the `default-to-lean-tool-surface` change / ADR-0022: the lean default was inverted
+from the full registry to the `navigation` preset; the legacy `--minimal` mode — orient, search_code,
+record_decision, detect_changes, check_spec_drift — remains a selectable governance-core preset.)
 
-The *total* tool count trends upward over time (it has grown past ~50), which is precisely why
-the recommended surface is governed by **preset membership**, not by the total. A new tool SHALL
-default to opt-in: it joins `TOOL_PRESETS` only where it earns a clear trigger, and SHALL NOT be
-added to `MINIMAL_TOOLS` (or any future first-run-default preset) without an explicit justification
-that it belongs in the smallest useful surface. Specialized navigation/analysis tools (e.g.
-`get_map`, `get_landmarks`, `find_path`) belong in the opt-in `navigation` preset, not the lean
-default. The lean/first-run surface SHALL stay roughly constant in size as the full registry grows;
-growth of the *always-listed default* surface — not the full registry — is what this requirement
+The *total* tool count trends upward over time (it is now 62), which is precisely why the default
+surface is governed by **preset membership**, not by the total. A new tool SHALL default to opt-in: it
+joins `TOOL_PRESETS` only where it earns a clear trigger, and SHALL NOT enter the lean default
+(`navigation`) surface without an explicit, evidence-backed justification that it belongs in the
+smallest useful navigation surface. The lean default surface SHALL stay roughly constant in size as the
+full registry grows; growth of the *default* surface — not the full registry — is what this requirement
 constrains.
 
 #### Scenario: A new tool does not inflate the lean default
 - **GIVEN** a newly added tool that is not essential to a first-time user's first task
 - **WHEN** it is registered
-- **THEN** it is placed in an opt-in preset (e.g. `navigation`) and is absent from `MINIMAL_TOOLS`
-- **AND** the size of the minimal/first-run surface is unchanged by its addition
+- **THEN** it is placed in an opt-in preset and is absent from the lean default (`navigation`) surface unless an evidence-backed decision adds it
+- **AND** the size of the lean default surface is unchanged by its addition
 
-#### Scenario: Lean default is available and documented
-- **GIVEN** a new user installing the server
-- **WHEN** they follow the documented quickstart
-- **THEN** they can start with a minimal, high-signal tool set without enabling all ~45 tools
-- **AND** the docs explain how to expand to the full set and why they would
+#### Scenario: Lean default is the out-of-box surface
+- **GIVEN** a new user who installs the server the documented way (`openlore install`, or a bare `openlore mcp`)
+- **WHEN** the active tool surface is resolved
+- **THEN** they get the lean, high-signal `navigation` surface (10 tools) without the full registry of 62 tools
+- **AND** the docs explain how to expand to the full set (`--preset full` / `--all-tools`) and why they would
 
 #### Scenario: Full surface does not dilute discovery
 - **GIVEN** the full tool set is enabled

@@ -294,6 +294,26 @@ describe('openlore install (end-to-end)', () => {
     expect(after.mcpServers.openlore).toBeUndefined();
   });
 
+  // change: default-to-lean-tool-surface (adversarial-review hardening) — a hostile
+  // `.mcp.json` whose `mcpServers` is a non-object (string/number/null/array) used to
+  // crash install: isJsonObjectText is true for the top-level object, so the
+  // format-preserving editor ran `modify([...,'mcpServers','openlore'])` and threw on
+  // the non-container parent, half-writing the install. Now it falls back to a clean
+  // merged write (the in-memory merge already coerced the bad value).
+  it.each([
+    ['string', '{"mcpServers":"oops"}'],
+    ['number', '{"mcpServers":123}'],
+    ['null', '{"mcpServers":null}'],
+    ['array', '{"mcpServers":["x"]}'],
+  ])('install does not crash when existing .mcp.json has a %s mcpServers value', async (_label, body) => {
+    await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
+    await writeFile(join(dir, '.mcp.json'), body);
+    const code = await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
+    expect(code).toBe(0);
+    const mcp = JSON.parse(await readFile(join(dir, '.mcp.json'), 'utf8'));
+    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'navigation']);
+  });
+
   it('auto-detects multiple surfaces when no --agent passed', async () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
     await mkdir(join(dir, '.cursor'), { recursive: true });

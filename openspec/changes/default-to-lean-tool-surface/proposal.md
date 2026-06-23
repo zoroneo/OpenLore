@@ -27,6 +27,18 @@
 > (default → 10 tools + pointer; explicit `--preset navigation` → 10 + pointer; `--minimal`/`memory` →
 > no pointer; `--preset full`/`--all-tools` → 62, no pointer; cursor default↔full switching tracks).
 >
+> **Second adversarial round (2026-06-22) — completeness + robustness.** A follow-up multi-agent pass
+> closed the remaining gaps: (a) added the `CHANGELOG.md` `[Unreleased]` entry for the behavior change
+> with the governance migration note; (b) reconciled the **live** `mcp-quality` spec — its
+> `Tool Surface Size and Progressive Disclosure` requirement still said the lean default SHOULD be
+> minimal and that navigation tools belonged in an opt-in preset "not the lean default," directly
+> contradicting what shipped; it now states the lean default IS the `navigation` preset (SHALL) and
+> fixes a stale `~45 tools` count to 62; (c) hardened `openlore install` against a hostile `.mcp.json`
+> whose `mcpServers` is a non-object value (string/number/null/array), which previously crashed the
+> format-preserving JSON editor mid-install — it now falls back to a clean merged write. A real
+> end-to-end tool CALL (`orient`, `search_code`, `get_subgraph`) through an install-wired lean server
+> was confirmed functional, and uninstall/multi-agent/malformed-config lifecycles were verified.
+>
 > **Explicitly reverses a prior sub-decision.** Decision `d54af0d3` (Spec 28, "Lean MCP tool surface
 > via lossless trim…") recorded that *"forcing the navigation preset as install default was rejected
 > (hides governance tools the decision gate needs, per Spec 25 Phase B)."* This change reverses that
