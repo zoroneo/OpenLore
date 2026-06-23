@@ -172,6 +172,8 @@ openlore install --no-analyze   # wire surfaces only; build the index later
 openlore install --dry-run      # preview every change without writing
 ```
 
+**Verify it worked:** run `openlore doctor` — it checks your config, index, MCP wiring, and LLM/embedding setup, and tells you exactly what to fix.
+
 See [docs/install.md](docs/install.md). The MCP server keeps the index fresh as you edit (file watcher on by default — large build dirs like `target/`, `node_modules/`, `dist/` are pruned automatically; disable entirely with `openlore mcp --no-watch-auto`).
 
 Then ask your agent: **`orient("add a new payment method")`**
@@ -529,6 +531,31 @@ openlore federation list                                     # ✓ indexed / ⚠
 Once peers are registered, `analyze_impact`, `find_dead_code`, `select_tests`, and `find_path` take an opt-in `federation` flag and answer across the fleet — who consumes a published symbol, whether an export is dead *everywhere*, which consumer tests a change touches — always naming the repos consulted vs skipped, never guessing for an unindexed one. The capability is opt-in: `openlore mcp --preset federation`. See [docs/cli-reference.md](docs/cli-reference.md#federation-multi-repo).
 
 The same `federation` preset also exposes a spec-store arc — binding OpenLore to an external spec store and reasoning about a change against it: `spec_store_status` (read-only health of a `.openlore/config.json` `specStore` binding and its indexed targets), `working_set_context` (one token-budgeted, per-target structural briefing for an active change across its targets), and `change_impact_certificate` (the paths a diff *newly opens* into declared covering surfaces, plus blast radius, drifted specs, and tests to run — also as `openlore impact-certificate`). All read-only, conclusion-shaped, and advisory.
+
+---
+
+## PR review (no agent required)
+
+OpenLore's deterministic structural value is reachable today in exactly one way: an agent decides to
+call an MCP tool. But **everyone opens pull requests** — the single highest-visibility checkpoint in the
+daily loop. `openlore review` drops the same distinctive output into that workflow, no agent required:
+
+```bash
+openlore review --base main           # one Markdown briefing for a base..head range
+openlore review --format json         # machine-readable, for any CI / forge
+```
+
+It composes two analyses that already ship — the **structural delta** (`structural_diff`: removed /
+added / signature-changed symbols and the callers they leave stale) and the **blast radius**
+(`computeBlastRadius`: hubs touched, layers crossed, tests to run, and the spec / decision / memory
+drift the change introduces) — into one conclusion-shaped comment. No LLM, no new MCP tool.
+
+The repo bundles a **GitHub Action** that posts it as **one sticky comment** (created once, updated in
+place on every push, matched by a hidden marker so it never spams) — advisory by default, opt-in gating
+via the same `blastRadius.block` convention. Adoption is one workflow file
+([`.github/workflows/openlore-review.yml.example`](.github/workflows/openlore-review.yml.example)). It
+degrades honestly: with no index it still shows the structural delta and tells you to run
+`openlore analyze`. See [docs/cli-reference.md](docs/cli-reference.md#pr-review-openlore-review).
 
 ---
 

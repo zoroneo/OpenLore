@@ -157,6 +157,9 @@ Most tools run on **pure static analysis** — no LLM quota consumed. Exceptions
 | `get_function_skeleton` | Noise-stripped view of a source file: logs, inline comments, and non-JSDoc block comments removed. Signatures, control flow, return/throw, and call expressions preserved. Returns reduction %. | No |
 | `get_file_dependencies` | Return the file-level import dependencies for a given source file (imports, imported-by, or both). | Yes |
 | `get_architecture_overview` | High-level cluster map: roles (entry layer, orchestrator, core utilities, API layer, internal), inter-cluster dependencies, global entry points, and critical hubs. No LLM required. | Yes |
+| `get_minimal_context` | The minimum context to safely modify a function: its signature + body, direct callers and callees (signatures only), and which test files cover it. Cheaper than reading whole files. | Yes |
+| `get_cluster` | All functions in the same community as a given function — label-propagation clusters of tightly-coupled code computed at analyze time. | Yes |
+| `search_unified` | Search code functions AND spec requirements in one call, cross-boosting results — "where is X implemented and what does the spec say about it?" | Yes |
 
 **Stack inventory**
 
@@ -167,6 +170,7 @@ Most tools run on **pure static analysis** — no LLM quota consumed. Exceptions
 | `get_ui_components` | Detected UI components with framework, props, and source file. Supports React, Vue, Svelte, and Angular. | Yes |
 | `get_env_vars` | Env vars referenced in source code with `required` (no fallback) and `hasDefault` flags. Supports JS/TS, Python, Go, and Ruby. | Yes |
 | `get_middleware_inventory` | Detected middleware with type (auth/cors/rate-limit/validation/logging/error-handler) and framework. | Yes |
+| `get_external_packages` | All direct external dependencies from package manifests (npm `package.json`, pypi `pyproject.toml`/`requirements.txt`, cargo `Cargo.toml`, go `go.mod`) — each with name, version, and ecosystem. | Yes |
 
 **Code quality**
 
@@ -179,6 +183,11 @@ Most tools run on **pure static analysis** — no LLM quota consumed. Exceptions
 | `blast_radius` | Pre-flight structural blast-radius briefing for the current staged/working diff (advisory). Pure orchestration of existing analyses — no LLM: affected callers/layers and hubs (`analyze_impact`), tests to run (`select_tests`), and the anchored memories/decisions the diff will drift/orphan plus specs it will make stale (`check_spec_drift`). One conclusion-shaped briefing, never a graph. CLI: `openlore blast-radius` (+ `--install-hook` for an advisory pre-commit hook). | Yes |
 | `get_low_risk_refactor_candidates` | Safest functions to refactor first: low fan-in, low fan-out, not a hub, no cyclic involvement. Best starting point for incremental, low-risk sessions. | Yes |
 | `get_leaf_functions` | Functions that make no internal calls (leaves of the call graph). Zero downstream blast radius. Sorted by fan-in by default -- most-called leaves have the best unit-test ROI. | Yes |
+| `structural_diff` | A graph diff (complement to `git diff`) between two states (working tree vs a ref, or two refs): what changed structurally and whose callers are now stale. | Yes |
+| `detect_changes` | Detect recently changed functions (git diff vs a base ref) and rank them by blast radius (fan-in + transitive reach). | Yes |
+| `get_change_coupling` | Co-change coupling mined from git history (not the call graph): what changes together with a file, and the most volatile code. | Yes |
+| `get_health_map` | One-call structural health dashboard: hubs, god functions, layer violations, and volatile files, ranked by severity. A good starting point on an unfamiliar repo. | Yes |
+| `get_surprising_connections` | Unexpected structural coupling — cross-community edges, peripheral-to-hub calls, cross-test-boundary dependencies. Spot accidental coupling before a refactor. | Yes |
 
 **Specs**
 
@@ -190,6 +199,8 @@ Most tools run on **pure static analysis** — no LLM quota consumed. Exceptions
 | `search_specs` | Semantic search over OpenSpec specifications to find requirements, design notes, and architecture decisions by meaning. Also searches ADR files (`openspec/decisions/adr-*.md`) indexed under domain `decisions`. Returns linked source files for graph highlighting. Use this when asked "which spec covers X?" or "where should we implement Z?" or "what decisions were made about Y?". Requires a spec index built with `openlore analyze` or `--reindex-specs`. | Yes (generate) |
 | `list_spec_domains` | List all OpenSpec domains available in this project. Use this to discover what domains exist before doing a targeted `search_specs` call. | Yes (generate) |
 | `audit_spec_coverage` | Parity audit: uncovered functions (in call graph, no spec), hub gaps (high fan-in + no spec), orphan requirements (spec with no implementation found), and stale domains (source changed after spec). Run before starting a feature to understand coverage health. No LLM required. | Yes (analyze) |
+| `generate_tests` | Generate spec-driven test files from OpenSpec scenarios — vitest, playwright (JS/TS), pytest (Python), gtest/catch2 (C++), junit (Java/Kotlin), gotest (Go). | Yes (generate) |
+| `get_test_coverage` | Which OpenSpec scenarios have test coverage — scans test files for `// openlore:` / `# openlore:` tags (added automatically by `generate_tests`). | Yes (generate) |
 
 **Decisions**
 
@@ -200,6 +211,21 @@ Most tools run on **pure static analysis** — no LLM quota consumed. Exceptions
 | `approve_decision` | Approve one or more decisions by ID, marking them ready to sync into specs and ADRs. | No |
 | `reject_decision` | Reject a decision by ID with a reason. Rejected decisions are excluded from sync. | No |
 | `sync_decisions` | Write approved decisions into OpenSpec spec.md files (as requirements) and create ADR files in `openspec/decisions/`. Append-only — never rewrites existing content. After sync, inactive decisions (synced/rejected/phantom) are purged from the store — their content lives in ADRs and git. Pass `dryRun: true` to preview. | No |
+
+**Memory (opt-in, `--preset memory`)**
+
+Durable, code-anchored notes that self-invalidate when the code they describe moves. Registered only under `openlore mcp --preset memory`.
+
+| Tool | Description | Requires prior analysis |
+|------|-------------|:---:|
+| `remember` | Persist a durable, code-anchored memory (invariant / gotcha / rationale). Anchor it to a symbol and/or file so it self-invalidates when that code changes. Re-recording the same content+anchor updates in place; `supersedes` retires a prior memory. | Yes |
+| `recall` | Recall code-anchored memories (notes + decisions) for a task with a freshness verdict — fresh, drifted (verify), or orphaned (never served as authoritative). Optional `asOf`/`changedSince` for history and a `type` filter. | Yes |
+
+**Claim verification (opt-in, `--preset verify`)**
+
+| Tool | Description | Requires prior analysis |
+|------|-------------|:---:|
+| `verify_claim` | Verify a structural claim **before** asserting it to a human ("X is dead", "Y calls Z", "this is safe to change"): a deterministic verdict (`confirmed` / `refuted` / `unverifiable`) plus a citation receipt. An `unverifiable` verdict means hedge or read the source. Registered only under `openlore mcp --preset verify`. | Yes |
 
 **Federation (multi-repo, opt-in)**
 

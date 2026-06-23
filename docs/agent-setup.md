@@ -38,7 +38,16 @@ This is structural signal, not prose. It pairs with `openspec/specs/overview/spe
 
 ### Setup
 
-Two commands, run once per project:
+The one-command path covers most projects:
+
+```bash
+openlore install   # detect your agent, wire it up, and build the index (no API key)
+openlore doctor    # confirm it worked and see what (if anything) to fix
+```
+
+`openlore install` wires the lean `navigation` MCP surface plus the `SessionStart` and
+`UserPromptSubmit` hooks, then builds the index. The granular commands below remain available
+when you want project-specific context files or the workflow skills:
 
 ```bash
 openlore analyze --ai-configs   # generate project-specific context files

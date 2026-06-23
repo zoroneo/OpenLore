@@ -13,6 +13,9 @@ That auto-detects which agent surfaces are present (Claude Code, Cursor, Cline, 
 the universal `AGENTS.md` fallback) and writes the minimal config needed for each agent to call
 `orient()` before reading source files.
 
+Confirm it worked with `openlore doctor` — it reports your config, index freshness, MCP wiring,
+and LLM/embedding setup, and prints the exact command to fix anything that is missing.
+
 ## Flags
 
 | Flag | Effect |

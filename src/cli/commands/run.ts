@@ -447,6 +447,7 @@ The pipeline saves run metadata to .openlore/runs/ for tracking.
         console.log('   ✗ No LLM API key found');
         console.log('');
         logger.error('Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or OPENAI_COMPAT_API_KEY + OPENAI_COMPAT_BASE_URL.');
+        logger.info('No API key?', 'With the Claude Code CLI installed, set generation.provider to "claude-code" in .openlore/config.json — generate/verify/drift run with no API key.');
         metadata.result = 'failure';
         metadata.error = 'No LLM API key';
         process.exitCode = 1;

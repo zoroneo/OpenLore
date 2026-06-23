@@ -1,0 +1,53 @@
+# OpenLore structural PR review — copy this file to `.github/workflows/openlore-review.yml`.
+#
+# Posts ONE sticky comment on each pull request with the deterministic structural
+# briefing (structural delta + blast radius). Advisory by default: it informs, it
+# never fails the check. To opt into gating, set `gate: 'true'` below and configure
+# `blastRadius.block` in `.openlore/config.json`.
+#
+# Requirements: a full-history checkout (`fetch-depth: 0`) so the base..head range is
+# reachable, and write permission on pull-request comments.
+#
+# Note: this runs `npx openlore@<openlore-version>`, so it activates once a PUBLISHED
+# openlore ships the `review` command (the release that introduces it). Until then the
+# Action no-ops gracefully (no comment, the check stays green); pin `openlore-version`
+# to that release for reproducibility.
+#
+# Fork PRs: GitHub hands a READ-ONLY `GITHUB_TOKEN` to `pull_request` runs triggered from a
+# fork, so the sticky comment cannot be posted for external contributors — the Action warns
+# and the briefing stays in the job log (it never fails the check). If you need the comment
+# on fork PRs, switch the trigger to `pull_request_target` — but understand the security
+# trade-off (it runs with the base repo's write token; only safe because this Action runs
+# deterministic local analysis, not untrusted head code).
+
+name: OpenLore review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# One run per PR: a newer push cancels the in-flight review so only the latest posts
+# (avoids a race that could create a duplicate sticky comment).
+concurrency:
+  group: openlore-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  openlore-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the PR base is reachable
+
+      - uses: clay-good/OpenLore/.github/actions/openlore-review@main
+        with:
+          # github-token: ${{ secrets.GITHUB_TOKEN }}   # default; uncomment to override
+          # base: ${{ github.event.pull_request.base.sha }}
+          # head: ${{ github.event.pull_request.head.sha }}
+          analyze: 'true'            # build the index for the full blast radius
+          openlore-version: 'latest'
+          gate: 'false'              # 'true' = fail the job on a configured blastRadius.block pattern
