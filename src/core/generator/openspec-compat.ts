@@ -7,10 +7,28 @@
 
 import { readFile, writeFile, mkdir, access, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml, parseDocument } from 'yaml';
 import logger from '../../utils/logger.js';
 import { OPENSPEC_DIR, OPENSPEC_CONFIG_FILENAME } from '../../constants.js';
 import type { ProjectSurveyResult } from './spec-pipeline.js';
+
+/**
+ * Top-level `config.yaml` keys OpenSpec (the host) owns when OpenLore runs as an
+ * OpenSpec plugin. Their presence marks the config as host-managed, in which case
+ * OpenLore writes ONLY its `openlore` key (the one it declares via
+ * `ownsConfigKeys`) and leaves every other key byte-for-byte unchanged — it never
+ * introduces or overwrites a host-owned key. When none of these are present the
+ * config is treated as standalone OpenLore's own, and OpenLore may create
+ * `schema`/`context` as before (it is then the legitimate creator).
+ */
+export const HOST_OWNED_CONFIG_KEYS = [
+  'version',
+  'profile',
+  'delivery',
+  'workflows',
+  'featureFlags',
+  'plugins',
+] as const;
 
 // ============================================================================
 // TYPES
@@ -388,7 +406,16 @@ export class OpenSpecConfigManager {
   }
 
   /**
-   * Update config with openlore metadata while preserving user content
+   * Update config with openlore metadata while preserving user/host content.
+   *
+   * Write discipline (config-key ownership): OpenLore owns exactly the `openlore`
+   * key. When a config.yaml already exists, the update is performed surgically
+   * through the YAML Document API so every other key — and every comment — is
+   * preserved verbatim. If the existing config is host-managed (it carries any
+   * {@link HOST_OWNED_CONFIG_KEYS}, i.e. OpenSpec created it), OpenLore touches
+   * ONLY its `openlore` key and never introduces or overwrites a host-owned key
+   * (context auto-injection is skipped — the host owns `context`). When no config
+   * exists, OpenLore is the legitimate creator and may seed `schema`/`context`.
    */
   async updateWithOpenLoreMetadata(
     metadata: OpenLoreMetadata,
@@ -399,20 +426,47 @@ export class OpenSpecConfigManager {
       version: '1.0.0',
     }
   ): Promise<OpenSpecConfig> {
-    let config = await this.readConfig();
-
-    if (!config) {
-      config = {
-        schema: 'spec-driven',
-      };
+    let raw: string | null = null;
+    try {
+      raw = await readFile(this.configPath, 'utf-8');
+    } catch {
+      raw = null;
     }
 
-    // Add openlore metadata
-    config['openlore'] = metadata;
+    // Existing file → edit in place so host-owned keys and comments survive byte
+    // for byte. Only the `openlore` key (and, standalone-only, `context`) is set.
+    if (raw !== null) {
+      const doc = parseDocument(raw);
+      const hostManaged = HOST_OWNED_CONFIG_KEYS.some((key) => doc.has(key));
 
-    // Update context if we have detected info and user approves
+      doc.set('openlore', metadata);
+
+      // Context auto-injection is a standalone affordance only. Under a
+      // host-managed config OpenSpec owns `context`, so OpenLore stays strictly
+      // additive to its own key.
+      if (!hostManaged && detectedContext && options.appendDetectedInfo) {
+        const existing = doc.get('context');
+        doc.set(
+          'context',
+          this.buildContext(
+            typeof existing === 'string' ? existing : undefined,
+            detectedContext,
+            options.preserveUserContext
+          )
+        );
+      }
+
+      await mkdir(this.openspecRoot, { recursive: true });
+      await writeFile(this.configPath, doc.toString(), 'utf-8');
+      logger.success(`Updated ${this.configPath}`);
+      return doc.toJSON() as OpenSpecConfig;
+    }
+
+    // No config yet → OpenLore is the legitimate creator (standalone mode).
+    const config: OpenSpecConfig = { schema: 'spec-driven' };
+    config['openlore'] = metadata;
     if (detectedContext && options.appendDetectedInfo) {
-      config.context = this.buildContext(config.context, detectedContext, options.preserveUserContext);
+      config.context = this.buildContext(undefined, detectedContext, options.preserveUserContext);
     }
 
     await this.writeConfig(config);

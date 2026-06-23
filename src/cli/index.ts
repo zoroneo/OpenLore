@@ -7,6 +7,13 @@
  * Philosophy: "Archaeology over Creativity" — Extract the truth of what code does.
  */
 
+// Guard the Node version BEFORE anything heavy loads. Imported first so it
+// evaluates ahead of commander and the command modules: a host on an unsupported
+// Node (e.g. `openspec lore generate` under Node 20) gets one legible stderr line
+// and a stable exit code, never a stack trace. Keep this the first import.
+import { assertSupportedNode } from './node-version-guard.js';
+assertSupportedNode();
+
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { initCommand } from './commands/init.js';
@@ -37,6 +44,7 @@ import { workingSetCommand } from './commands/working-set.js';
 import { impactCertificateCommand } from './commands/impact-certificate.js';
 import { exportCommand } from './export/index.js';
 import { manifestCommand } from './manifest/index.js';
+import { pluginManifestCommand } from './plugin-manifest/index.js';
 import { serveCommand } from './commands/serve.js';
 import { panicCheckCommand } from './commands/panic-check.js';
 import { panicLevelCommand } from './commands/panic-level.js';
@@ -169,6 +177,7 @@ program.addCommand(workingSetCommand);
 program.addCommand(impactCertificateCommand);
 program.addCommand(exportCommand);
 program.addCommand(manifestCommand);
+program.addCommand(pluginManifestCommand);
 program.addCommand(serveCommand);
 program.addCommand(panicCheckCommand);
 program.addCommand(panicLevelCommand);

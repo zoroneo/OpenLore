@@ -15,6 +15,7 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from '../../utils/logger.js';
+import { withQuietStdout } from '../../utils/quiet-stdout.js';
 import { handleOrient } from '../../core/services/mcp-handlers/orient.js';
 import { estimateTokens } from '../../core/services/llm-service.js';
 import { OPENLORE_ANALYSIS_REL_PATH } from '../../constants.js';
@@ -75,30 +76,6 @@ function printPrimer(directory: string, asJson: boolean): void {
     console.log('OpenLore is installed but no analysis was found.');
     console.log('Run "openlore analyze" to build the graph, then:');
     console.log('  openlore orient --task "<task description>"');
-  }
-}
-
-/**
- * Run `fn` with console.log/info/warn redirected to stderr, then restore them.
- * handleOrient → validateDirectory writes a "[ok] Successfully validated
- * directory…" line to stdout via logger.success; in --json mode that would
- * corrupt the JSON the wrappers parse. The MCP server applies the same stdout
- * discipline (see startMcpServer). logger.error already uses stderr.
- */
-async function withQuietStdout<T>(fn: () => Promise<T>): Promise<T> {
-  const orig = { log: console.log, info: console.info, warn: console.warn };
-  const toStderr = (...args: unknown[]): void => {
-    process.stderr.write(args.map(a => (typeof a === 'string' ? a : String(a))).join(' ') + '\n');
-  };
-  console.log = toStderr;
-  console.info = toStderr;
-  console.warn = toStderr;
-  try {
-    return await fn();
-  } finally {
-    console.log = orig.log;
-    console.info = orig.info;
-    console.warn = orig.warn;
   }
 }
 

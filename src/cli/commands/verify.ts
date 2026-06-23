@@ -8,6 +8,7 @@
 import { Command } from 'commander';
 import { join } from 'node:path';
 import { logger } from '../../utils/logger.js';
+import { redirectConsoleToStderr } from '../../utils/quiet-stdout.js';
 import { fileExists, formatDuration, parseList, readJsonFile, resolveLLMProvider } from '../../utils/command-helpers.js';
 import {
   OPENLORE_DIR,
@@ -311,6 +312,11 @@ A score >= threshold indicates specs are production-ready.
       return;
     }
 
+    // --json: keep stdout pure. Pipeline stages log progress ("[analyze]",
+    // "[scan]") to stdout via the logger; redirect those to stderr so the only
+    // thing on stdout is the report JSON the host parses.
+    const restoreStdout = opts.json ? redirectConsoleToStderr() : null;
+
     try {
       // ========================================================================
       // PHASE 1: VALIDATION
@@ -447,8 +453,9 @@ A score >= threshold indicates specs are production-ready.
       // PHASE 4: DISPLAY RESULTS
       // ========================================================================
       if (opts.json) {
-        // JSON-only output
-        console.log(JSON.stringify(report, null, 2));
+        // JSON-only output, written straight to stdout (bypasses the redirected
+        // console.log) so it is the sole thing on the stream.
+        process.stdout.write(JSON.stringify(report, null, 2) + '\n');
       } else {
         // Display individual results
         for (let i = 0; i < report.results.length; i++) {
@@ -488,5 +495,7 @@ A score >= threshold indicates specs are production-ready.
         console.error(error);
       }
       process.exitCode = 1;
+    } finally {
+      restoreStdout?.();
     }
   });

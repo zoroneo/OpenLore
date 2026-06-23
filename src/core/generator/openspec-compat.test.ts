@@ -516,6 +516,70 @@ describe('OpenSpecConfigManager', () => {
     });
   });
 
+  describe('config-key ownership (plugin model)', () => {
+    const metadata: OpenLoreMetadata = {
+      version: '2.0.0',
+      generatedAt: '2026-06-22T00:00:00Z',
+      domains: ['user'],
+      confidence: 0.9,
+    };
+
+    it('preserves a host-managed config byte-for-byte except the openlore key', async () => {
+      // A config.yaml created by OpenSpec: host-owned keys + a comment + nested block.
+      const hostConfig = [
+        '# Managed by OpenSpec — do not hand-edit above the openlore block',
+        'version: 1',
+        'profile: default',
+        'delivery: both',
+        'workflows:',
+        '  - propose',
+        '  - apply',
+        'featureFlags:',
+        '  experimental: true',
+        '',
+      ].join('\n');
+      await mkdir(join(tempDir, 'openspec'), { recursive: true });
+      await writeFile(join(tempDir, 'openspec', 'config.yaml'), hostConfig);
+
+      await manager.updateWithOpenLoreMetadata(metadata, {
+        techStack: 'TypeScript',
+        architecture: 'Layered',
+        domains: ['user'],
+        patterns: [],
+      });
+
+      const after = await readFile(join(tempDir, 'openspec', 'config.yaml'), 'utf-8');
+
+      // Every host-owned line survives verbatim — including the comment.
+      for (const line of hostConfig.split('\n').filter((l) => l.length > 0)) {
+        expect(after, `host line dropped/altered: ${line}`).toContain(line);
+      }
+      // openlore was added; context (host-owned) was NOT injected.
+      const parsed = await manager.readConfig();
+      expect(parsed?.['openlore']).toEqual(metadata);
+      expect(parsed?.context).toBeUndefined();
+      expect((parsed as Record<string, unknown>).schema).toBeUndefined();
+    });
+
+    it('does not introduce host-owned keys when the host created the config', async () => {
+      await mkdir(join(tempDir, 'openspec'), { recursive: true });
+      await writeFile(join(tempDir, 'openspec', 'config.yaml'), 'version: 1\nprofile: default\n');
+
+      await manager.updateWithOpenLoreMetadata(metadata);
+
+      const parsed = (await manager.readConfig()) as Record<string, unknown>;
+      // Only version, profile, openlore — OpenLore never added schema.
+      expect(Object.keys(parsed).sort()).toEqual(['openlore', 'profile', 'version']);
+    });
+
+    it('still seeds schema when creating a standalone config from scratch', async () => {
+      await manager.updateWithOpenLoreMetadata(metadata);
+      const parsed = await manager.readConfig();
+      expect(parsed?.schema).toBe('spec-driven');
+      expect(parsed?.['openlore']).toEqual(metadata);
+    });
+  });
+
   describe('getExistingDomains', () => {
     it('should return empty array when specs dir does not exist', async () => {
       const domains = await manager.getExistingDomains();
