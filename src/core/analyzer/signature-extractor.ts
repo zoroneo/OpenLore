@@ -43,6 +43,10 @@ export function detectLanguage(filePath: string): string {
   if (lower.endsWith('.tf') || lower.endsWith('.tfvars') || lower.endsWith('.tf.json')) {
     return 'Terraform';
   }
+  // Bicep is unambiguous by extension (Azure IaC DSL).
+  if (lower.endsWith('.bicep')) {
+    return 'Bicep';
+  }
   const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
   switch (ext) {
     case 'py':           return 'Python';
@@ -754,6 +758,28 @@ function extractTerraformSignatures(content: string): ExtractedSignature[] {
 }
 
 // ============================================================================
+// BICEP EXTRACTOR (Azure IaC — add-bicep-iac-graph)
+// ============================================================================
+
+function extractBicepSignatures(content: string): ExtractedSignature[] {
+  const entries: ExtractedSignature[] = [];
+  // Top-level declarations only (depth 0): keyword, symbolic name, optional 'type' literal.
+  const re = /^(resource|module|param|var|output)\s+([A-Za-z_]\w*)\s*('[^']*')?/gm;
+  for (const m of content.matchAll(re)) {
+    if (entries.length >= MAX_SIGS_PER_FILE) break;
+    const keyword = m[1];
+    const name = m[2];
+    const typeLit = m[3] ? ` ${m[3]}` : '';
+    entries.push({
+      kind: keyword === 'resource' || keyword === 'module' ? 'class' : 'const',
+      name,
+      signature: `${keyword} ${name}${typeLit}`,
+    });
+  }
+  return entries;
+}
+
+// ============================================================================
 // ADDITIONAL GENERAL-PURPOSE LANGUAGES (spec-08) — best-effort Stage-1 regexes
 // ============================================================================
 //
@@ -852,6 +878,9 @@ export function extractSignatures(filePath: string, content: string): FileSignat
       break;
     case 'Terraform':
       entries = extractTerraformSignatures(content);
+      break;
+    case 'Bicep':
+      entries = extractBicepSignatures(content);
       break;
     case 'C#':
     case 'Kotlin':

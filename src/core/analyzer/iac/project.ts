@@ -37,7 +37,7 @@ export function projectIacGraph(graph: IacGraph): ProjectedIac {
     if (!nodes.has(id)) {
       const node: FunctionNode = {
         id,
-        name: r.address,
+        name: r.displayName ?? r.address,
         filePath: r.filePath,
         className: r.type,
         isAsync: false,
@@ -95,7 +95,7 @@ export function projectIacGraph(graph: IacGraph): ProjectedIac {
       .sort();
     classes.push({
       id,
-      name: m.address,
+      name: m.displayName ?? m.address,
       filePath: m.filePath,
       language: m.language,
       parentClasses: [],

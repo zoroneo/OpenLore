@@ -1118,6 +1118,8 @@ export class AnalysisArtifactGenerator {
       'C#', 'Kotlin', 'PHP', 'C', 'Scala', 'Dart', 'Lua', 'Elixir', 'Bash',
       // Infrastructure-as-Code (spec-07) — projected onto the same graph primitives.
       'Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible',
+      // Azure IaC DSL (add-bicep-iac-graph).
+      'Bicep',
     ]);
     // Skip inline-script extraction for very large HTML files: bounds the
     // same-length char-array allocation in extractHtmlScripts (the scan is O(N)).

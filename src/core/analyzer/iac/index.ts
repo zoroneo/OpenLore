@@ -14,6 +14,7 @@ import { extractCloudFormation } from './cloudformation.js';
 import { extractAnsible } from './ansible.js';
 import { extractPulumi } from './pulumi.js';
 import { extractCdk } from './cdk.js';
+import { extractBicep } from './bicep.js';
 import { projectIacGraph, type ProjectedIac } from './project.js';
 import { mergeIacGraphs, type IacGraph } from './types.js';
 
@@ -38,6 +39,8 @@ export function buildIacGraph(files: InFile[]): IacGraph {
     // Pulumi, CDK, and CDKTF ride on existing general-purpose languages, not an IaC tag.
     extractPulumi(generalPurpose),
     extractCdk(generalPurpose),
+    // Bicep is its own DSL, tagged by the `.bicep` extension.
+    extractBicep(byLang('Bicep')),
   ];
   return mergeIacGraphs(graphs);
 }
