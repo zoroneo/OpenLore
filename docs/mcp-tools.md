@@ -195,7 +195,7 @@ Most tools run on **pure static analysis** — no LLM quota consumed. Exceptions
 | `structural_diff` | A graph diff (complement to `git diff`) between two states (working tree vs a ref, or two refs): what changed structurally and whose callers are now stale. | Yes |
 | `detect_changes` | Detect recently changed functions (git diff vs a base ref) and rank them by blast radius (fan-in + transitive reach). | Yes |
 | `get_change_coupling` | Co-change coupling mined from git history (not the call graph): what changes together with a file, and the most volatile code. | Yes |
-| `get_health_map` | One-call structural health dashboard: hubs, god functions, layer violations, and volatile files, ranked by severity. A good starting point on an unfamiliar repo. | Yes |
+| `get_health_map` | One-call structural health dashboard: hubs, god functions, layer violations, and volatile files, ranked by severity. A good starting point on an unfamiliar repo. Surfaces an `indexIntegrity` block when the on-disk index did not reconcile against its build-time attestation (`degraded` / `mismatched`), so the health signals are not presented as complete over a broken index. | Yes |
 | `get_surprising_connections` | Unexpected structural coupling — cross-community edges, peripheral-to-hub calls, cross-test-boundary dependencies. Spot accidental coupling before a refactor. | Yes |
 
 **Specs**

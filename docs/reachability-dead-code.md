@@ -102,3 +102,9 @@ delete-impact diff in
 > Accuracy depends on a current `analyze_codebase` that includes tests and produces the dependency
 > graph. Without test nodes as roots, test-only code is flagged; without the dependency graph,
 > confidence is reduced and the response says so.
+
+> **Index integrity.** When the persisted index does not reconcile against its build-time attestation —
+> materially smaller than the build committed (`degraded`) or built at a different schema (`mismatched`) —
+> the response carries that verdict in `confidenceBoundary.integrity` and is not marked `complete`. A
+> "dead" conclusion over a half-built index is the most dangerous false negative, so "looks dead to a
+> broken index" is labeled, never asserted. Re-run `analyze_codebase` to rebuild.

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { EdgeStore } from './edge-store.js';
+import { EdgeStore, SCHEMA_VERSION } from './edge-store.js';
 import type { CallEdge, FunctionNode, ClassNode } from '../analyzer/call-graph.js';
 
 async function makeTmpDir(): Promise<string> {
@@ -531,6 +531,47 @@ describe('EdgeStore', () => {
       store.clearAll();
       expect(store.countDecisions()).toBe(0);
       expect(store.getDecisionsForFiles(['src/a.ts'])).toEqual([]);
+    });
+  });
+
+  describe('attestation reconciliation inputs (add-index-integrity-attestation)', () => {
+    const nodeA: FunctionNode = {
+      id: 'src/a.ts::foo', name: 'foo', filePath: 'src/a.ts',
+      isAsync: false, language: 'TypeScript', startIndex: 0, endIndex: 10, fanIn: 0, fanOut: 0,
+    };
+    const nodeB: FunctionNode = {
+      id: 'src/b.ts::bar', name: 'bar', filePath: 'src/b.ts',
+      isAsync: false, language: 'TypeScript', startIndex: 0, endIndex: 10, fanIn: 0, fanOut: 0,
+    };
+    const nodeExternal: FunctionNode = {
+      id: 'ext::baz', name: 'baz', filePath: 'node_modules/x.ts',
+      isAsync: false, language: 'TypeScript', startIndex: 0, endIndex: 5, fanIn: 0, fanOut: 0, isExternal: true,
+    };
+    const cls: ClassNode = {
+      id: 'src/a.ts::C', name: 'C', filePath: 'src/a.ts', language: 'TypeScript',
+      parentClasses: [], interfaces: [], methodIds: [], fanIn: 0, fanOut: 0, isModule: false,
+    };
+
+    it('countFiles counts distinct internal files only (excludes external)', () => {
+      store.insertNodes([nodeA, nodeB, nodeExternal]);
+      expect(store.countFiles()).toBe(2); // src/a.ts, src/b.ts — not node_modules/x.ts
+    });
+
+    it('countEdges and countClasses return row counts', () => {
+      // beforeEach already inserted 2 edges (edgeAB, edgeCA).
+      expect(store.countEdges()).toBe(2);
+      store.insertClasses([cls]);
+      expect(store.countClasses()).toBe(1);
+    });
+
+    it('getSchemaVersion returns the current store schema version', () => {
+      expect(store.getSchemaVersion()).toBe(SCHEMA_VERSION);
+    });
+
+    it('checkpoint is a safe no-throw on an open store', () => {
+      expect(() => store.checkpoint()).not.toThrow();
+      // still usable afterward
+      expect(store.countEdges()).toBe(2);
     });
   });
 });

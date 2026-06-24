@@ -1389,6 +1389,28 @@ export async function writeEdgesToSQLite(
         // Change-coupling is additive and local-only; never block the graph write.
       }
     }
+
+    // Index integrity attestation (change: add-index-integrity-attestation). Records
+    // what this build committed to the production graph so a later load can reconcile
+    // the on-disk store against it and refuse to serve a half-built/truncated index as
+    // complete. Computed from the same production set that was just inserted, so the
+    // counts reconcile exactly. Additive + best-effort — a failure here never fails the
+    // graph write (the JSON artifacts remain the source of truth).
+    try {
+      const { SCHEMA_VERSION } = await import('../services/edge-store.js');
+      const { computeAttestation, writeAttestation } = await import('./index-attestation.js');
+      const { dirname } = await import('node:path');
+      // Count the SAME population the load recounts: internal (non-external),
+      // non-test nodes — matching EdgeStore.countNodes()/countFiles() (WHERE
+      // is_external = 0). prodEdges/classes already match countEdges()/countClasses()
+      // one-to-one. Counting external nodes here would inflate `committed` and
+      // falsely flag a healthy index as `degraded`.
+      const internalProdNodes = prodNodes.filter(n => !n.isExternal);
+      const attestation = computeAttestation(SCHEMA_VERSION, internalProdNodes, prodEdges, classes);
+      await writeAttestation(dirname(dbPath), attestation);
+    } catch {
+      // Attestation is additive; never block the graph write.
+    }
   } finally {
     store.close();
   }

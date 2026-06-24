@@ -8,10 +8,44 @@ import { realpathSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import type { LLMContext } from '../../analyzer/artifact-generator.js';
 import { EdgeStore } from '../edge-store.js';
+import { readAttestation, reconcile, type IndexIntegrity } from '../../analyzer/index-attestation.js';
 import { ANALYSIS_STALE_THRESHOLD_MS, ARTIFACT_FINGERPRINT, ARTIFACT_LLM_CONTEXT, MAX_QUERY_LENGTH, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DIR, OPENSPEC_DIR } from '../../../constants.js';
 
-/** LLMContext with optional SQLite edge store attached (present when call-graph.db exists). */
-export type CachedContext = LLMContext & { edgeStore?: EdgeStore };
+/**
+ * LLMContext with optional SQLite edge store attached (present when call-graph.db
+ * exists) and the index integrity verdict (present when an attestation was written and
+ * could be reconciled against the store — change: add-index-integrity-attestation).
+ */
+export type CachedContext = LLMContext & { edgeStore?: EdgeStore; integrity?: IndexIntegrity };
+
+/**
+ * Reconcile the on-disk edge store against its build-time attestation, returning the
+ * integrity verdict (`healthy | degraded | mismatched`) or undefined when the index is
+ * unverifiable (legacy index with no attestation, or a read fault). Pure-ish: a few
+ * COUNT(*) queries + a JSON read. A first-pass `degraded` triggers a WAL checkpoint and
+ * one recount to rule out a WAL-lag false positive before the verdict is committed.
+ *
+ * MUST be called while the store handle is open and BEFORE any wasReset/empty guard
+ * may close it, so a schema-bumped (now-empty) store still yields a `mismatched`
+ * verdict instead of a silent unverifiable.
+ */
+async function computeIndexIntegrity(es: EdgeStore, analysisDir: string): Promise<IndexIntegrity | undefined> {
+  const attestation = await readAttestation(analysisDir);
+  if (!attestation) return undefined; // unverifiable — never fabricate a healthy verdict
+  const read = (): IndexIntegrity => reconcile(attestation, {
+    schemaVersion: es.getSchemaVersion(),
+    files: es.countFiles(),
+    functions: es.countNodes(),
+    edges: es.countEdges(),
+    classes: es.countClasses(),
+  });
+  let verdict = read();
+  if (verdict.verdict === 'degraded') {
+    es.checkpoint();
+    verdict = read();
+  }
+  return verdict;
+}
 import { logger } from '../../../utils/logger.js';
 import { emit } from '../telemetry.js';
 import { redactSecretString } from '../secret-redaction.js';
@@ -281,6 +315,24 @@ export async function readCachedContext(directory: string, timeout?: number): Pr
       }
       if (EdgeStore.exists(analysisDir)) {
         const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
+        // Index integrity attestation (change: add-index-integrity-attestation).
+        // Reconcile the just-opened store against its build-time attestation BEFORE the
+        // wasReset/empty guard may close it, so a schema-bumped (now-empty) store still
+        // yields a `mismatched` verdict. Best-effort + additive: any fault here leaves
+        // the verdict unset (unverifiable), never blocks the load.
+        try {
+          const verdict = await computeIndexIntegrity(es, analysisDir);
+          if (verdict) {
+            ctx.integrity = verdict;
+            if (verdict.verdict !== 'healthy') {
+              // Recoverable signal: a non-healthy index is reported, never silently
+              // served as complete. Tools disclose it via the confidence boundary.
+              emit(directory, 'cache', { event: 'index_integrity', verdict: verdict.verdict });
+            }
+          }
+        } catch {
+          // Attestation reconciliation is additive; never block the load.
+        }
         // Schema-bump guard: opening a DB whose SCHEMA_VERSION is stale wipes it
         // (rebuild-on-bump). If the DB is now empty but the JSON analysis still has
         // production nodes, the two are out of sync after an upgrade — do NOT serve

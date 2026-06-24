@@ -21,6 +21,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { ARTIFACT_FINGERPRINT, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DIR } from '../../../constants.js';
+import type { IndexIntegrity } from '../../analyzer/index-attestation.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -75,6 +76,18 @@ export interface StalenessMarker {
   detail: string;
 }
 
+/**
+ * The persisted index this answer ran against did not reconcile against its build-time
+ * attestation — it is materially smaller than the build committed (`degraded`) or built
+ * at a different schema (`mismatched`). Negative conclusions over such an index may be
+ * false. Absent when the index is `healthy` or unverifiable (change:
+ * add-index-integrity-attestation).
+ */
+export interface IndexIntegrityDisclosure {
+  verdict: 'degraded' | 'mismatched';
+  detail: string;
+}
+
 export interface ConfidenceBoundary {
   /** How the traversal was grounded. Omitted for non-traversal answers (recall). */
   basis?: EdgeBasis;
@@ -82,12 +95,25 @@ export interface ConfidenceBoundary {
   knownUnknowable?: KnownUnknowableCrossing[];
   /** Index-vs-working-tree staleness. Absent when the index is current. */
   staleness?: StalenessMarker;
+  /** Index integrity verdict when the underlying index did not reconcile. Absent when healthy. */
+  integrity?: IndexIntegrityDisclosure;
   /**
    * True iff the computation crossed no boundary: no synthesized-edge reliance, no
-   * known-unknowable crossing, and a current index. The answer-level
-   * NoFalseCompleteness flag — an incomplete answer is never dressed as complete.
+   * known-unknowable crossing, a current index, AND a reconciled (non-degraded,
+   * non-mismatched) index. The answer-level NoFalseCompleteness flag — an incomplete
+   * answer is never dressed as complete.
    */
   complete: boolean;
+}
+
+/**
+ * Map an index integrity verdict to a confidence-boundary disclosure. Healthy and
+ * unverifiable (undefined) indexes disclose nothing — only a verdict that actually
+ * undermines the answer's completeness is surfaced.
+ */
+export function integrityDisclosure(integrity?: IndexIntegrity): IndexIntegrityDisclosure | undefined {
+  if (!integrity || integrity.verdict === 'healthy') return undefined;
+  return { verdict: integrity.verdict, detail: integrity.detail };
 }
 
 /** Tally direct vs synthesized edges (by rule) from a set of traversed edges. */
@@ -255,17 +281,20 @@ export function assembleBoundary(parts: {
   basis?: EdgeBasis;
   extraCrossings?: KnownUnknowableCrossing[];
   staleness?: StalenessMarker;
+  integrity?: IndexIntegrity;
 }): ConfidenceBoundary {
   const crossings = [
     ...(parts.basis ? crossingsFromBasis(parts.basis) : []),
     ...(parts.extraCrossings ?? []),
   ];
+  const integrity = integrityDisclosure(parts.integrity);
   const boundary: ConfidenceBoundary = {
-    complete: crossings.length === 0 && !parts.staleness,
+    complete: crossings.length === 0 && !parts.staleness && !integrity,
   };
   if (parts.basis) boundary.basis = parts.basis;
   if (crossings.length > 0) boundary.knownUnknowable = crossings;
   if (parts.staleness) boundary.staleness = parts.staleness;
+  if (integrity) boundary.integrity = integrity;
   return boundary;
 }
 

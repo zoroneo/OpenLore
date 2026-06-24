@@ -33,6 +33,7 @@ import { extractSignatures, detectLanguage } from '../analyzer/signature-extract
 import type { FunctionNode } from '../analyzer/call-graph.js';
 import { isTestFile } from '../analyzer/test-file.js';
 import { EdgeStore } from './edge-store.js';
+import { refreshAttestationCounts } from '../analyzer/index-attestation.js';
 import { primeContextCache, type CachedContext } from './mcp-handlers/utils.js';
 import {
   OPENLORE_DIR,
@@ -568,6 +569,13 @@ export class McpWatcher {
             );
           }
         }
+        // Keep the index attestation's counts in lockstep with the now-mutated store so
+        // the load-time verdict doesn't falsely report `degraded` on a valid incremental
+        // edit (change: add-index-integrity-attestation). Best-effort; never blocks the
+        // watch path. Skipped on a wasReset store (handled above — it bails before here).
+        if (changedFiles.length > 0) {
+          await refreshAttestationCounts(this.outputPath, store).catch(() => {});
+        }
       } finally {
         store.close();
       }
@@ -946,6 +954,12 @@ export class McpWatcher {
           // (fix-transitive-incremental-staleness).
           store.clearFilesStale(rels);
         });
+        // A deletion is the most likely trigger for a false `degraded` — keep the
+        // attestation's counts current with the shrunken store (change:
+        // add-index-integrity-attestation). Best-effort; never blocks the watch path.
+        if (!store.wasReset) {
+          await refreshAttestationCounts(this.outputPath, store).catch(() => {});
+        }
       } catch (err) {
         process.stderr.write(`[mcp-watcher] delete (graph) error: ${(err as Error).message}\n`);
       } finally {

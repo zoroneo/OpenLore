@@ -80,3 +80,9 @@ honesty, seed resolution) in
 > Requires a current `analyze_codebase` that included test files — `tested_by` edges and `isTest`
 > nodes come from analysis. If the cached graph predates test inclusion, `select_tests` reports
 > `testDetection: "none"` rather than pretending no tests are needed.
+
+> **Index integrity.** Backward-reachability completeness depends on the index landing intact. When the
+> persisted index does not reconcile against its build-time attestation (`degraded` — materially smaller
+> than the build committed; or `mismatched` — a different schema), the response carries that verdict in
+> `confidenceBoundary.integrity` and is not marked `complete`, so a too-small selection over a half-built
+> index is disclosed rather than trusted. Re-run `analyze_codebase` to rebuild.

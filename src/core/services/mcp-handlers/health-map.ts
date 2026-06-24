@@ -198,6 +198,15 @@ export async function handleGetHealthMap(input: GetHealthMapInput): Promise<unkn
       betweennessApprox: codeNodes.length > MAX_BETWEENNESS_SOURCES,
       betweennessSourceCount,
     },
+    // Index integrity verdict (change: add-index-integrity-attestation). Present only
+    // when the on-disk index did not reconcile against its build-time attestation — a
+    // `degraded` (materially smaller than built) or `mismatched` (different schema)
+    // index makes every structural-health signal above suspect, so the health surface
+    // discloses it loudly rather than presenting the metrics as complete. Healthy /
+    // unverifiable indexes omit the field.
+    ...(ctx.integrity && ctx.integrity.verdict !== 'healthy'
+      ? { indexIntegrity: { verdict: ctx.integrity.verdict, detail: ctx.integrity.detail } }
+      : {}),
     topRisks,
     hotspots: {
       hubs: hubNodes.slice(0, Math.min(limit, 5)).map(n => ({

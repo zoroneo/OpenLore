@@ -7,6 +7,17 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 ### Added
 
+- **Index integrity attestation** — `analyze` now writes `.openlore/analysis/index-attestation.json`
+  (schema version, committed production counts, content digest) deterministically. On load the
+  persisted graph index is reconciled against it into a `healthy | degraded | mismatched` verdict:
+  a schema-version drift is `mismatched`; a store materially smaller than the build committed (after a
+  WAL checkpoint-and-recount retry, with a small-repo exemption) is `degraded`. A non-healthy index is
+  never silently served — it emits a recoverable signal, surfaces on `get_health_map` as
+  `indexIntegrity`, and rides the `confidenceBoundary.integrity` of `find_dead_code` / `select_tests` /
+  `analyze_impact` / path tracing so a negative conclusion over a broken index is labeled
+  (`complete: false`) rather than asserted. The incremental watcher keeps the attestation's counts in
+  lockstep so ordinary editing never false-flags `degraded`. Advisory by default; deterministic, no LLM,
+  no new MCP tool. Extends the "never present absence as current fact" store ethos to the graph index.
 - **`verify_claim` `decision-current` kind** — verify a recorded decision is still
   authoritative before an agent cites it to a human ("decision X governs this, so it's
   safe"). `subject` is an 8-char decision id; the verdict is `confirmed` (recorded, not
