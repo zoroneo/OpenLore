@@ -584,21 +584,24 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'verify_claim',
     description:
-      'USE THIS BEFORE asserting a structural fact ("X is dead", "Y calls Z", "this is safe to change"). ' +
+      'USE THIS BEFORE asserting a structural fact ("X is dead", "Y calls Z", "this is safe to change") ' +
+      'or citing a decision ("ADR abc12345 governs this"). ' +
       'Returns a deterministic verdict (confirmed | refuted | unverifiable) + a citation receipt (spans, ' +
       'content hashes, index commit) — a graph computation, never an LLM guess. kinds: calls, reaches, ' +
-      'impacts, dead, safe-to-change. "unverifiable" is first-class when the claim hits a dynamic-dispatch ' +
-      'blind spot — hedge or read the source. Run analyze_codebase first.',
+      'impacts, dead, safe-to-change (structural); decision-current (is a recorded decision still ' +
+      'authoritative, or superseded/rejected?). "unverifiable" is first-class when the claim hits a ' +
+      'dynamic-dispatch blind spot or names an unknown decision — hedge or read the source. Run ' +
+      'analyze_codebase first for structural kinds.',
     inputSchema: {
       type: 'object',
       properties: {
         directory: { type: 'string', description: DIR_DESC },
         kind: {
           type: 'string',
-          enum: ['calls', 'reaches', 'dead', 'impacts', 'safe-to-change'],
-          description: 'The kind of structural claim to verify.',
+          enum: ['calls', 'reaches', 'dead', 'impacts', 'safe-to-change', 'decision-current'],
+          description: 'The kind of claim to verify (structural, or decision-current for decision authority).',
         },
-        subject: { type: 'string', description: 'The symbol the claim is about (a function/method name).' },
+        subject: { type: 'string', description: 'What the claim is about: a function/method name for structural kinds, or an 8-character decision id for decision-current.' },
         object: { type: 'string', description: 'The second symbol — required for relational kinds (calls, reaches, impacts).' },
       },
       required: ['directory', 'kind', 'subject'],

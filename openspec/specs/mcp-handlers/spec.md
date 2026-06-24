@@ -618,8 +618,9 @@ computeProjectFingerprint walked .openlore-live-cache (the gitignored clone cach
 
 ### Requirement: StructuralClaimVerification
 
-The system SHALL provide a `verify_claim` capability that accepts a structured structural claim
-(`{ kind: 'calls' | 'reaches' | 'dead' | 'impacts' | 'safe-to-change', subject, object? }`) and returns
+The system SHALL provide a `verify_claim` capability that accepts a structured claim
+(`{ kind: 'calls' | 'reaches' | 'dead' | 'impacts' | 'safe-to-change' | 'decision-current', subject, object? }`)
+and returns
 a deterministic `{ verdict: 'confirmed' | 'refuted' | 'unverifiable', reason, receipt?, confidenceBoundary }`.
 The verdict SHALL be computed by the existing deterministic analysis for that claim kind (call-graph
 traversal for `calls`/`reaches`, backward reachability for `impacts`, mark-and-sweep reachability for
@@ -632,6 +633,17 @@ the boundary named (reusing the confidence-boundary disclosure), never a fabrica
 The capability SHALL be conclusion-shaped (verdict + bounded receipt, never a graph to traverse) and
 registered only in an opt-in preset (`verify`), never in the minimal or first-run default surface.
 
+The `decision-current` kind extends the same verdict contract from the call graph to the recorded
+decision store (change: add-decision-reference-claim-verification), so an agent about to cite a decision
+to a human ("decision X governs this, so it is safe") can first check that X is still authoritative. Its
+`subject` is an 8-character decision id (not a symbol). The verdict SHALL be a pure read of the decision
+store, sharing the SAME retirement graph the `stale-decision-reference` finding walks so the two can
+never disagree about what counts as superseded: `confirmed` when the id resolves to a recorded decision
+that is neither superseded nor rejected; `refuted` when it has been superseded (the reason naming the
+live terminal superseder to cite instead) or was rejected; `unverifiable` when the id is malformed or no
+such decision is recorded in this repository. This kind verifies against the decision store only and
+SHALL NOT load or contort the structural call-graph verifier.
+
 #### Scenario: A false claim is refuted with a receipt
 
 - **GIVEN** a claim that function A calls function B, when no such edge exists
@@ -643,6 +655,18 @@ registered only in an opt-in preset (`verify`), never in the minimal or first-ru
 - **GIVEN** a `dead` claim about a symbol reachable only through synthesized dynamic-dispatch edges
 - **WHEN** the claim is verified
 - **THEN** the verdict is `unverifiable` with the dispatch boundary named, never `confirmed` or `refuted`
+
+#### Scenario: Citing a superseded decision is refuted, naming the superseder
+
+- **GIVEN** a `decision-current` claim about a decision id that a later decision supersedes
+- **WHEN** the claim is verified
+- **THEN** the verdict is `refuted`, the reason names the live superseding decision to cite instead, and the receipt carries the retired decision and its `supersededBy`
+
+#### Scenario: An unknown decision id is unverifiable, not fabricated
+
+- **GIVEN** a `decision-current` claim whose id is well-formed but recorded in no decision in this repository
+- **WHEN** the claim is verified
+- **THEN** the verdict is `unverifiable` (hedge or read the source), never a fabricated `confirmed`
 
 ### Requirement: ProactiveIntentBriefing
 
@@ -1090,8 +1114,9 @@ output is sorted with a locale-independent key.
 
 ### Requirement: StaleDecisionReferenceSurfacedThroughExistingTools
 
-> Status: Implemented for `recall` + the gate; `verify_claim` clause DEFERRED (change:
-> add-finding-enforcement-policy, 2026-06-23)
+> Status: Implemented for `recall`, the gate, and `verify_claim` (change:
+> add-finding-enforcement-policy, 2026-06-23; `verify_claim` clause completed by
+> add-decision-reference-claim-verification, 2026-06-24)
 
 The `stale-decision-reference` finding SHALL be surfaced through existing surfaces without adding a new
 MCP tool: `recall` SHALL flag, in its freshness verdict, when a returned authoritative memory references
@@ -1100,11 +1125,12 @@ enforcement policy. The finding SHALL NOT be served as a silent pass.
 
 > `recall` attaches a `staleDecisionRef` signal to an authoritative memory whose content cites a retired
 > decision and suppresses the clean `verifiedCurrent` claim; `openlore enforce` contributes the finding
-> to the unified gate. The original proposal also named `verify_claim`; that clause is DEFERRED because
-> `verify_claim`'s claim model is structural-only (`calls`/`reaches`/`dead`/`impacts`/`safe-to-change`)
-> and has no decision-reference claim to rest on — forcing one would contort the structural verifier. The
-> two natural homes (`recall` for memory authority, the gate for commit governance) fully cover the
-> surfacing intent; re-introducing a `verify_claim` clause is tracked as follow-on work.
+> to the unified gate. The original proposal also named `verify_claim`; that clause was initially deferred
+> because the structural-only claim model had no decision-reference claim to rest on. It is now closed by
+> the `decision-current` claim kind (see `StructuralClaimVerification` above), which verifies the same
+> retirement graph through a cleanly separated decision-store path that does not contort the structural
+> verifier — so an agent can affirmatively check a decision it is *about to cite* is still authoritative,
+> complementing `recall`'s passive flag on memory it happens to surface.
 
 #### Scenario: Recall flags an authoritative memory resting on a retired decision
 
@@ -1112,3 +1138,10 @@ enforcement policy. The finding SHALL NOT be served as a silent pass.
 - **WHEN** `recall` returns that memory
 - **THEN** its freshness verdict carries the `stale-decision-reference` signal naming the retired target,
   rather than presenting the memory as cleanly fresh
+
+#### Scenario: verify_claim affirmatively checks a decision an agent is about to cite
+
+- **GIVEN** an agent about to tell a human that decision X governs a change
+- **WHEN** it verifies `{ kind: 'decision-current', subject: X }` and X has been superseded
+- **THEN** the verdict is `refuted`, naming the superseding decision to cite instead, so the stale citation
+  is caught before it reaches the human

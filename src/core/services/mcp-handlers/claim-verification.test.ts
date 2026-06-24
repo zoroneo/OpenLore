@@ -21,8 +21,9 @@ import { readCachedContext } from './utils.js';
 import { __resetStalenessMemo } from './confidence-boundary.js';
 import { EdgeStore } from '../edge-store.js';
 import { hashSpan } from '../../decisions/anchor.js';
-import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR } from '../../../constants.js';
+import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DECISIONS_SUBDIR, DECISIONS_PENDING_FILE } from '../../../constants.js';
 import type { FunctionNode, SerializedCallGraph, CallEdge } from '../../analyzer/call-graph.js';
+import type { PendingDecision, DecisionStore } from '../../../types/index.js';
 
 function node(over: Partial<FunctionNode> & { id: string }): FunctionNode {
   return {
@@ -230,5 +231,106 @@ describe('verify_claim — receipt is an auditable citation', () => {
     expect(r.receipt!.subject.contentHash).toBe(hashSpan(FOO_SRC));
     // And the object certificate cites bar's span.
     expect(r.receipt!.object?.contentHash).toBe(hashSpan(BAR_SRC));
+  });
+});
+
+// ── decision-current: verdicts over the recorded decision store ───────────────
+describe('verify_claim — decision-current', () => {
+  let root: string;
+
+  function decision(over: Partial<PendingDecision> & { id: string }): PendingDecision {
+    return {
+      status: 'approved', title: `decision ${over.id}`, rationale: 'r', consequences: 'c',
+      proposedRequirement: null, affectedDomains: [], affectedFiles: [], syncedToSpecs: [],
+      sessionId: 's', recordedAt: '2026-06-01T00:00:00Z', confidence: 'high', ...over,
+    };
+  }
+  async function writeStore(decisions: PendingDecision[]): Promise<void> {
+    const dir = join(root, OPENLORE_DIR, OPENLORE_DECISIONS_SUBDIR);
+    await mkdir(dir, { recursive: true });
+    const store: DecisionStore = { version: '1', sessionId: 's', updatedAt: '2026-06-01T00:00:00Z', decisions };
+    await writeFile(join(dir, DECISIONS_PENDING_FILE), JSON.stringify(store, null, 2) + '\n', 'utf-8');
+  }
+
+  beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'openlore-claim-dec-')); });
+  afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+
+  it('confirms a recorded decision that is neither superseded nor rejected', async () => {
+    await writeStore([decision({ id: 'a1b2c3d4', title: 'Use JWTs', status: 'approved' })]);
+    const r = await handleVerifyClaim({ directory: root, kind: 'decision-current', subject: 'a1b2c3d4' }) as {
+      verdict: string; reason: string; receipt?: { decision: { id: string; status: string } };
+    };
+    expect(r.verdict).toBe('confirmed');
+    expect(r.reason).toMatch(/is recorded with status "approved"/);
+    expect(r.receipt?.decision.id).toBe('a1b2c3d4');
+  });
+
+  it('refutes a superseded decision and names the live superseder', async () => {
+    await writeStore([
+      decision({ id: 'a1b2c3d4', title: 'Old approach' }),
+      decision({ id: 'b2c3d4e5', title: 'New approach', supersedes: 'a1b2c3d4' }),
+    ]);
+    const r = await handleVerifyClaim({ directory: root, kind: 'decision-current', subject: 'a1b2c3d4' }) as {
+      verdict: string; reason: string; receipt?: { decision: { supersededBy?: string } };
+    };
+    expect(r.verdict).toBe('refuted');
+    expect(r.reason).toMatch(/superseded by b2c3d4e5/);
+    expect(r.reason).toMatch(/cite b2c3d4e5 instead/);
+    expect(r.receipt?.decision.supersededBy).toBe('b2c3d4e5');
+  });
+
+  it('follows a supersession chain to the live terminal superseder', async () => {
+    await writeStore([
+      decision({ id: 'aaaaaaaa', title: 'v1' }),
+      decision({ id: 'bbbbbbbb', title: 'v2', supersedes: 'aaaaaaaa' }),
+      decision({ id: 'cccccccc', title: 'v3', supersedes: 'bbbbbbbb' }),
+    ]);
+    const r = await handleVerifyClaim({ directory: root, kind: 'decision-current', subject: 'aaaaaaaa' }) as {
+      verdict: string; reason: string;
+    };
+    expect(r.verdict).toBe('refuted');
+    expect(r.reason).toMatch(/cite cccccccc instead/);
+  });
+
+  it('refutes a rejected decision', async () => {
+    await writeStore([decision({ id: 'deadbeef', title: 'Rejected idea', status: 'rejected' })]);
+    const r = await handleVerifyClaim({ directory: root, kind: 'decision-current', subject: 'deadbeef' }) as {
+      verdict: string; reason: string;
+    };
+    expect(r.verdict).toBe('refuted');
+    expect(r.reason).toMatch(/was rejected/);
+  });
+
+  it('is unverifiable for a well-formed id with no recorded decision', async () => {
+    await writeStore([decision({ id: 'a1b2c3d4' })]);
+    const r = await handleVerifyClaim({ directory: root, kind: 'decision-current', subject: 'ffffffff' }) as {
+      verdict: string; reason: string;
+    };
+    expect(r.verdict).toBe('unverifiable');
+    expect(r.reason).toMatch(/No decision "ffffffff" is recorded/);
+  });
+
+  it('is unverifiable when no decision store exists at all', async () => {
+    const r = await handleVerifyClaim({ directory: root, kind: 'decision-current', subject: 'a1b2c3d4' }) as {
+      verdict: string; reason: string;
+    };
+    expect(r.verdict).toBe('unverifiable');
+    expect(r.reason).toMatch(/No decision/);
+  });
+
+  it('is unverifiable for a malformed (non-8-hex) id', async () => {
+    const r = await handleVerifyClaim({ directory: root, kind: 'decision-current', subject: 'Use JWTs' }) as {
+      verdict: string; reason: string;
+    };
+    expect(r.verdict).toBe('unverifiable');
+    expect(r.reason).toMatch(/is not a decision id/);
+  });
+
+  it('accepts an uppercase id by normalizing to lowercase', async () => {
+    await writeStore([decision({ id: 'a1b2c3d4', title: 'Use JWTs' })]);
+    const r = await handleVerifyClaim({ directory: root, kind: 'decision-current', subject: 'A1B2C3D4' }) as {
+      verdict: string;
+    };
+    expect(r.verdict).toBe('confirmed');
   });
 });
