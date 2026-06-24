@@ -108,18 +108,29 @@ const FROM_RE = /^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?\s*(?:#
 const COPY_FROM_RE = /^\s*(?:COPY|ADD)\s+(?:[^\n]*?\s)?--from=(\S+)/i;
 
 /**
- * Resolve a value that may carry compose/Dockerfile variable interpolation.
- * `${VAR:-default}` / `${VAR-default}` (the form used by, e.g., Airflow's
- * `image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.0.0}`) are replaced by their inline
- * default. Any `$` left afterward — an unresolvable `${VAR}`, `${VAR:?err}`, or `$VAR`
- * with no inline default — makes the value dynamic, so we return null and emit no edge
- * rather than a wrong one.
+ * Resolve a value that may carry compose/Dockerfile variable interpolation:
+ *  1. inline defaults — `${VAR:-default}` / `${VAR-default}` (e.g. Airflow's
+ *     `image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.0.0}`);
+ *  2. `${NAME}` / `$NAME` whose default is known from a build-arg map (Dockerfile
+ *     `ARG NODE_VERSION=20` declared before `FROM node:${NODE_VERSION}` — the most
+ *     common base-image parameterization).
+ * Any `$` left afterward — an unresolvable `${VAR}`, `${VAR:?err}`, or `$VAR` with no
+ * inline or ARG default — makes the value dynamic, so we return null and emit no edge
+ * rather than a wrong one. `args` defaults empty (compose has no ARG concept; its bare
+ * `${VAR}` is env-sourced and stays dynamic).
  */
-function resolveRef(value: string): string | null {
-  const resolved = value.replace(/\$\{[A-Za-z_]\w*:?-([^}]*)\}/g, '$1');
-  if (resolved.includes('$')) return null;
-  return resolved;
+function resolveRef(value: string, args: Map<string, string> = new Map()): string | null {
+  let v = value.replace(/\$\{[A-Za-z_]\w*:?-([^}]*)\}/g, '$1');
+  const sub = (name: string, whole: string) => (args.has(name) ? args.get(name)! : whole);
+  v = v.replace(/\$\{([A-Za-z_]\w*)\}/g, (whole, name) => sub(name, whole));
+  v = v.replace(/\$([A-Za-z_]\w*)/g, (whole, name) => sub(name, whole));
+  if (v.includes('$')) return null;
+  return v;
 }
+
+// `ARG NAME[=default]`. Only ARGs declared before the first FROM are "global" and
+// usable in FROM lines (Docker semantics); a value (the default) makes it resolvable.
+const ARG_DECL_RE = /^\s*ARG\s+([A-Za-z_]\w*)(?:=(\S+))?/i;
 // A heredoc redirect on an instruction line (`RUN <<EOF`, `COPY <<-'EOF' dest`). The
 // `<<` must follow whitespace/start so shell left-shift inside a string ("a<<b") is not
 // mistaken for one. Body lines that follow MUST NOT be scanned for FROM/COPY.
@@ -169,6 +180,9 @@ function parseDockerfile(
 
   const instructions = toInstructions(content);
   let stageIndex = -1;
+  // Global build args (declared before the first FROM) with a default value, used to
+  // resolve `FROM node:${NODE_VERSION}`-style parameterized base images.
+  const globalArgs = new Map<string, string>();
 
   for (const { text: raw, line: lineNo } of instructions) {
     const fromM = FROM_RE.exec(raw);
@@ -198,6 +212,12 @@ function parseDockerfile(
     const copyM = COPY_FROM_RE.exec(raw);
     if (copyM && stageIndex >= 0) {
       copyFromByStage[stageIndex].push({ ref: copyM[1], line: lineNo });
+      continue;
+    }
+    // Collect global ARG defaults — only those before the first FROM apply to FROM lines.
+    if (stageIndex < 0) {
+      const argM = ARG_DECL_RE.exec(raw);
+      if (argM && argM[2] !== undefined) globalArgs.set(argM[1], argM[2]);
     }
   }
 
@@ -214,7 +234,7 @@ function parseDockerfile(
   for (let s = 0; s <= stageIndex; s++) {
     const stageAddr = stageAddrByIndex[s];
     const from = fromByStage[s];
-    const base = from ? resolveRef(from.base) : null;
+    const base = from ? resolveRef(from.base, globalArgs) : null;
     if (from && base) {
       const earlier = stageAddrByName.get(base.toLowerCase());
       if (earlier) {
@@ -226,7 +246,7 @@ function parseDockerfile(
       // else: `FROM scratch` — the empty base, no dependency.
     }
     for (const cf of copyFromByStage[s]) {
-      const ref = resolveRef(cf.ref);
+      const ref = resolveRef(cf.ref, globalArgs);
       if (!ref) continue; // dynamic --from, no edge
       const named = stageAddrByName.get(ref.toLowerCase());
       if (named) { addRef(stageAddr, named, cf.line, 'references'); continue; }

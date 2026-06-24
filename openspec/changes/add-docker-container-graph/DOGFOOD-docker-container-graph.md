@@ -131,3 +131,40 @@ all persisted to `call-graph.db`. Spot-checked against source: multi-stage `FROM
 image dedup across files, and Airflow merge-key inheritance all match the real files.
 
 No regressions: full suite 4707 passed / 2 skipped; lint + typecheck clean.
+
+## Adversarial round 3 — ARG-parameterized base images (2026-06-24)
+
+Probing the most common real-world Dockerfile pattern still missed: a base image parameterized by a
+build arg (`ARG NODE_VERSION=20` … `FROM node:${NODE_VERSION}-alpine`) — used by virtually every
+official multi-version image. Round 2 resolved only *inline* `${VAR:-default}`; an `ARG`-declared
+default produced **no edge**, leaving the base-image dependency invisible (same blast-radius gap as the
+Airflow `image:` issue).
+
+| Bug | Symptom | Fix |
+|-----|---------|-----|
+| `ARG NAME=default` not resolved in `FROM` | `ARG NODE_VERSION=20` + `FROM node:${NODE_VERSION}` → no base-image edge | collect global ARG defaults (declared before the first `FROM`, per Docker); `resolveRef(value, args)` substitutes `${NAME}`/`$NAME` from that map across `FROM` and `COPY --from` |
+
+Docker semantics honored precisely: only ARGs **before the first `FROM`** are global and apply to `FROM`
+lines — a stage-scoped `ARG` (declared after a `FROM`) is correctly *not* applied to a later `FROM`.
+Bare `${VAR}`/`$VAR` with no inline or ARG default still stays edge-less; chained ARG defaults
+(`ARG IMG=node:$V`) stay conservatively edge-less (no wrong edge).
+
+Full-CLI dogfood — a repo whose Dockerfile uses **two** ARGs in one ref and a distroless image, plus a
+compose with `build`+interpolated `image:`:
+```
+FROM node:${NODE_VERSION}-alpine${ALPINE_VERSION}   →  node:20-alpine3.20   (both ARGs resolved)
+FROM gcr.io/distroless/nodejs${NODE_VERSION}-debian12 → gcr.io/distroless/nodejs20-debian12
+-- persisted in call-graph.db, deterministic across two --force runs:
+  api/Dockerfile::deps    → node:20-alpine3.20
+  api/Dockerfile::builder → node:20-alpine3.20  +  → api/Dockerfile::deps (COPY --from)
+  api/Dockerfile::stage2  → gcr.io/distroless/nodejs20-debian12  +  → api/Dockerfile::builder
+  service.api → api/Dockerfile::builder (build target; image: ${REGISTRY:-…} correctly NOT an edge)
+  service.api → service.db (depends_on);  service.db → postgres:16
+```
+
+Other probes this round — all PASS (no crash, no wrong edge): `ARG IMAGE=node:20`/`FROM $IMAGE`
+(resolves), `COPY --from=$ARG` (dynamic, siblings intact), compose `configs`/`secrets`/`profiles`/
+`env_file`/`build.args` (no bogus nodes), 200-stage Dockerfile (399 edges, 1ms).
+
+No regressions: full suite 4712 passed / 2 skipped; lint + typecheck clean. (+5 ARG regression tests;
+`docker.test.ts` 28→33.)

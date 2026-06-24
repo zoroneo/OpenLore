@@ -60,9 +60,10 @@ describe('Dockerfile extraction', () => {
 });
 
 describe('Dockerfile dynamic + scratch bases', () => {
-  it('emits no edge for an ARG-templated FROM, and no node for scratch', () => {
+  it('emits no edge for a defaultless-ARG-templated FROM, and no node for scratch', () => {
+    // ARG with NO default → ${BASE_IMAGE} is genuinely dynamic (resolved at build time).
     const g = extractDocker([
-      df(['ARG BASE_IMAGE=alpine', 'FROM ${BASE_IMAGE} AS app', 'FROM scratch AS empty'].join('\n')),
+      df(['ARG BASE_IMAGE', 'FROM ${BASE_IMAGE} AS app', 'FROM scratch AS empty'].join('\n')),
     ]);
     expect(g.resources.map((r) => r.address)).toEqual(
       expect.arrayContaining(['Dockerfile::app', 'Dockerfile::empty']),
@@ -289,5 +290,37 @@ describe('variable interpolation with inline defaults (compose + Dockerfile)', (
       compose('services:\n  web:\n    build:\n      context: ./api\n      dockerfile: ${DF:-Dockerfile}\n'),
     ]);
     expect(refsOf(g)).toContain('docker-compose.yml::service.web -references-> api/Dockerfile::app');
+  });
+});
+
+describe('Dockerfile ARG-default base-image resolution (Docker build-arg semantics)', () => {
+  it('resolves FROM node:${NODE_VERSION} using a global ARG default', () => {
+    const g = extractDocker([df('ARG NODE_VERSION=20\nFROM node:${NODE_VERSION}-alpine AS app\nRUN echo hi')]);
+    expect(refsOf(g)).toEqual(['Dockerfile::app -references-> node:20-alpine']);
+  });
+
+  it('resolves the bare $VAR form too', () => {
+    const g = extractDocker([df('ARG GO=1.22\nFROM golang:$GO AS build')]);
+    expect(refsOf(g)).toContain('Dockerfile::build -references-> golang:1.22');
+  });
+
+  it('applies a global ARG to every FROM that uses it', () => {
+    const g = extractDocker([df('ARG TAG=3.20\nFROM alpine:${TAG} AS a\nFROM alpine:${TAG} AS b')]);
+    expect(refsOf(g)).toContain('Dockerfile::a -references-> alpine:3.20');
+    expect(refsOf(g)).toContain('Dockerfile::b -references-> alpine:3.20');
+  });
+
+  it('emits no edge for an ARG with no default', () => {
+    const g = extractDocker([df('ARG BASE\nFROM ${BASE} AS app')]);
+    expect(g.references).toHaveLength(0);
+    expect(g.resources.some((r) => r.isExternal)).toBe(false);
+  });
+
+  it('does NOT apply a stage-scoped ARG (declared after the first FROM) to a later FROM', () => {
+    // Docker: only ARGs before the first FROM are global; T2 here is stage-scoped.
+    const g = extractDocker([df('ARG T=1\nFROM alpine:${T} AS a\nARG T2=2\nFROM alpine:${T2} AS b')]);
+    expect(refsOf(g)).toContain('Dockerfile::a -references-> alpine:1');
+    expect(g.references.some((r) => r.toAddress.includes('alpine:2'))).toBe(false);
+    expect(g.references.some((r) => r.fromAddress === 'Dockerfile::b')).toBe(false);
   });
 });

@@ -58,16 +58,19 @@ that would be rebuilt if this base image moved" — end to end, deterministicall
      is a single node. Dynamic refs (`FROM ${ARG}`, fully-templated build context) emit **no edge** —
      `TODO(spec-07-followup): dynamic …` — never a wrong one. Output is sorted (the projector already
      sorts), so rebuilds are byte-identical.
-   - **Real-world syntax robustness** (hardened by three rounds of adversarial e2e review — see DOGFOOD
+   - **Real-world syntax robustness** (hardened by four rounds of adversarial e2e review — see DOGFOOD
      notes): the Dockerfile scanner reduces source to logical instructions first — joining `\` line
      continuations and **skipping heredoc bodies** (a `FROM` inside `RUN <<EOF … EOF` is never a stage)
      — tolerates trailing inline comments on `FROM` lines, treats **stage names case-insensitively**
      (BuildKit semantics), and handles CRLF, `--platform=`, lowercase `from … as`, digest pins, and
-     numeric `COPY --from=0`. Variable references with an **inline default** are resolved statically —
-     `image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.0.0}`, `FROM ${BASE:-node:20}`,
-     `dockerfile: ${DF:-Dockerfile}` → the default (a bare `${VAR}`/`${VAR:?err}` stays edge-less). The
-     compose parser expands YAML **merge keys** (`x-*: &anchor` / `<<: *anchor`, the Airflow extension
-     pattern) and ignores recoverable-but-malformed YAML rather than minting a garbage node.
+     numeric `COPY --from=0`. Variable references resolve to a **known default** — both inline
+     (`image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.0.0}`, `FROM ${BASE:-node:20}`,
+     `dockerfile: ${DF:-Dockerfile}`) and from a global **`ARG NAME=default`** declared before the first
+     `FROM` (`FROM node:${NODE_VERSION}` — the dominant base-image parameterization; stage-scoped ARGs
+     are correctly *not* applied to `FROM`, per Docker). A `${VAR}`/`$VAR` with no inline or ARG default
+     stays edge-less. The compose parser expands YAML **merge keys** (`x-*: &anchor` / `<<: *anchor`, the
+     Airflow extension pattern) and ignores recoverable-but-malformed YAML rather than minting a garbage
+     node.
 
 3. **Detection in the analyze-time `resolveLang` layer, not `detectLanguage`.** Consistent with every
    other IaC ecosystem: `detectLanguage` (which the incremental watcher consults) stays unchanged, so a
