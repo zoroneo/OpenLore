@@ -92,3 +92,36 @@ functions and even flagged `sa` as a hub (fanIn=5). Graph (`call-graph.db`) veri
 
 Both fixes are locked into the unit suite (`bicep.test.ts`) and the e2e path (`integration.test.ts`,
 which now exercises spread + `::` through `CallGraphBuilder`). Re-verdict: **ships.**
+
+---
+
+## Round 3 — untested surfaces: watcher, real tools, robustness (2026-06-24)
+
+Round 3 exercised the surfaces earlier rounds hadn't: the incremental watcher, the actual user-facing
+tools (not just the raw SQLite graph), and degenerate inputs.
+
+**Incremental watcher (`mcp --watch` / `serve`) — SAFE, now guarded.** Traced + empirically confirmed
+that a `.bicep` change is treated **identically to `.tf`**: the watcher's `SOURCE_EXTENSIONS` gate
+excludes all IaC, so the event is dropped at the boundary; and even via the direct `handleChange` seam
+the edge-store stays untouched (IaC nodes live only in `llm-context.json`'s callGraph, which the watcher
+never writes). No crash, no node-wipe, no churn. Locked in by a new parity test
+(`mcp-watcher-parity.test.ts`: a `.bicep` and a `.tf` change mint no edge-store nodes and never wipe a
+sibling code file's nodes).
+
+**Real user-facing tools on a 4-file Bicep+TS repo — all WORK end-to-end** (ran the actual commands, not
+DB inspection): `analyze`, `export scip` (exit 0; Bicep files present as UnspecifiedLanguage, ARM-typed
+symbol names, no crash), `manifest emit` (lists `bicep: N files`), `orient`, `search_code`,
+`analyze_impact` (classifies Bicep as `ecosystem: Bicep` / infrastructure, computes dependents),
+`get_subgraph` + `trace_execution_path` (cross-file module traversal), and `blast-radius`
+(`Layers crossed: Bicep`). No errors, stack traces, or empty-where-data-expected.
+
+**Robustness probes (all green, locked into `bicep.test.ts`):** `.bicepparam` is **not** misclassified as
+Bicep (stays `unknown` — parameter files are deferred); **forward references** resolve regardless of
+declaration order; empty / comment-only / whitespace-only / unterminated-string / unterminated-brace /
+unterminated-interpolation inputs **never crash** (graceful, partial graph); output is byte-identical
+across repeated runs.
+
+Two cosmetic items observed are **pre-existing and not Bicep-specific** (the analyze summary's
+"internal call edges" line reads the import-graph count, which is 0 for any IaC-only tree; a blank
+language row from an analyzed `.gitignore`) — both affect Terraform/all-IaC equally and are out of scope
+for this change. Final verdict: **ships.**

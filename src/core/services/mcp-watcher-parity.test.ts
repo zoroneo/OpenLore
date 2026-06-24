@@ -436,6 +436,46 @@ describe('adversarial regressions (PR #189 review findings)', () => {
   });
 });
 
+describe('IaC files are inert under the incremental watcher (Bicep parity with Terraform)', () => {
+  beforeEach(() => {
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  });
+
+  it('handleChange on a .bicep file neither throws nor wipes the graph — identical to .tf', async () => {
+    // IaC is analyze-time only: the watcher excludes it from CALL_GRAPH_LANGS, so a
+    // .bicep/.tf change must be a no-op on the edge store (no nodes added, none of a
+    // sibling code file's nodes deleted) and must never throw. This locks the safety
+    // invariant: .bicep behaves exactly like the long-shipped .tf under watch.
+    const ts: Files = { 'src/app.ts': 'export function deploy() { return 1; }\n' };
+    await writeFiles(ts);
+    const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    seedStore(store, ts, await fullBuild(ts));
+    const tsNodesBefore = store.getNodesForFile('src/app.ts').length;
+    store.close();
+    expect(tsNodesBefore).toBeGreaterThan(0);
+
+    // Real IaC files on disk so the watcher actually reads them.
+    await writeFiles({
+      'infra/main.tf': 'resource "aws_s3_bucket" "b" {}\n',
+      'infra/main.bicep': "resource sa 'Microsoft.Storage/storageAccounts@2023-01-01' = {\n  name: 'x'\n}\n",
+    });
+
+    const { McpWatcher } = await import('./mcp-watcher.js');
+    const watcher = new McpWatcher({ rootPath: root, outputPath, embed: false });
+    // Must resolve without throwing for both ecosystems.
+    await watcher.handleChange(join(root, 'infra/main.bicep'));
+    await watcher.handleChange(join(root, 'infra/main.tf'));
+
+    const s = EdgeStore.open(EdgeStore.dbPath(outputPath));
+    // No edge-store nodes are minted for IaC files…
+    expect(s.getNodesForFile('infra/main.bicep')).toHaveLength(0);
+    expect(s.getNodesForFile('infra/main.tf')).toHaveLength(0);
+    // …and the sibling code file's nodes are untouched (no collateral wipe).
+    expect(s.getNodesForFile('src/app.ts').length).toBe(tsNodesBefore);
+    s.close();
+  });
+});
+
 describe('freshness verdicts honor the stale region (FreshnessVerdictsHonorTheStaleRegion)', () => {
   beforeEach(() => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);

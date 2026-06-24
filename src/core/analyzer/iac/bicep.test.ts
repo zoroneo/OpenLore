@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { extractBicep } from './bicep.js';
 import { projectIacGraph } from './project.js';
+import { detectLanguage } from '../signature-extractor.js';
 import type { IacGraph } from './types.js';
 
 const dir = join(__dirname, 'fixtures', 'bicep');
@@ -285,5 +286,34 @@ describe('extractBicep — robustness', () => {
     // Decorators must not get absorbed into the node's line range as a bogus extra node.
     expect(g.resources.filter((r) => r.address.startsWith('x.bicep::')).map((r) => r.address).sort())
       .toEqual(['x.bicep::location', 'x.bicep::r']);
+  });
+
+  it('resolves forward references (declaration order is irrelevant)', () => {
+    // `url` references `foo` declared AFTER it; `foo` references `bar`, also later.
+    const content = 'output url string = foo\nvar foo = bar\nvar bar = 1\n';
+    const g = extractBicep([{ path: 'x.bicep', content, language: 'Bicep' }]);
+    expect(hasRef(g, 'x.bicep::url', 'x.bicep::foo', 'references')).toBe(true);
+    expect(hasRef(g, 'x.bicep::foo', 'x.bicep::bar', 'references')).toBe(true);
+  });
+
+  it('never crashes on empty, comment-only, or truncated/malformed input', () => {
+    const inputs = [
+      '',
+      '   \n\t\n',
+      '// just a comment\n/* block */\n',
+      "var x = '${a", // unterminated interpolation + string
+      "resource r 'T@1' = {\n  name: 'x'", // unterminated brace
+      "var y = '${foo'\nvar foo = 1", // unterminated string mid-interp
+    ];
+    for (const content of inputs) {
+      expect(() => extractBicep([{ path: 'x.bicep', content, language: 'Bicep' }])).not.toThrow();
+    }
+  });
+
+  it('does not classify `.bicepparam` as Bicep (parameter files are out of scope)', () => {
+    // Guards against broadening the `.bicep` extension match to swallow `.bicepparam`,
+    // which would feed a different grammar into the resource extractor.
+    expect(detectLanguage('main.bicepparam')).toBe('unknown');
+    expect(detectLanguage('main.bicep')).toBe('Bicep');
   });
 });
