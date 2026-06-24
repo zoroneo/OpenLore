@@ -746,6 +746,87 @@ const NAV_TOOLS: NavToolSpec[] = [
       changedSince: Type.Optional(Type.String({ description: 'Commit-ish: memory recorded/invalidated after it.' })),
     }),
   },
+  {
+    name: 'check_spec_drift',
+    label: 'openlore check_spec_drift',
+    description: 'Check whether your code changes have drifted from the specs — which changed files are no longer covered by their spec.',
+    guideline: 'After modifying code, or before opening a PR, call openlore_check_spec_drift to see whether the specs are still in sync with what you changed. Requires `openlore generate` to have been run once.',
+    parameters: Type.Object({
+      base: Type.Optional(Type.String({ description: 'Git ref to compare against (default: auto-detect main/master).' })),
+      domains: Type.Optional(Type.Array(Type.String(), { description: 'Only check these spec domains (default: all).' })),
+      failOn: Type.Optional(StringEnum(['error', 'warning', 'info'] as const, { description: 'Minimum severity to report (default warning).' })),
+    }),
+  },
+  {
+    name: 'audit_spec_coverage',
+    label: 'openlore audit_spec_coverage',
+    description: 'Find spec coverage gaps — functions with no spec, hub gaps, orphan requirements, and stale domains.',
+    guideline: 'Before starting a new feature, or to audit spec health, call openlore_audit_spec_coverage to see what needs specs.',
+    parameters: Type.Object({
+      hubThreshold: Type.Optional(Type.Number({ description: 'Minimum fanIn to flag a function as a hub gap (default 5).' })),
+      maxUncovered: Type.Optional(Type.Number({ description: 'Maximum uncovered functions to return (default 50).' })),
+    }),
+  },
+  {
+    name: 'list_spec_domains',
+    label: 'openlore list_spec_domains',
+    description: 'List all spec domains in the project.',
+    guideline: 'When you need to know which spec domains exist before a targeted search_specs or get_spec, call openlore_list_spec_domains.',
+    parameters: Type.Object({}),
+  },
+  {
+    name: 'record_decision',
+    label: 'openlore record_decision',
+    description: 'Record an architectural decision before writing the code — data structure, library, API contract, auth strategy, module boundary, schema, caching, or error-handling choice.',
+    guideline: 'When you make a significant design choice, call openlore_record_decision BEFORE writing the code, with a `title` and `rationale` (plus `consequences`, `affectedFiles`, `supersedes` if relevant). Recording proactively keeps commits fast — the decisions gate reads the recorded store instead of running a slow extraction.',
+    parameters: Type.Object({
+      title: Type.String({ description: 'REQUIRED. Short imperative statement, e.g. "Use UUIDs for decision IDs".' }),
+      rationale: Type.String({ description: 'REQUIRED. Why this decision was made.' }),
+      consequences: Type.Optional(Type.String({ description: 'What changes as a result (optional).' })),
+      affectedFiles: Type.Optional(Type.Array(Type.String(), { description: 'Source files most relevant to this decision (optional).' })),
+      scope: Type.Optional(StringEnum(['local', 'component', 'cross-domain', 'system'] as const, { description: 'Decision scope (default component; cross-domain/system generate ADR files).' })),
+      supersedes: Type.Optional(Type.String({ description: 'ID of a prior decision this one replaces (optional).' })),
+    }),
+  },
+  {
+    name: 'list_decisions',
+    label: 'openlore list_decisions',
+    description: 'List architectural decisions recorded this session and their status (draft, verified, approved, rejected, synced).',
+    guideline: 'To review what decisions are pending — e.g. when a commit is blocked by the decisions gate — call openlore_list_decisions.',
+    parameters: Type.Object({
+      status: Type.Optional(StringEnum(['draft', 'consolidated', 'verified', 'phantom', 'approved', 'rejected', 'synced'] as const, { description: 'Filter by status (default: all).' })),
+    }),
+  },
+  {
+    name: 'approve_decision',
+    label: 'openlore approve_decision',
+    description: 'Approve a verified architectural decision for syncing into specs. Requires explicit human authorization.',
+    guideline: 'ONLY after the user has explicitly said "yes" / "approve" to a specific decision, call openlore_approve_decision with its `id`. Never approve on the user\'s behalf or autonomously — present the decision and wait for the user\'s explicit approval first. Then call sync_decisions.',
+    parameters: Type.Object({
+      id: Type.String({ description: 'REQUIRED. 8-character decision ID from list_decisions.' }),
+      note: Type.Optional(Type.String({ description: 'Optional review note.' })),
+    }),
+  },
+  {
+    name: 'reject_decision',
+    label: 'openlore reject_decision',
+    description: 'Reject a pending architectural decision so it is never synced to specs.',
+    guideline: 'When the user rejects a decision, call openlore_reject_decision with its `id` and an optional `note` (the reason).',
+    parameters: Type.Object({
+      id: Type.String({ description: 'REQUIRED. 8-character decision ID from list_decisions.' }),
+      note: Type.Optional(Type.String({ description: 'Optional reason for rejection.' })),
+    }),
+  },
+  {
+    name: 'sync_decisions',
+    label: 'openlore sync_decisions',
+    description: 'Write approved decisions into their target spec.md files and create ADR files. Append-only, never overwrites.',
+    guideline: 'After decisions are approved, call openlore_sync_decisions to write them into the specs. Pass `dryRun: true` to preview without writing first.',
+    parameters: Type.Object({
+      dryRun: Type.Optional(Type.Boolean({ description: 'Preview without writing files (default false).' })),
+      id: Type.Optional(Type.String({ description: 'Sync only this specific decision ID (default: all approved).' })),
+    }),
+  },
 ];
 
 function toolResult(text: string, details: unknown = null): AgentToolResult<unknown> {
