@@ -87,6 +87,9 @@ export const ARTIFACT_FINGERPRINT = 'fingerprint.json';
 /** Filename for the SQLite call-graph edge store */
 export const ARTIFACT_CALL_GRAPH_DB = 'call-graph.db';
 
+/** Filename for the index integrity attestation (change: add-index-integrity-attestation) */
+export const ARTIFACT_INDEX_ATTESTATION = 'index-attestation.json';
+
 /** Filename for the repository map artifact (saved by RepositoryMapper) */
 export const ARTIFACT_REPOSITORY_MAP = 'repository-map.json';
 

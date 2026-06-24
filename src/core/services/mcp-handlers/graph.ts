@@ -510,7 +510,7 @@ export async function handleGetSubgraph(
     confidence: e.synthesized ? 'synthesized' : undefined,
     synthesizedBy: e.synthesizedBy,
   })));
-  const confidenceBoundary = assembleBoundary({ basis: subBasis, staleness: await computeStaleness(absDir) });
+  const confidenceBoundary = assembleBoundary({ basis: subBasis, staleness: await computeStaleness(absDir), integrity: ctx?.integrity });
 
   return {
     query: { functionName, direction, maxDepth },
@@ -702,7 +702,7 @@ export async function handleAnalyzeImpact(
       if (e.calleeId && involvedIds.has(e.calleeId)) impactEdges.push({ confidence: e.confidence, synthesizedBy: e.synthesizedBy });
     }
   }
-  const confidenceBoundary = assembleBoundary({ basis: edgeBasis(impactEdges), staleness: await computeStaleness(absDir) });
+  const confidenceBoundary = assembleBoundary({ basis: edgeBasis(impactEdges), staleness: await computeStaleness(absDir), integrity: ctx?.integrity });
 
   const results = seeds.map(seed => {
     const isHub     = hubIds.has(seed.id);
@@ -1180,7 +1180,7 @@ export async function handleTraceExecutionPath(
       message: `No execution path found from "${entryFunction}" to "${targetFunction}" within depth ${maxDepth}.`,
       hint: 'Try increasing maxDepth, or check whether both functions are in the same connected component of the call graph.',
       ...(valueLevelInfo ? { valueLevel: valueLevelInfo } : {}),
-      confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains([], pairIndex), staleness: traceStaleness }),
+      confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains([], pairIndex), staleness: traceStaleness, integrity: ctx?.integrity }),
     };
   }
 
@@ -1208,6 +1208,6 @@ export async function handleTraceExecutionPath(
     shortestPath: paths[0].chain,
     paths,
     ...(valueLevelInfo ? { valueLevel: valueLevelInfo } : {}),
-    confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains(allPaths, pairIndex), staleness: traceStaleness }),
+    confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains(allPaths, pairIndex), staleness: traceStaleness, integrity: ctx?.integrity }),
   };
 }

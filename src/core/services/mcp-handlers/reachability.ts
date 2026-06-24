@@ -239,7 +239,7 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
   // add-confidence-boundary-disclosure)
   const liveBasis = edgeBasisWithinSet(cg.edges, live);
   const staleness = await computeStaleness(absDir);
-  const confidenceBoundary = assembleBoundary({ basis: liveBasis, staleness });
+  const confidenceBoundary = assembleBoundary({ basis: liveBasis, staleness, integrity: ctx?.integrity });
 
   // ── Delete-impact mode: "what becomes dead if I delete X?" ──────────────────
   if (input.ifDeleted !== undefined) {

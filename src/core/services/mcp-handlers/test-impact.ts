@@ -143,7 +143,7 @@ export async function handleSelectTests(input: SelectTestsInput): Promise<unknow
       ...(federationRequested ? { federationNote: 'Federation scope was requested, but no changed production symbol resolved in the home repo — cross-repo test selection keys off the home repo\'s changed published symbols, so nothing was propagated. Pass changedSymbols (or a diffRef with code changes) to select across the fleet.' } : {}),
       soundness: { posture: 'over-approximate', caveats: ['No seeds resolved — nothing to select.'] },
       coverage: { languages: [], testDetection: 'none' as const },
-      confidenceBoundary: assembleBoundary({ staleness: await computeStaleness(absDir) }),
+      confidenceBoundary: assembleBoundary({ staleness: await computeStaleness(absDir), integrity: ctx?.integrity }),
     };
   }
 
@@ -287,6 +287,6 @@ export async function handleSelectTests(input: SelectTestsInput): Promise<unknow
     ...(federationBlock ? { federation: federationBlock } : {}),
     soundness: { posture: 'over-approximate' as const, caveats },
     coverage: { languages: seedLangs, testDetection },
-    confidenceBoundary: assembleBoundary({ basis: selectBasis, staleness: await computeStaleness(absDir) }),
+    confidenceBoundary: assembleBoundary({ basis: selectBasis, staleness: await computeStaleness(absDir), integrity: ctx?.integrity }),
   };
 }

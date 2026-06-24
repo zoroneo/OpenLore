@@ -58,7 +58,7 @@ function runTransaction(db: DatabaseSync, fn: () => void): void {
 }
 
 /** Bump when schema changes. Old DBs are dropped and rebuilt on next analyze --force. */
-const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 8;
 
 export class EdgeStore {
   /**
@@ -508,6 +508,43 @@ export class EdgeStore {
   countNodes(): number {
     const row = this.db.prepare('SELECT COUNT(*) as n FROM nodes WHERE is_external = 0').get() as { n: number };
     return row.n;
+  }
+
+  /** Distinct source files contributing production nodes. Reconciliation input for the attestation. */
+  countFiles(): number {
+    const row = this.db.prepare('SELECT COUNT(DISTINCT file_path) as n FROM nodes WHERE is_external = 0').get() as { n: number };
+    return row.n;
+  }
+
+  /** Production (non-tested_by) call-edge count. Reconciliation input for the index attestation. */
+  countEdges(): number {
+    const row = this.db.prepare('SELECT COUNT(*) as n FROM edges').get() as { n: number };
+    return row.n;
+  }
+
+  /** Class/module node count. Reconciliation input for the index attestation. */
+  countClasses(): number {
+    const row = this.db.prepare('SELECT COUNT(*) as n FROM classes').get() as { n: number };
+    return row.n;
+  }
+
+  /**
+   * The SCHEMA_VERSION recorded in this store. After an open() that found a stale
+   * version, this is the CURRENT SCHEMA_VERSION (the store was wiped + re-stamped),
+   * so an attestation written at an older version reconciles as `mismatched`.
+   */
+  getSchemaVersion(): number {
+    const row = this.db.prepare('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | undefined;
+    return row?.version ?? SCHEMA_VERSION;
+  }
+
+  /**
+   * Force-checkpoint the WAL into the main database file and recount-ready state.
+   * Used by the integrity check to rule out a WAL-lag false positive before
+   * declaring an index `degraded` (change: add-index-integrity-attestation).
+   */
+  checkpoint(): void {
+    try { this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* best-effort */ }
   }
 
   // ── Node mutations ────────────────────────────────────────────────────────────

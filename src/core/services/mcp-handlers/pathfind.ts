@@ -235,7 +235,7 @@ export async function handleFindPath(
     return withFed({
       from, to, resolvedFrom, resolvedTo, path: null,
       note: 'from and to resolve to the same function(s) — no path to compute.',
-      confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains([], pairIndex), staleness }),
+      confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains([], pairIndex), staleness, integrity: ctx?.integrity }),
     });
   }
 
@@ -261,7 +261,7 @@ export async function handleFindPath(
         reachedNodes: result.reached,
         hint: 'The endpoints may be in different connected components, or only linked by a longer path — try the other endpoint kinds.',
       },
-      confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains([], pairIndex), staleness }),
+      confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains([], pairIndex), staleness, integrity: ctx?.integrity }),
     });
   }
 
@@ -274,6 +274,6 @@ export async function handleFindPath(
     reason: useCallDistance
       ? `Cheapest by call-distance (cost ${best.distance}, ${best.hops} hops); ${result.alternates.length} alternate(s).`
       : `Fewest hops (${best.hops}); ${result.alternates.length} alternate(s).`,
-    confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains(chainIds, pairIndex), staleness }),
+    confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains(chainIds, pairIndex), staleness, integrity: ctx?.integrity }),
   });
 }
