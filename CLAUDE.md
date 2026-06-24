@@ -53,6 +53,18 @@ For all other cases (reading a file, grepping, listing files) use native tools d
 > the source owns the finding's intrinsic `severity`, the policy owns its enforcement class. Findings stay
 > advisory by default — blocking is always opt-in (change: add-finding-enforcement-policy).
 
+> **MCP tool ↔ Pi extension parity.** OpenLore ships the same structural capabilities through two
+> surfaces: the MCP tools (`src/core/services/mcp-handlers/*`) and the Pi extension
+> (`src/pi/extension.ts` — native tools + the `before_agent_start` context-injection block).
+> Whenever you change one, ask whether the other needs the same change, and vice versa:
+> - New / changed MCP tool behavior, signature, or output shape → does the Pi extension expose or
+>   consume it (native `NAV_TOOLS`, or the injection block), and should it be updated to match?
+> - New / changed Pi behavior (injection, gating, rendering) → should the equivalent CLI/MCP path
+>   (e.g. `orient --inject`, the Claude Code hook) carry the same logic?
+> Keep shared logic in one dependency-light module both surfaces import rather than duplicating it
+> (the Pi host must never import the analyzer in-process — it orients via the warm daemon over RPC).
+> If parity is intentionally skipped, say why in the PR.
+
 <!-- openlore-decisions-instructions -->
 ## Architectural decisions
 
