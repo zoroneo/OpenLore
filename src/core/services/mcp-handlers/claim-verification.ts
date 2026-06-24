@@ -7,11 +7,12 @@
  * agent's confident-wrong failure mode ("this function is dead", "Y calls Z") into
  * checked-or-flagged, and makes the agent's output auditable.
  *
- *   claim   = { kind: 'calls'|'reaches'|'dead'|'impacts'|'safe-to-change', subject, object? }
+ *   claim   = { kind: 'calls'|'reaches'|'dead'|'impacts'|'safe-to-change'|'decision-current', subject, object? }
  *   verdict = { verdict: 'confirmed'|'refuted'|'unverifiable', reason, receipt?, confidenceBoundary }
  *
- * Every verdict is a graph computation over the deterministic call graph, never an
- * LLM judgement and never a confidence number (north star c6d1ad07):
+ * Every verdict is a deterministic computation, never an LLM judgement and never a
+ * confidence number (north star c6d1ad07). The structural kinds compute over the
+ * call graph:
  *   - `calls`          → a direct caller→callee edge exists.
  *   - `reaches`        → forward reachability subject ⇒ object.
  *   - `impacts`        → backward reachability: object transitively calls subject,
@@ -21,6 +22,11 @@
  *                        separate truly-unreached from reached-only-via-heuristic.
  *   - `safe-to-change` → no internal caller depends on subject (blast radius is
  *                        empty by directly-resolved edges).
+ * The decision kind computes over the recorded decision store instead (change:
+ * add-decision-reference-claim-verification):
+ *   - `decision-current` → the subject decision id is recorded and neither
+ *                        superseded (reusing the `stale-decision-reference`
+ *                        retirement graph) nor rejected, so citing it is sound.
  *
  * The receipt reuses the grounding-certificate shape (`{ symbol, filePath,
  * lineSpan, contentHash }`) — the same span hash the freshness check compares — so
@@ -45,23 +51,32 @@ import {
   type KnownUnknowableCrossing,
 } from './confidence-boundary.js';
 import { AnchorContext } from '../../decisions/anchor-adapter.js';
+import { loadDecisionStore } from '../../decisions/store.js';
+import { buildRetirementGraph } from './stale-decision-reference.js';
 import { ARTIFACT_FINGERPRINT, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DIR } from '../../../constants.js';
 import type { SerializedCallGraph, FunctionNode } from '../../analyzer/call-graph.js';
-import type { GroundingCertificate, StructuralAnchor } from '../../../types/index.js';
+import type { GroundingCertificate, StructuralAnchor, PendingDecision } from '../../../types/index.js';
 
-export type ClaimKind = 'calls' | 'reaches' | 'dead' | 'impacts' | 'safe-to-change';
+export type ClaimKind = 'calls' | 'reaches' | 'dead' | 'impacts' | 'safe-to-change' | 'decision-current';
 const CLAIM_KINDS: ReadonlySet<string> = new Set<ClaimKind>([
-  'calls', 'reaches', 'dead', 'impacts', 'safe-to-change',
+  'calls', 'reaches', 'dead', 'impacts', 'safe-to-change', 'decision-current',
 ]);
 /** Kinds that relate two symbols and so require an `object`. */
 const RELATIONAL_KINDS: ReadonlySet<ClaimKind> = new Set<ClaimKind>(['calls', 'reaches', 'impacts']);
+/** Kinds verified against the decision store rather than the call graph. */
+const DECISION_KINDS: ReadonlySet<ClaimKind> = new Set<ClaimKind>(['decision-current']);
+/** A recorded decision id: an 8-character hex token (`sha1(...).slice(0,8)`). */
+const DECISION_ID_RE = /^[0-9a-f]{8}$/;
 
 export type Verdict = 'confirmed' | 'refuted' | 'unverifiable';
 
 export interface VerifyClaimInput {
   directory: string;
   kind: ClaimKind;
-  /** The symbol the claim is about (a function/method name). */
+  /**
+   * What the claim is about: a function/method name for structural kinds, or an
+   * 8-character decision id for the `decision-current` kind.
+   */
   subject: string;
   /** The second symbol, for relational kinds (`calls`, `reaches`, `impacts`). */
   object?: string;
@@ -330,6 +345,113 @@ function verifySafeToChange(cg: SerializedCallGraph, subject: FunctionNode): Cla
   };
 }
 
+/** Short, single-line label for a decision in a verdict reason / receipt. */
+function shortTitle(s: string, max = 80): string {
+  const t = s.replace(/\s+/g, ' ').trim();
+  return t.length > max ? t.slice(0, max - 1) + '…' : t;
+}
+
+/** A citation for a decision-claim verdict — the decision-store analogue of {@link Receipt}. */
+interface DecisionReceipt {
+  indexCommit: string | null;
+  decision: {
+    id: string;
+    title: string;
+    status: PendingDecision['status'];
+    recordedAt?: string;
+    /** The live decision that retired this one, when superseded. */
+    supersededBy?: string;
+  };
+  evidence: string;
+}
+
+/**
+ * Verify a `decision-current` claim against the recorded decision store — is the
+ * referenced decision still authoritative, or has it been superseded/rejected?
+ *
+ * This is the decision-graph analogue of the structural verifiers and is kept
+ * deliberately separate from them: it does not touch the call graph (so the
+ * structural verifier stays uncontorted, the reason `verify_claim`'s decision
+ * clause was originally deferred), and it reuses the SAME retirement graph
+ * (`buildRetirementGraph`) the `stale-decision-reference` finding walks, so the
+ * two never disagree about what counts as superseded.
+ *
+ * Verdicts:
+ *  - `confirmed`   — the id resolves to a recorded decision that is neither
+ *                    superseded nor rejected; citing it as current is sound.
+ *  - `refuted`     — the decision has been superseded (reason names the live
+ *                    superseder) or was rejected; citing it is stale/unsound.
+ *  - `unverifiable` — the id is malformed or no such decision is recorded here;
+ *                    the agent should hedge or read the source.
+ *
+ * Pure decision-store read, no LLM (north star `c6d1ad07`).
+ */
+async function verifyDecisionCurrent(absDir: string, subject: string): Promise<unknown> {
+  const claim = { kind: 'decision-current' as const, subject };
+  const cleanBoundary = assembleBoundary({});
+  const id = subject.trim().toLowerCase();
+
+  if (!DECISION_ID_RE.test(id)) {
+    return {
+      claim,
+      verdict: 'unverifiable' as Verdict,
+      reason: `"${subject}" is not a decision id — expected an 8-character hex id (e.g. "a1b2c3d4"). Pass the id, not the title.`,
+      confidenceBoundary: cleanBoundary,
+    };
+  }
+
+  const store = await loadDecisionStore(absDir);
+  const decisions: PendingDecision[] = store.decisions ?? [];
+  const target = decisions.find((d) => d.id === id);
+  if (!target) {
+    return {
+      claim,
+      verdict: 'unverifiable' as Verdict,
+      reason: `No decision "${id}" is recorded in this repository's decision store. It may belong to another repo, be un-consolidated, or be mistyped — recall or read the source before asserting it governs anything.`,
+      confidenceBoundary: cleanBoundary,
+    };
+  }
+
+  const indexCommit = await readIndexCommit(absDir);
+  const supersededBy = buildRetirementGraph(decisions).supersededBy.get(id);
+  if (supersededBy) {
+    const superseder = decisions.find((d) => d.id === supersededBy);
+    const evidence = `decision ${id} ("${shortTitle(target.title)}") was superseded by ${supersededBy}${superseder ? ` ("${shortTitle(superseder.title)}")` : ''}`;
+    const receipt: DecisionReceipt = {
+      indexCommit,
+      decision: { id, title: target.title, status: target.status, ...(target.recordedAt ? { recordedAt: target.recordedAt } : {}), supersededBy },
+      evidence,
+    };
+    return {
+      claim,
+      verdict: 'refuted' as Verdict,
+      reason: `${evidence}. Citing it as current is stale — cite ${supersededBy} instead.`,
+      receipt,
+      confidenceBoundary: cleanBoundary,
+    };
+  }
+
+  if (target.status === 'rejected') {
+    const evidence = `decision ${id} ("${shortTitle(target.title)}") was rejected, so it is not authoritative`;
+    return {
+      claim,
+      verdict: 'refuted' as Verdict,
+      reason: `${evidence}. Do not cite it as governing code.`,
+      receipt: { indexCommit, decision: { id, title: target.title, status: target.status, ...(target.recordedAt ? { recordedAt: target.recordedAt } : {}) }, evidence } satisfies DecisionReceipt,
+      confidenceBoundary: cleanBoundary,
+    };
+  }
+
+  const evidence = `decision ${id} ("${shortTitle(target.title)}") is recorded with status "${target.status}" and is not superseded by any recorded decision`;
+  return {
+    claim,
+    verdict: 'confirmed' as Verdict,
+    reason: `${evidence}; citing it as current is sound.`,
+    receipt: { indexCommit, decision: { id, title: target.title, status: target.status, ...(target.recordedAt ? { recordedAt: target.recordedAt } : {}) }, evidence } satisfies DecisionReceipt,
+    confidenceBoundary: cleanBoundary,
+  };
+}
+
 /**
  * Verify a structured structural claim against the deterministic call graph.
  * Read-only, offline, no LLM. Returns `unknown` (additive-by-cast like the
@@ -339,11 +461,19 @@ export async function handleVerifyClaim(input: VerifyClaimInput): Promise<unknow
   const absDir = await validateDirectory(input.directory);
 
   if (!CLAIM_KINDS.has(input.kind)) {
-    return { error: `Unknown claim kind "${input.kind}". Use one of: calls, reaches, dead, impacts, safe-to-change.` };
+    return { error: `Unknown claim kind "${input.kind}". Use one of: calls, reaches, dead, impacts, safe-to-change, decision-current.` };
   }
   if (!input.subject || !input.subject.trim()) {
     return { error: 'A claim must name a "subject" symbol.' };
   }
+
+  // Decision-store claims verify against the recorded decisions, not the call
+  // graph — branch before the (irrelevant) call-graph load so the structural
+  // verifier path stays untouched.
+  if (DECISION_KINDS.has(input.kind)) {
+    return verifyDecisionCurrent(absDir, input.subject);
+  }
+
   const needsObject = RELATIONAL_KINDS.has(input.kind);
   if (needsObject && (!input.object || !input.object.trim())) {
     return { error: `The "${input.kind}" claim relates two symbols — provide an "object" symbol.` };

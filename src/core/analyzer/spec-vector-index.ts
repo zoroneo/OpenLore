@@ -20,7 +20,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, basename, dirname } from 'node:path';
 import { fileExists } from '../../utils/command-helpers.js';
-import type { EmbeddingService } from './embedding-service.js';
+import type { Embedder } from './embedding-service.js';
 import { tokenize, buildBm25Corpus, bm25Score } from './vector-index.js';
 
 // ============================================================================
@@ -298,7 +298,7 @@ export class SpecVectorIndex {
   static async build(
     outputDir: string,
     specsDir: string,
-    embedSvc: EmbeddingService | null,
+    embedSvc: Embedder | null,
     mappingJsonPath?: string,
     decisionsDir?: string
   ): Promise<{ recordCount: number; hasEmbeddings: boolean }> {
@@ -428,7 +428,7 @@ export class SpecVectorIndex {
   static async search(
     outputDir: string,
     query: string,
-    embedSvc: EmbeddingService | null | undefined,
+    embedSvc: Embedder | null | undefined,
     opts: {
       limit?: number;
       domain?: string;
@@ -457,8 +457,20 @@ export class SpecVectorIndex {
       return SpecVectorIndex._bm25Only(table, query, limit, domain, section);
     }
 
-    const [queryVector] = await embedSvc.embed([query]);
+    let queryVector: number[];
+    try {
+      [queryVector] = await embedSvc.embed([query]);
+    } catch {
+      // Embedder unreachable / unavailable — degrade to BM25 rather than erroring.
+      return SpecVectorIndex._bm25Only(table, query, limit, domain, section);
+    }
     if (!queryVector) throw new Error('Failed to embed query');
+
+    // Dimension safety-net: a model switch without a spec-index rebuild would make
+    // the query vector's dimension disagree with the stored vectors and crash ANN.
+    if (meta && meta.dim > 0 && queryVector.length !== meta.dim) {
+      return SpecVectorIndex._bm25Only(table, query, limit, domain, section);
+    }
 
     const fetchLimit = Math.min(limit * 10, 500);
     const rows = await table.query().nearestTo(queryVector).limit(fetchLimit).toArray();

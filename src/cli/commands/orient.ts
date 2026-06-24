@@ -168,7 +168,9 @@ function printHuman(result: Record<string, unknown>): void {
   const next = (result.nextSteps as string[]) ?? [];
 
   console.log(`Task: ${result.task}`);
-  console.log(`Search mode: ${result.searchMode}`);
+  // State the honest, served retrieval mode (keyword / local-semantic /
+  // remote-semantic) — not the internal score-scale token.
+  console.log(`Retrieval mode: ${result.retrievalMode ?? result.searchMode}`);
 
   if (fns.length > 0) {
     console.log('\nRelevant functions:');

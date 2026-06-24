@@ -234,7 +234,7 @@ Durable, code-anchored notes that self-invalidate when the code they describe mo
 
 | Tool | Description | Requires prior analysis |
 |------|-------------|:---:|
-| `verify_claim` | Verify a structural claim **before** asserting it to a human ("X is dead", "Y calls Z", "this is safe to change"): a deterministic verdict (`confirmed` / `refuted` / `unverifiable`) plus a citation receipt. An `unverifiable` verdict means hedge or read the source. Registered only under `openlore mcp --preset verify`. | Yes |
+| `verify_claim` | Verify a claim **before** asserting it to a human: a deterministic verdict (`confirmed` / `refuted` / `unverifiable`) plus a citation receipt. Structural kinds (`calls`, `reaches`, `dead`, `impacts`, `safe-to-change`) check the call graph ("X is dead", "Y calls Z", "this is safe to change"). The `decision-current` kind checks whether a recorded decision is still authoritative before you cite it — `subject` is an 8-char decision id, and the verdict is `refuted` (naming the live superseder to cite instead) if that decision was superseded or rejected. An `unverifiable` verdict means hedge or read the source. Registered only under `openlore mcp --preset verify`. | Yes (structural kinds) |
 
 **Federation (multi-repo, opt-in)**
 
@@ -582,7 +582,7 @@ dryRun     boolean   Preview changes without writing files (default: false)
 ```
 1. orient({ directory, task: "add rate limiting to the API" })
    # Returns in one call:
-   #   - relevant functions (semantic search or BM25 fallback)
+   #   - relevant functions (keyword/BM25 by default, or hybrid semantic when enabled)
    #   - source files and spec domains that cover them
    #   - call-graph neighbourhood for each top function
    #   - best insertion-point candidates
@@ -636,7 +636,7 @@ dryRun     boolean   Preview changes without writing files (default: false)
 
 Semantic search is only the starting point. openlore combines three retrieval layers into every search result — this is what makes it genuinely useful for AI agents navigating unfamiliar codebases:
 
-1. **Semantic seed** — dense vector search (or BM25 keyword fallback) finds the top-N functions closest in meaning to the query.
+1. **Semantic seed** — keyword (BM25) search by default, or dense+BM25 hybrid ranking when embeddings are enabled, finds the top-N functions closest in meaning to the query.
 2. **Call-graph expansion** — BFS up to depth 2 follows callee edges from every seed function, pulling in the files those functions depend on. During `generate`, this ensures the LLM sees the full call neighbourhood, not just the most obvious files.
 3. **Spec-linked peer functions** — each seed function's spec domain is looked up in the requirement→function mapping. Functions from the same spec domain that live in *different files* are surfaced as `specLinkedFunctions`. This crosses the call-graph boundary: implementations that share a spec requirement but are not directly connected by calls are retrieved automatically.
 
@@ -644,22 +644,25 @@ The result: a single `orient` or `search_code` call returns not just "functions 
 
 ### Embedding configuration
 
-Provide an OpenAI-compatible embedding endpoint (Ollama, OpenAI, Mistral, etc.) via environment variables or `.openlore/config.json`:
+Keyword (BM25) search is the first-class default and needs no configuration. To enable semantic ranking you have two options:
 
-**Environment variables:**
+**Local, zero-config (recommended):**
+```bash
+openlore embed --local      # on-device, no API key; revert with: openlore embed --off
+```
+
+**Remote OpenAI-compatible endpoint** — via environment variables or `.openlore/config.json`:
 ```bash
 EMBED_BASE_URL=https://api.openai.com/v1
 EMBED_MODEL=text-embedding-3-small
 EMBED_API_KEY=sk-...         # optional for local servers
-
-# Then run (embedding is automatic when configured):
-openlore analyze
+openlore analyze             # embedding is automatic when configured
 ```
 
-**Config file (`.openlore/config.json`):**
 ```json
 {
   "embedding": {
+    "provider": "remote",
     "baseUrl": "http://localhost:11434/v1",
     "model": "nomic-embed-text",
     "batchSize": 64
@@ -667,7 +670,8 @@ openlore analyze
 }
 ```
 
+- `provider`: `"local"` (on-device) or `"remote"` (default when `baseUrl`/`model` are set)
 - `batchSize`: Number of texts to embed per API call (default: 64)
 
-The index is stored in `.openlore/analysis/vector-index/` and is automatically used by the viewer's search bar and the `search_code` / `suggest_insertion_points` MCP tools.
+See [docs/semantic-search.md](semantic-search.md#retrieval-modes) for the full retrieval-mode reference. The index is stored in `.openlore/analysis/vector-index/` and is automatically used by the viewer's search bar and the `search_code` / `suggest_insertion_points` MCP tools.
 

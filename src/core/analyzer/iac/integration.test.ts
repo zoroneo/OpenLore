@@ -89,3 +89,106 @@ describe('IaC ↔ existing graph integration', () => {
     expect(graph.edges.some(e => e.callerId === caller.id && e.calleeId === callee.id)).toBe(true);
   });
 });
+
+describe('GitHub Actions workflow graph integration', () => {
+  const ci = [
+    'name: CI',
+    'on: [push]',
+    'jobs:',
+    '  build:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '      - uses: ./.github/actions/setup',
+    '  test:',
+    '    needs: build',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+  ].join('\n');
+  const setupAction = [
+    'name: Setup',
+    'runs:',
+    '  using: composite',
+    '  steps:',
+    '    - uses: actions/setup-node@v4',
+  ].join('\n');
+  const ghaFiles = [
+    { path: '.github/workflows/ci.yml', content: ci, language: 'GitHub Actions' },
+    { path: '.github/actions/setup/action.yml', content: setupAction, language: 'GitHub Actions' },
+  ];
+
+  it('surfaces workflow + job + action nodes in the shared graph with no tool changes', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(ghaFiles));
+    expect(graph.nodes.some(n => n.name === '.github/workflows/ci.yml::workflow' && n.language === 'GitHub Actions')).toBe(true);
+    expect(graph.nodes.some(n => n.name === '.github/workflows/ci.yml::job.build' && n.language === 'GitHub Actions')).toBe(true);
+    expect(graph.nodes.some(n => n.name === '.github/actions/setup/action.yml::action' && n.language === 'GitHub Actions')).toBe(true);
+    expect(graph.nodes.some(n => n.name === 'actions/checkout@v4' && n.isExternal)).toBe(true);
+  });
+
+  it('answers analyze_impact: who breaks if a shared action moves? (depth-1 callers)', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(ghaFiles));
+    const checkout = graph.nodes.find(n => n.name === 'actions/checkout@v4')!;
+    const dependents = graph.edges
+      .filter(e => e.calleeId === checkout.id)
+      .map(e => graph.nodes.find(n => n.id === e.callerId)?.name)
+      .sort();
+    expect(dependents).toEqual(['.github/workflows/ci.yml::job.build', '.github/workflows/ci.yml::job.test']);
+  });
+
+  it('links a job to the composite action it builds, and the CI needs DAG', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(ghaFiles));
+    const build = graph.nodes.find(n => n.name === '.github/workflows/ci.yml::job.build')!;
+    const test = graph.nodes.find(n => n.name === '.github/workflows/ci.yml::job.test')!;
+    const setup = graph.nodes.find(n => n.name === '.github/actions/setup/action.yml::action')!;
+    expect(graph.edges.some(e => e.callerId === build.id && e.calleeId === setup.id)).toBe(true);
+    expect(graph.edges.some(e => e.callerId === test.id && e.calleeId === build.id && e.kind === 'depends_on')).toBe(true);
+  });
+});
+
+describe('Docker container graph integration', () => {
+  const dockerfile = [
+    'FROM python:3.12-slim AS builder',
+    'RUN pip install -r requirements.txt',
+    'FROM python:3.12-slim',
+    'COPY --from=builder /app /app',
+  ].join('\n');
+  const composeYaml = [
+    'services:',
+    '  api:',
+    '    build: ./api',
+    '    depends_on:',
+    '      - db',
+    '  db:',
+    '    image: postgres:16',
+  ].join('\n');
+  const dockerFiles = [
+    { path: 'api/Dockerfile', content: dockerfile, language: 'Dockerfile' },
+    { path: 'docker-compose.yml', content: composeYaml, language: 'Docker Compose' },
+  ];
+
+  it('surfaces Dockerfile + compose nodes in the shared graph with no tool changes', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(dockerFiles));
+    expect(graph.nodes.some(n => n.name === 'api/Dockerfile::builder' && n.language === 'Dockerfile')).toBe(true);
+    expect(graph.nodes.some(n => n.name === 'docker-compose.yml::service.api' && n.language === 'Docker Compose')).toBe(true);
+    expect(graph.nodes.some(n => n.name === 'python:3.12-slim' && n.isExternal)).toBe(true);
+  });
+
+  it('answers analyze_impact: who rebuilds if the base image moves? (depth-1 callers)', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(dockerFiles));
+    const baseImage = graph.nodes.find(n => n.name === 'python:3.12-slim')!;
+    const dependents = graph.edges
+      .filter(e => e.calleeId === baseImage.id)
+      .map(e => graph.nodes.find(n => n.id === e.callerId)?.name);
+    // Both build stages depend on the base image.
+    expect(dependents).toContain('api/Dockerfile::builder');
+    expect(dependents).toContain('api/Dockerfile::stage1');
+  });
+
+  it('links a compose service to the Dockerfile stage it builds', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(dockerFiles));
+    const api = graph.nodes.find(n => n.name === 'docker-compose.yml::service.api')!;
+    const finalStage = graph.nodes.find(n => n.name === 'api/Dockerfile::stage1')!;
+    expect(graph.edges.some(e => e.callerId === api.id && e.calleeId === finalStage.id)).toBe(true);
+  });
+});

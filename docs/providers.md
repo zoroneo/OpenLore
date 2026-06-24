@@ -171,3 +171,15 @@ Or in `config.json` under the `llm` block:
 
 Priority: CLI flags > environment variables > config file > provider defaults.
 
+## Embedding providers
+
+The providers above are for **LLM** spec generation. Semantic search uses a separate, optional **embedding** provider — and it is never required: keyword (BM25) search is the first-class default.
+
+| Provider | How to enable | API key | Notes |
+|----------|---------------|---------|-------|
+| Keyword (BM25) | *(default — nothing to do)* | none | First-class default; zero config, no network |
+| Local (on-device) | `openlore embed --local` | none | CPU-only; caches `Xenova/all-MiniLM-L6-v2` (~23 MB) under `~/.openlore/models`; needs the optional `@huggingface/transformers` package |
+| Remote (OpenAI-compatible) | `EMBED_BASE_URL`/`EMBED_MODEL` or an `embedding` block, then `openlore analyze` | optional (`EMBED_API_KEY`) | Any `/embeddings` endpoint: Ollama, OpenAI, Mistral, vLLM, LM Studio… |
+
+Revert to keyword with `openlore embed --off`. See [docs/semantic-search.md](semantic-search.md#retrieval-modes) for the full reference.
+

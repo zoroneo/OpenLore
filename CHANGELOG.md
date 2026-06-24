@@ -7,6 +7,17 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 ### Added
 
+- **`verify_claim` `decision-current` kind** — verify a recorded decision is still
+  authoritative before an agent cites it to a human ("decision X governs this, so it's
+  safe"). `subject` is an 8-char decision id; the verdict is `confirmed` (recorded, not
+  superseded, not rejected), `refuted` (superseded — naming the live superseder to cite
+  instead — or rejected), or `unverifiable` (unknown/malformed id). It reads the same
+  decision-store retirement graph the `stale-decision-reference` finding walks, so the
+  active (`verify_claim`) and passive (`recall` / `openlore enforce`) surfaces can never
+  disagree, and it does not touch the structural call-graph verifier. No new MCP tool
+  (stays in the opt-in `verify` preset); deterministic, no LLM. Closes the deferred
+  `verify_claim` clause of the finding-enforcement-policy change.
+
 - **Unified finding-enforcement policy** — a single `enforcement.policy` block in
   `.openlore/config.json` maps a stable governance finding `code` to one enforcement
   class (`blocking | advisory | off`), decoupling a finding's intrinsic severity

@@ -26,7 +26,7 @@ import {
   ARTIFACT_MAPPING,
 } from '../../constants.js';
 import { VectorIndex } from '../../core/analyzer/vector-index.js';
-import { EmbeddingService } from '../../core/analyzer/embedding-service.js';
+import { resolveEmbedder } from '../../core/analyzer/embedder.js';
 import { getSkeletonContent, detectLanguage } from '../../core/analyzer/code-shaper.js';
 import { runChatAgent, resolveProviderConfig } from '../../core/services/chat-agent.js';
 
@@ -593,7 +593,8 @@ export const viewCommand = new Command('view')
                     res.end(JSON.stringify({ error: 'No vector index found. Run openlore analyze --embed first.' }));
                     return;
                   }
-                  const embedSvc = EmbeddingService.fromEnv();
+                  const { readOpenLoreConfig } = await import('../../core/services/config-manager.js');
+                  const embedSvc = await resolveEmbedder(await readOpenLoreConfig(rootPath));
                   const results = await VectorIndex.search(analysisDir, q, embedSvc, { limit: 5 });
                   res.setHeader('Content-Type', 'application/json; charset=utf-8');
                   res.statusCode = 200;

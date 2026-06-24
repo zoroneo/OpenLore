@@ -123,6 +123,28 @@ describe('MCP tool presets', () => {
     // Default surface DOES list the four federation-aware tools, but federation_status
     // — the registry-backed capability — is the opt-in marker and rides only the preset.
   });
+
+  // change: add-structural-claim-verification / add-decision-reference-claim-verification —
+  // verify_claim (incl. the decision-current kind) is gated to the opt-in `verify` preset,
+  // never the lean default/navigation surface. Guards the spec claim that the capability is
+  // "registered only in an opt-in preset (verify)".
+  it('verify_claim is gated to the verify preset, never in the default/navigation surface', () => {
+    const verify = selectActiveTools(TOOL_DEFINITIONS, { preset: 'verify' }).map(t => t.name);
+    expect(new Set(verify)).toEqual(new Set(['orient', 'search_code', 'verify_claim']));
+    expect(selectActiveTools(TOOL_DEFINITIONS, { preset: 'navigation' }).map(t => t.name)).not.toContain('verify_claim');
+    expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).not.toContain('verify_claim');
+  });
+
+  // The decision-reference clause: the verify_claim schema must advertise the
+  // `decision-current` kind, so an agent (and the SDK's schema validation) sees it.
+  it('verify_claim advertises the decision-current kind in its schema enum', () => {
+    const vc = TOOL_DEFINITIONS.find(t => t.name === 'verify_claim');
+    expect(vc, 'verify_claim is a defined tool').toBeDefined();
+    const kindEnum = (vc!.inputSchema as { properties?: { kind?: { enum?: string[] } } }).properties?.kind?.enum ?? [];
+    expect(kindEnum).toContain('decision-current');
+    // and the structural kinds remain advertised (additive, not a replacement)
+    for (const k of ['calls', 'reaches', 'dead', 'impacts', 'safe-to-change']) expect(kindEnum).toContain(k);
+  });
 });
 
 // ============================================================================

@@ -326,9 +326,19 @@ async function checkEmbeddingConnection(rootPath: string): Promise<CheckResult |
 
   const emb = config?.embedding;
 
+  // Local provider: nothing to connect to. Confirm it's recognised (so a local
+  // setup doesn't look like "no embeddings") rather than silently skipping.
+  if (emb?.provider === 'local') {
+    return {
+      name: 'Embedding connection',
+      status: 'ok',
+      detail: `local on-device embedder · ${emb.model ?? 'default model'} · no endpoint/key (model cached under ~/.openlore/models)`,
+    };
+  }
+
   // Resolve base URL from config or env
   const baseUrl = emb?.baseUrl ?? process.env.EMBED_BASE_URL;
-  if (!baseUrl) return null; // Embedding not configured — skip
+  if (!baseUrl) return null; // Embedding not configured — keyword default; skip
 
   if (emb?.skipSslVerify) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';

@@ -9,6 +9,7 @@
  */
 
 import type { IacLanguage } from './types.js';
+import { isWorkflowPath, isActionMetadataPath } from './github-actions.js';
 
 /**
  * Classify an ambiguous `.yaml`/`.yml`/`.json` file by its path + content.
@@ -25,6 +26,23 @@ export function classifyYaml(path: string, content: string): IacLanguage | null 
 
   // Helm chart metadata files (unambiguous by name).
   if (fileName === 'Chart.yaml' || fileName === 'Chart.yml') return 'Helm';
+
+  // GitHub Actions — workflow (in .github/workflows/ with on:+jobs:) or action metadata
+  // (action.y?ml with a runs: block). Path is the strong signal; the content key
+  // corroborates so a stray same-located file is not misclassified.
+  if (isWorkflowPath(posix) && /(^|\n)on\s*:/.test(content) && /(^|\n)jobs\s*:/.test(content)) {
+    return 'GitHub Actions';
+  }
+  if (isActionMetadataPath(posix) && /(^|\n)runs\s*:/.test(content)) {
+    return 'GitHub Actions';
+  }
+
+  // docker-compose — by conventional filename (docker-compose*.yml, compose*.yml),
+  // corroborated by a top-level `services:` key so a stray same-named file is not
+  // misclassified (add-docker-container-graph).
+  if (/^(docker-compose|compose)(\.[^/]+)?\.ya?ml$/.test(fileName) && /(^|\n)services\s*:/.test(content)) {
+    return 'Docker Compose';
+  }
 
   // Helm template: a Go-template expression inside a templates/ directory.
   const inTemplatesDir = /(^|\/)templates\//.test(posix);

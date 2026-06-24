@@ -20,6 +20,11 @@ export type IacLanguage =
   | 'Pulumi'
   | 'CDK'
   | 'CDKTF'
+  // Container layer (spec-07 deferred follow-up: add-docker-container-graph).
+  | 'Dockerfile'
+  | 'Docker Compose'
+  // CI/CD layer (spec-07 deferred follow-up: add-github-actions-workflow-graph).
+  | 'GitHub Actions'
   // Azure IaC DSL (spec-07 deferred follow-up: add-bicep-iac-graph).
   | 'Bicep';
 
@@ -33,6 +38,9 @@ export const IAC_LANGUAGES: readonly IacLanguage[] = [
   'Pulumi',
   'CDK',
   'CDKTF',
+  'Dockerfile',
+  'Docker Compose',
+  'GitHub Actions',
   'Bicep',
 ] as const;
 

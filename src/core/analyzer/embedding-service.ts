@@ -18,6 +18,24 @@ import type { OpenLoreConfig } from '../../types/index.js';
 // TYPES
 // ============================================================================
 
+/**
+ * The structural contract every embedder satisfies. `VectorIndex` is agnostic to
+ * the embedder source — only construction differs between the remote
+ * (`EmbeddingService`) and on-device (`LocalEmbeddingService`) providers.
+ * See {@link resolveEmbedder} (in `embedder.ts`) for the shared provider
+ * selection used by every consumer.
+ */
+export interface Embedder {
+  /** Compute one embedding vector per input text, in the same order. */
+  embed(texts: string[]): Promise<number[][]>;
+  /**
+   * Identifier recorded in the index metadata sidecar. Local-provider names are
+   * prefixed `local:` so the served retrieval mode can be derived without
+   * re-constructing the embedder.
+   */
+  readonly modelName: string;
+}
+
 export interface EmbeddingConfig {
   /** Base URL of the OpenAI-compatible API, e.g. "http://localhost:11434/v1" */
   baseUrl: string;
@@ -35,7 +53,7 @@ export interface EmbeddingConfig {
 // EMBEDDING SERVICE
 // ============================================================================
 
-export class EmbeddingService {
+export class EmbeddingService implements Embedder {
   private baseUrl: string;
   private model: string;
   private apiKey: string;
@@ -81,10 +99,13 @@ export class EmbeddingService {
   }
 
   /**
-   * Build an EmbeddingService from a OpenLoreConfig.
-   * Returns null if no embedding config is present.
+   * Build a remote EmbeddingService from a OpenLoreConfig.
+   * Returns null if no remote embedding config is present (missing baseUrl/model
+   * or a non-remote provider). Use `resolveEmbedder` (in `embedder.ts`) to also
+   * pick up the local provider.
    */
   static fromConfig(cfg: OpenLoreConfig): EmbeddingService | null {
+    if (cfg.embedding?.provider === 'local') return null;
     if (!cfg.embedding?.baseUrl || !cfg.embedding?.model) return null;
     return new EmbeddingService({
       baseUrl: cfg.embedding.baseUrl,

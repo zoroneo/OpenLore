@@ -259,6 +259,27 @@ describe('McpWatcher.handleChange', () => {
     expect(after).toBe(before);
   });
 
+  it('skips a GitHub Actions workflow file change (IaC is analyze-time only)', async () => {
+    // A `.github/workflows/*.yml` edit must be a no-op for the incremental watcher —
+    // detectLanguage returns 'unknown' for it, so it never reaches the call-graph /
+    // node-deletion path (the proposal's safety claim; same posture as all IaC YAML).
+    const ctx = makeContext();
+    const { rootPath, outputPath, contextPath } = await setupProject(ctx);
+    const before = await readFile(contextPath, 'utf-8');
+
+    const wfDir = join(rootPath, '.github', 'workflows');
+    await mkdir(wfDir, { recursive: true });
+    const wfFile = join(wfDir, 'ci.yml');
+    await writeFile(wfFile, 'name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n', 'utf-8');
+
+    const { McpWatcher } = await import('./mcp-watcher.js');
+    const watcher = new McpWatcher({ rootPath, outputPath });
+    await expect(watcher.handleChange(wfFile)).resolves.not.toThrow();
+
+    const after = await readFile(contextPath, 'utf-8');
+    expect(after).toBe(before);   // unchanged — workflow file skipped
+  });
+
   it('warns to stderr and does not throw when llm-context.json is missing', async () => {
     const rootPath = await mkdtemp(join(tmpdir(), 'mcp-watcher-missing-'));
     const outputPath = join(rootPath, '.openlore', 'analysis');
