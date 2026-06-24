@@ -14,11 +14,13 @@ import { extractCloudFormation } from './cloudformation.js';
 import { extractAnsible } from './ansible.js';
 import { extractPulumi } from './pulumi.js';
 import { extractCdk } from './cdk.js';
+import { extractDocker } from './docker.js';
 import { projectIacGraph, type ProjectedIac } from './project.js';
 import { mergeIacGraphs, type IacGraph } from './types.js';
 
 export { isIacLanguage, IAC_LANGUAGES } from './types.js';
 export { classifyYaml } from './classify-yaml.js';
+export { isDockerfilePath } from './docker.js';
 export type { ProjectedIac } from './project.js';
 
 interface InFile { path: string; content: string; language: string }
@@ -38,6 +40,8 @@ export function buildIacGraph(files: InFile[]): IacGraph {
     // Pulumi, CDK, and CDKTF ride on existing general-purpose languages, not an IaC tag.
     extractPulumi(generalPurpose),
     extractCdk(generalPurpose),
+    // Dockerfiles + compose are cross-referential, so one extractor sees both.
+    extractDocker(files.filter((f) => f.language === 'Dockerfile' || f.language === 'Docker Compose')),
   ];
   return mergeIacGraphs(graphs);
 }

@@ -187,6 +187,11 @@ test/  →  co-located *.test.ts + fixtures   # NOTE: top-level test/ is gitigno
 
 ## Out of scope for this PR (other languages / adjacent IaC)
 
+> **Follow-up shipped (2026-06-23):** **Dockerfile** and **docker-compose** — deferred below — were
+> built in `add-docker-container-graph` (branch `feat/docker-container-graph`), riding this spec's
+> normalized-resource projector with two new IaC tags (`Dockerfile`, `Docker Compose`). The rest of the
+> list below remains deferred. CDK / CDKTF also shipped (in the IaC subsystem, `iac/cdk.ts`).
+
 All IaC ecosystems above ship in this one PR. The following are explicitly deferred to future specs to keep this bounded (do not start them here): **Bicep**, **ARM JSON templates**, **Kustomize** overlays, **Crossplane**, **CDK / CDKTF** (synthesize to CFN/TF; structurally similar to Pulumi but separate), **Dockerfile**, **docker-compose**, **Jsonnet/CUE**, **Nix**, **Bazel/Starlark**, **Packer**, **Vagrant**. Leave `TODO(spec-07-followup): <name>` references where a natural extension point exists. (You asked whether to fold another language family in — no: the six IaC ecosystems are a full PR on their own.)
 
 ## Test plan

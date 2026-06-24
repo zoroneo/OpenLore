@@ -190,6 +190,10 @@ test-results/
 result
 docker/
 docker-compose.yml
+# IaC test fixtures are deliberately named docker/ and docker-compose.yml
+# (add-docker-container-graph); they must be tracked despite the broad ignores above.
+!src/core/analyzer/iac/fixtures/docker/
+!src/core/analyzer/iac/fixtures/docker/**
 # (ARCHITECTURE.md now lands in .openlore/analysis/ — covered by .openlore/ above — Spec 26 B3)
 # openspec: the blanket `openspec/` silently ignored the ADR files written by
 # `openlore decisions --sync` (dogfooding, spec 15). Keep ignoring untracked

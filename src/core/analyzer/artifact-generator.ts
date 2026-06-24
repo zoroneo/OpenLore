@@ -1110,7 +1110,7 @@ export class AnalysisArtifactGenerator {
     const { extractHtmlScripts } = await import('./html-script-extractor.js');
     const { detectDuplicates } = await import('./duplicate-detector.js');
     const { analyzeForRefactoring } = await import('./refactor-analyzer.js');
-    const { classifyYaml } = await import('./iac/index.js');
+    const { classifyYaml, isDockerfilePath } = await import('./iac/index.js');
 
     const CALL_GRAPH_LANGS = new Set([
       'Python', 'TypeScript', 'JavaScript', 'Go', 'Rust', 'Ruby', 'Java', 'C++', 'Swift',
@@ -1118,6 +1118,8 @@ export class AnalysisArtifactGenerator {
       'C#', 'Kotlin', 'PHP', 'C', 'Scala', 'Dart', 'Lua', 'Elixir', 'Bash',
       // Infrastructure-as-Code (spec-07) — projected onto the same graph primitives.
       'Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible',
+      // Container layer (add-docker-container-graph).
+      'Dockerfile', 'Docker Compose',
     ]);
     // Skip inline-script extraction for very large HTML files: bounds the
     // same-length char-array allocation in extractHtmlScripts (the scan is O(N)).
@@ -1141,6 +1143,10 @@ export class AnalysisArtifactGenerator {
       const lang = detectLanguage(path);
       if (lang === 'C++' && /\.h$/i.test(path)) return headerLang;
       if (lang !== 'unknown') return lang;
+      // Dockerfiles have no extension to switch on; detect them by name here (not in
+      // detectLanguage), keeping the incremental watcher's deletion path untouched —
+      // consistent with how all IaC YAML is resolved (add-docker-container-graph).
+      if (isDockerfilePath(path)) return 'Dockerfile';
       if (isUnderChart(path)) return 'Helm';
       if (/\.(ya?ml|json)$/i.test(path)) return classifyYaml(path, content) ?? 'unknown';
       return 'unknown';

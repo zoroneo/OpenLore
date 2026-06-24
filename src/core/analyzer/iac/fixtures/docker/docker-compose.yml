@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  api:
+    build: ./api
+    image: myorg/api:latest
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+  web:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+      target: builder
+    depends_on:
+      api:
+        condition: service_started
+    links:
+      - db:database
+
+  db:
+    image: postgres:16
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

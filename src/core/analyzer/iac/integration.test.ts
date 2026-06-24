@@ -64,3 +64,50 @@ describe('IaC ↔ existing graph integration', () => {
     expect(graph.edges.some(e => e.callerId === caller.id && e.calleeId === callee.id)).toBe(true);
   });
 });
+
+describe('Docker container graph integration', () => {
+  const dockerfile = [
+    'FROM python:3.12-slim AS builder',
+    'RUN pip install -r requirements.txt',
+    'FROM python:3.12-slim',
+    'COPY --from=builder /app /app',
+  ].join('\n');
+  const composeYaml = [
+    'services:',
+    '  api:',
+    '    build: ./api',
+    '    depends_on:',
+    '      - db',
+    '  db:',
+    '    image: postgres:16',
+  ].join('\n');
+  const dockerFiles = [
+    { path: 'api/Dockerfile', content: dockerfile, language: 'Dockerfile' },
+    { path: 'docker-compose.yml', content: composeYaml, language: 'Docker Compose' },
+  ];
+
+  it('surfaces Dockerfile + compose nodes in the shared graph with no tool changes', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(dockerFiles));
+    expect(graph.nodes.some(n => n.name === 'api/Dockerfile::builder' && n.language === 'Dockerfile')).toBe(true);
+    expect(graph.nodes.some(n => n.name === 'docker-compose.yml::service.api' && n.language === 'Docker Compose')).toBe(true);
+    expect(graph.nodes.some(n => n.name === 'python:3.12-slim' && n.isExternal)).toBe(true);
+  });
+
+  it('answers analyze_impact: who rebuilds if the base image moves? (depth-1 callers)', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(dockerFiles));
+    const baseImage = graph.nodes.find(n => n.name === 'python:3.12-slim')!;
+    const dependents = graph.edges
+      .filter(e => e.calleeId === baseImage.id)
+      .map(e => graph.nodes.find(n => n.id === e.callerId)?.name);
+    // Both build stages depend on the base image.
+    expect(dependents).toContain('api/Dockerfile::builder');
+    expect(dependents).toContain('api/Dockerfile::stage1');
+  });
+
+  it('links a compose service to the Dockerfile stage it builds', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(dockerFiles));
+    const api = graph.nodes.find(n => n.name === 'docker-compose.yml::service.api')!;
+    const finalStage = graph.nodes.find(n => n.name === 'api/Dockerfile::stage1')!;
+    expect(graph.edges.some(e => e.callerId === api.id && e.calleeId === finalStage.id)).toBe(true);
+  });
+});

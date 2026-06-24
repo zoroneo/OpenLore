@@ -19,7 +19,10 @@ export type IacLanguage =
   | 'Ansible'
   | 'Pulumi'
   | 'CDK'
-  | 'CDKTF';
+  | 'CDKTF'
+  // Container layer (spec-07 deferred follow-up: add-docker-container-graph).
+  | 'Dockerfile'
+  | 'Docker Compose';
 
 /** All IaC language tags (single source of truth for dispatch + gating). */
 export const IAC_LANGUAGES: readonly IacLanguage[] = [
@@ -31,6 +34,8 @@ export const IAC_LANGUAGES: readonly IacLanguage[] = [
   'Pulumi',
   'CDK',
   'CDKTF',
+  'Dockerfile',
+  'Docker Compose',
 ] as const;
 
 export function isIacLanguage(lang: string): lang is IacLanguage {

@@ -824,7 +824,8 @@ describe('language contract: supported set + fail-soft for everything else', () 
   // Every code language OpenLore detects (signature-extractor.ts detectLanguage).
   const OVERLAY_LANGS = ['TypeScript', 'JavaScript', 'Python', 'Go', 'Java', 'C++', 'Rust', 'Ruby', 'C', 'C#', 'PHP'];
   const FAIL_SOFT_LANGS = ['Kotlin', 'Swift', 'Scala', 'Dart', 'Lua', 'Elixir', 'Bash',
-    'Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible', 'unknown', 'COBOL'];
+    'Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible', 'Dockerfile', 'Docker Compose',
+    'unknown', 'COBOL'];
 
   it('cfgSupportsLanguage matches the documented overlay set exactly', () => {
     for (const l of OVERLAY_LANGS) expect(cfgSupportsLanguage(l), `${l} should be supported`).toBe(true);
