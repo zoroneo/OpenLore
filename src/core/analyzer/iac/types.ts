@@ -19,7 +19,9 @@ export type IacLanguage =
   | 'Ansible'
   | 'Pulumi'
   | 'CDK'
-  | 'CDKTF';
+  | 'CDKTF'
+  // CI/CD layer (spec-07 deferred follow-up: add-github-actions-workflow-graph).
+  | 'GitHub Actions';
 
 /** All IaC language tags (single source of truth for dispatch + gating). */
 export const IAC_LANGUAGES: readonly IacLanguage[] = [
@@ -31,6 +33,7 @@ export const IAC_LANGUAGES: readonly IacLanguage[] = [
   'Pulumi',
   'CDK',
   'CDKTF',
+  'GitHub Actions',
 ] as const;
 
 export function isIacLanguage(lang: string): lang is IacLanguage {

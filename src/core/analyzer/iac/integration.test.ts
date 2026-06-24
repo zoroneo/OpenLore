@@ -64,3 +64,59 @@ describe('IaC ↔ existing graph integration', () => {
     expect(graph.edges.some(e => e.callerId === caller.id && e.calleeId === callee.id)).toBe(true);
   });
 });
+
+describe('GitHub Actions workflow graph integration', () => {
+  const ci = [
+    'name: CI',
+    'on: [push]',
+    'jobs:',
+    '  build:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '      - uses: ./.github/actions/setup',
+    '  test:',
+    '    needs: build',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+  ].join('\n');
+  const setupAction = [
+    'name: Setup',
+    'runs:',
+    '  using: composite',
+    '  steps:',
+    '    - uses: actions/setup-node@v4',
+  ].join('\n');
+  const ghaFiles = [
+    { path: '.github/workflows/ci.yml', content: ci, language: 'GitHub Actions' },
+    { path: '.github/actions/setup/action.yml', content: setupAction, language: 'GitHub Actions' },
+  ];
+
+  it('surfaces workflow + job + action nodes in the shared graph with no tool changes', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(ghaFiles));
+    expect(graph.nodes.some(n => n.name === '.github/workflows/ci.yml::workflow' && n.language === 'GitHub Actions')).toBe(true);
+    expect(graph.nodes.some(n => n.name === '.github/workflows/ci.yml::job.build' && n.language === 'GitHub Actions')).toBe(true);
+    expect(graph.nodes.some(n => n.name === '.github/actions/setup/action.yml::action' && n.language === 'GitHub Actions')).toBe(true);
+    expect(graph.nodes.some(n => n.name === 'actions/checkout@v4' && n.isExternal)).toBe(true);
+  });
+
+  it('answers analyze_impact: who breaks if a shared action moves? (depth-1 callers)', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(ghaFiles));
+    const checkout = graph.nodes.find(n => n.name === 'actions/checkout@v4')!;
+    const dependents = graph.edges
+      .filter(e => e.calleeId === checkout.id)
+      .map(e => graph.nodes.find(n => n.id === e.callerId)?.name)
+      .sort();
+    expect(dependents).toEqual(['.github/workflows/ci.yml::job.build', '.github/workflows/ci.yml::job.test']);
+  });
+
+  it('links a job to the composite action it builds, and the CI needs DAG', async () => {
+    const graph = serializeCallGraph(await new CallGraphBuilder().build(ghaFiles));
+    const build = graph.nodes.find(n => n.name === '.github/workflows/ci.yml::job.build')!;
+    const test = graph.nodes.find(n => n.name === '.github/workflows/ci.yml::job.test')!;
+    const setup = graph.nodes.find(n => n.name === '.github/actions/setup/action.yml::action')!;
+    expect(graph.edges.some(e => e.callerId === build.id && e.calleeId === setup.id)).toBe(true);
+    expect(graph.edges.some(e => e.callerId === test.id && e.calleeId === build.id && e.kind === 'depends_on')).toBe(true);
+  });
+});

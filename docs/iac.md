@@ -25,8 +25,9 @@ Edge direction is **dependent → dependency**. So for any resource node:
 - **fanOut** = "what does this resource need?"
 
 `FunctionNode.language` carries the ecosystem tag (`Terraform`, `Kubernetes`,
-`Helm`, `CloudFormation`, `Ansible`, `Pulumi`); `className` carries the resource
-type, so clustering and architecture overviews group by type.
+`Helm`, `CloudFormation`, `Ansible`, `Pulumi`, `CDK`, `CDKTF`, `GitHub Actions`);
+`className` carries the resource type, so clustering and architecture overviews
+group by type.
 
 ## What is extracted, per ecosystem
 
@@ -72,6 +73,25 @@ Helm, executes Ansible, or calls a cloud API. No external CLI is required.
 - **Edges:** when one construct's args reference another construct's variable.
 - Static detection only — OpenLore never runs `cdk synth` / `cdktf synth`.
 
+### GitHub Actions  (`.github/workflows/*.yml`, `action.yml`/`action.yaml`)
+The CI/CD layer — the dependency graph nearly every repository on GitHub has. Modeled as
+dependent → dependency, like the rest of IaC, so the same tools answer "which jobs break if I
+change this?".
+- **Nodes:** one **workflow** handle per workflow file (`<path>::workflow`, signature carries the
+  `on:` triggers), one **job** per `jobs.<id>` (`<path>::job.<id>`), one **action** per
+  `action.yml`/`action.yaml` (`<path>::action`, typed by `runs.using` — `composite` vs `action`),
+  and external **action** nodes for marketplace/remote refs (`actions/checkout@v4`), deduped by
+  reference so one action used by ten jobs is one node with fan-in 10.
+- **Edges:** `needs:` → job→job (`depends_on`); a step's `uses:` → job→action (`references`); a
+  job-level `uses:` (reusable workflow) → job→target workflow; a composite action's
+  `runs.steps[].uses:` → action→action. So one `analyze_impact` on a shared composite action lists
+  **every job in every workflow that would break if it changed**, and the reverse — a job's fanOut —
+  is "everything this job pulls in".
+- **`uses:` resolution:** a `./`-prefixed ref is local (resolved relative to the repo root) — a
+  `.yml`/`.yaml` target is a reusable workflow, anything else is a local action directory; every
+  other ref is external. Dynamic refs (`uses: ${{ matrix.action }}`) and unresolvable local refs
+  emit no edge, never a wrong one. Static parse only — no `${{ }}` evaluation, no matrix expansion.
+
 ## Discovery & disambiguation
 
 `.tf`/`.tfvars`/`.tf.json` map to Terraform by extension. `.yaml`/`.yml`/`.json`
@@ -82,7 +102,8 @@ are ambiguous, so they route through a small pure function,
 - `AWSTemplateFormatVersion` / `Transform: AWS::Serverless` / `Resources:` with `Type: AWS::…` → **CloudFormation**
 - `Chart.yaml`, or a `{{ … }}` template under `templates/`, or any file under a chart directory → **Helm**
 - top-level `hosts:`/playbook list, or a file under `roles/*/{tasks,handlers,…}/` → **Ansible**
-- otherwise → `null` (left as generic config — CI files, `docker-compose`, app config are never misclassified as IaC)
+- a `.github/workflows/*.y?ml` with `on:` + `jobs:`, or an `action.y?ml` with `runs:` → **GitHub Actions**
+- otherwise → `null` (left as generic config — `docker-compose`, app config, other CI systems are never misclassified as IaC)
 
 ## Limits & conservatism
 
@@ -93,4 +114,7 @@ are ambiguous, so they route through a small pure function,
 ## Out of scope (future specs)
 
 Bicep, ARM JSON, Kustomize, Crossplane, Dockerfile, docker-compose,
-Jsonnet/CUE, Nix, Bazel/Starlark, Packer, Vagrant.
+Jsonnet/CUE, Nix, Bazel/Starlark, Packer, Vagrant, and non-GitHub CI systems
+(GitLab CI, CircleCI, Azure Pipelines). For GitHub Actions specifically:
+`${{ matrix }}` fan-out as distinct nodes, step-level granularity (the job is the
+unit), and remote reusable-workflow *contents* (an external ref is a node, not fetched).
