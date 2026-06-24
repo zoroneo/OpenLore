@@ -714,6 +714,38 @@ const NAV_TOOLS: NavToolSpec[] = [
       direction: Type.Optional(StringEnum(['imports', 'importedBy', 'both'] as const)),
     }),
   },
+  {
+    name: 'remember',
+    label: 'openlore remember',
+    description: 'Persist a durable, code-anchored fact for a later session — an invariant, gotcha, or rationale. Anchor it to a symbol/file so it self-invalidates when that code changes.',
+    guideline: 'When you learn something durable about the code that future sessions should know (an invariant, a gotcha, why something is the way it is), call openlore_remember with the `content` and `anchors` (the symbol/file it is about). For spec-synced architectural decisions, use record_decision instead.',
+    parameters: Type.Object({
+      content: Type.String({ description: 'REQUIRED. The memory to persist — one self-contained fact.' }),
+      anchors: Type.Optional(Type.Array(
+        Type.Object({
+          symbol: Type.Optional(Type.String({ description: 'Function/method name (optional).' })),
+          file: Type.Optional(Type.String({ description: 'Repo-relative file path (optional).' })),
+        }),
+        { description: 'Code this memory is about; each anchor names a symbol and/or file so the memory self-invalidates when that code changes.' },
+      )),
+      type: Type.Optional(StringEnum(['invariant', 'gotcha', 'rationale', 'convention', 'preference', 'todo', 'note'] as const, { description: 'Classification (default note); never inferred.' })),
+      tags: Type.Optional(Type.Array(Type.String(), { description: 'Optional retrieval tags.' })),
+      supersedes: Type.Optional(Type.String({ description: 'Id of a prior memory to retire (kept queryable via asOf).' })),
+    }),
+  },
+  {
+    name: 'recall',
+    label: 'openlore recall',
+    description: 'Recall code-anchored memories for what you are about to work on, each with a freshness verdict (fresh / drifted / orphaned).',
+    guideline: 'When starting work on code, call openlore_recall with a short `task` to surface durable notes left by earlier sessions. Drifted memories need verifying; orphaned ones are never authoritative.',
+    parameters: Type.Object({
+      task: Type.Optional(Type.String({ description: 'What you are about to work on (optional) — scopes the recall; omit to scan all.' })),
+      type: Type.Optional(Type.String({ description: 'Restrict notes to this type (decisions excluded when set).' })),
+      limit: Type.Optional(Type.Number({ description: 'Max memories to return (default 10).' })),
+      asOf: Type.Optional(Type.String({ description: 'Commit-ish: memory authoritative as of that commit.' })),
+      changedSince: Type.Optional(Type.String({ description: 'Commit-ish: memory recorded/invalidated after it.' })),
+    }),
+  },
 ];
 
 function toolResult(text: string, details: unknown = null): AgentToolResult<unknown> {
