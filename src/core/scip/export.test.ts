@@ -205,8 +205,32 @@ describe('scipLanguageName', () => {
   });
 
   it('maps IaC (spec-07) tags to UnspecifiedLanguage (empty string)', () => {
-    for (const lang of ['Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible', 'Pulumi', 'CDK', 'CDKTF']) {
+    for (const lang of ['Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible', 'Pulumi', 'CDK', 'CDKTF', 'GitHub Actions']) {
       expect(scipLanguageName(lang)).toBe('');
     }
+  });
+});
+
+describe('exportScip — GitHub Actions IaC nodes survive export', () => {
+  it('emits local workflow/job/action nodes as SCIP symbols (external action refs excluded)', async () => {
+    const { CallGraphBuilder, serializeCallGraph } = await import('../analyzer/call-graph.js');
+    const graph = serializeCallGraph(await new CallGraphBuilder().build([
+      { path: '.github/workflows/ci.yml', content: 'name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4', language: 'GitHub Actions' },
+      { path: '.github/actions/setup/action.yml', content: 'runs:\n  using: composite\n  steps: []', language: 'GitHub Actions' },
+    ]));
+    const report: ExportReport = {} as ExportReport;
+    const buf = exportScip(graph, {
+      projectRoot: '/repo',
+      package: { manager: 'npm', name: 'gha-repo', version: '1.0.0' },
+      toolVersion: '9.9.9',
+      report,
+    });
+    expect(buf.length).toBeGreaterThan(0);
+    // workflow handle + job + composite action = 3 local symbols; the external
+    // `actions/checkout@v4` is skipped (isExternal, no file) — exactly the IaC contract.
+    expect(report.symbolCount).toBe(3);
+    expect(report.unspecifiedLanguageFiles).toEqual(
+      expect.arrayContaining(['.github/workflows/ci.yml', '.github/actions/setup/action.yml']),
+    );
   });
 });

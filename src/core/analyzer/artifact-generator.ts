@@ -1120,6 +1120,8 @@ export class AnalysisArtifactGenerator {
       'Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible',
       // Container layer (add-docker-container-graph).
       'Dockerfile', 'Docker Compose',
+      // CI/CD layer (add-github-actions-workflow-graph).
+      'GitHub Actions',
     ]);
     // Skip inline-script extraction for very large HTML files: bounds the
     // same-length char-array allocation in extractHtmlScripts (the scan is O(N)).

@@ -2,7 +2,7 @@
 
 > Spec 17. Deterministic, offline. No API key, no network.
 
-OpenLore parses application code **and** seven Infrastructure-as-Code ecosystems
+OpenLore parses application code **and** eight Infrastructure-as-Code ecosystems
 (Terraform, Pulumi, Kubernetes, CloudFormation, CDK, CDKTF, Ansible, Helm) onto **one
 shared graph** — the same `FunctionNode` / `CallEdge` primitives back both. Cross-domain
 impact analysis traverses that unified graph end-to-end, so a single query answers
