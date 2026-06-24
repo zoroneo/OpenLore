@@ -680,7 +680,7 @@ const BASE_SKIP = new Set([
   'task', 'query', 'description', 'symbol', 'functionName', 'direction',
   'maxDepth', 'depth', 'entryFunction', 'targetFunction', 'filePath', 'limit', 'domain',
   // prose / meta
-  'guidance', 'note', 'graphIndexNote', 'searchMode', 'count',
+  'guidance', 'note', 'graphIndexNote', 'searchMode', 'retrievalMode', 'count',
 ]);
 
 // Per-tool extra skips. orient is auto-injected at the start of every task, so

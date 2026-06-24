@@ -749,20 +749,17 @@ export class McpWatcher {
   private async updateVectors(context: CachedContext, changedFiles: ChangedFile[], changedNodes: FunctionNode[]): Promise<void> {
     try {
       const { VectorIndex } = await import('../analyzer/vector-index.js');
-      const { EmbeddingService } = await import('../analyzer/embedding-service.js');
+      const { resolveEmbedder } = await import('../analyzer/embedder.js');
       const { readOpenLoreConfig } = await import('./config-manager.js');
 
       if (!VectorIndex.exists(this.outputPath)) return;
 
-      let embedSvc: InstanceType<typeof EmbeddingService> | null;
-      try {
-        embedSvc = EmbeddingService.fromEnv();
-      } catch {
-        const cfg = await readOpenLoreConfig(this.rootPath);
-        embedSvc = cfg ? EmbeddingService.fromConfig(cfg) : null;
-      }
-      // embedSvc may be null: updateFiles then refreshes the BM25-only corpus
-      // rather than re-embedding, keeping the keyword index live in watch mode.
+      // Same resolution path as analyze/query so watch keeps the configured
+      // provider (env remote → local → remote config). embedSvc may be null:
+      // updateFiles then refreshes the BM25-only corpus rather than re-embedding,
+      // keeping the keyword index live in watch mode.
+      const cfg = await readOpenLoreConfig(this.rootPath);
+      const embedSvc = await resolveEmbedder(cfg);
 
       const cg = context.callGraph;
       if (!cg) return;
@@ -776,7 +773,7 @@ export class McpWatcher {
         ? changedNodes
         : (cg.nodes ?? []).filter((n) => changedFilePaths.has(n.filePath));
 
-      const { embedded, reused, total, hasEmbeddings } = await VectorIndex.updateFiles(
+      const { embedded, reused, total, hasEmbeddings, deferred } = await VectorIndex.updateFiles(
         this.outputPath,
         nodes,
         changedFilePaths,
@@ -787,7 +784,15 @@ export class McpWatcher {
         fileContents,
       );
 
-      if (this.debug) {
+      if (deferred === 'model-changed') {
+        // Honest signal, not a silent no-op: the embedding model changed, so the
+        // incremental vector update was refused to avoid mixing dimensions. The
+        // changed files' vectors are stale until a full rebuild. Surfaced even
+        // without --debug because it needs user action.
+        process.stderr.write(
+          `[mcp-watcher] embedding model changed — vector update deferred for ${changedFilePaths.size} file(s); run "openlore analyze --force" (or "openlore embed --local") to rebuild the semantic index\n`
+        );
+      } else if (this.debug) {
         process.stderr.write(
           hasEmbeddings
             ? `[mcp-watcher] re-embedded ${changedFilePaths.size} file(s): ${embedded} new, ${reused} reused\n`

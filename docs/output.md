@@ -34,7 +34,7 @@ Static analysis output is stored in `.openlore/analysis/`:
 | `mapping.json` | Requirement->function mapping (produced by `generate`) |
 | `spec-snapshot.json` | Compact coverage summary: git state, per-domain coverage %, uncovered hub functions (auto-updated after `analyze` and `generate`) |
 | `audit-report.json` | Latest parity audit report (produced by `openlore audit`) |
-| `vector-index/` | LanceDB semantic index (produced by `--embed`) |
+| `vector-index/` | LanceDB search index — keyword (BM25) by default; a semantic vector index after `openlore embed --local` or when `EMBED_*` is configured |
 
 `openlore analyze` also writes **`ARCHITECTURE.md`** into `.openlore/analysis/` -- a Markdown overview of module clusters, entry points, and critical hubs, refreshed on every run.
 

@@ -20,6 +20,7 @@ import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { initCommand } from './commands/init.js';
 import { analyzeCommand } from './commands/analyze.js';
+import { embedCommand } from './commands/embed.js';
 import { orientCommand } from './commands/orient.js';
 import { proveCommand } from './commands/prove.js';
 import { generateCommand } from './commands/generate.js';
@@ -144,6 +145,7 @@ Learn more: https://github.com/clay-good/OpenLore
 // Register subcommands
 program.addCommand(initCommand);
 program.addCommand(analyzeCommand);
+program.addCommand(embedCommand);
 program.addCommand(orientCommand);
 program.addCommand(proveCommand);
 program.addCommand(generateCommand);

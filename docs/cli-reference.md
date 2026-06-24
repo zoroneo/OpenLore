@@ -6,6 +6,8 @@
 | `openlore install` | One-command setup: wire agent surfaces (lean `navigation` MCP + hooks) and build the index | No |
 | `openlore connect [agent]` | Wire a specific coding agent to the MCP server + hooks | No |
 | `openlore analyze` | Run static analysis | No |
+| `openlore embed --local` | Enable on-device semantic embeddings (no API key; downloads ~23 MB model) and rebuild the index | No |
+| `openlore embed --off` | Revert to the first-class keyword (BM25) default and rebuild | No |
 | `openlore orient` | Relevant functions, callers, specs, and insertion points for a task (the flagship) | No |
 | `openlore orient --inject` | Emit a bounded, ignorable task-scoped orientation block for a pre-turn hook | No |
 | `openlore generate` | Generate specs from analysis | Yes |
@@ -195,9 +197,24 @@ openlore analyze [options]
   --ai-configs           # Generate AI tool config files (CLAUDE.md, .cursorrules, .clinerules/openlore.md,
                          #   .github/copilot-instructions.md, .windsurf/rules.md, .vibe/skills/openlore.md)
                          #   Safe to re-run — skips files that already exist, marks pre-existing ones.
-  --no-embed             # Skip building the semantic vector index (index is built by default when embedding is configured)
+  --no-embed             # Force a keyword-only (BM25) index (keyword is the first-class default;
+                         #   semantic is built only when a provider is configured — see "openlore embed")
   --reindex-specs        # Re-index OpenSpec specs into the vector index without re-running full analysis
+                         #   (uses the configured embedding provider — local or remote — else keyword)
 ```
+
+### Embed Options
+
+```bash
+openlore embed [options]
+  --local                # Enable the on-device, no-API-key local embedder and rebuild the index.
+                         #   Lazily downloads + caches a small pinned model (~23 MB) under ~/.openlore/models.
+                         #   An explicit local provider wins over any EMBED_* env.
+  --off                  # Revert to the keyword (BM25) default and rebuild
+  --model <id>           # Override the local embedding model (advanced; default is a pinned small model)
+```
+
+Keyword (BM25) search is the first-class default and needs no setup. `openlore embed --local` is the one-command semantic upgrade; for a remote OpenAI-compatible endpoint instead, set `EMBED_BASE_URL`/`EMBED_MODEL` (or an `embedding` block in `.openlore/config.json`) and run `openlore analyze`. See [docs/semantic-search.md](semantic-search.md#retrieval-modes).
 
 ### Prove Options
 

@@ -191,11 +191,23 @@ export interface SpecStoreConfig {
 }
 
 export interface EmbeddingConfig {
-  /** Base URL of the OpenAI-compatible embeddings endpoint */
-  baseUrl: string;
-  /** Embedding model name */
-  model: string;
-  /** API key — optional for local servers */
+  /**
+   * Embedding provider.
+   *  - `'remote'` (default): an OpenAI-compatible `/embeddings` endpoint
+   *    (`baseUrl` + `model` required).
+   *  - `'local'`: an on-device, CPU-only embedder requiring no endpoint and no
+   *    API key. The model is lazily downloaded and cached on first use. `model`
+   *    is optional (defaults to a pinned small model); `baseUrl`/`apiKey` are
+   *    ignored.
+   * Omitting `provider` keeps the historical behaviour: a remote endpoint when
+   * `baseUrl` + `model` are present, otherwise no embeddings (keyword default).
+   */
+  provider?: 'remote' | 'local';
+  /** Base URL of the OpenAI-compatible embeddings endpoint (remote provider) */
+  baseUrl?: string;
+  /** Embedding model name (required for remote; optional override for local) */
+  model?: string;
+  /** API key — optional for local servers (remote provider only) */
   apiKey?: string;
   /** Maximum number of texts per embedding batch (default: 64) */
   batchSize?: number;

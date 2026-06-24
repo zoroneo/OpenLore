@@ -184,7 +184,7 @@ export async function handleSearchCode(
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
   const { VectorIndex } = await import('../../analyzer/vector-index.js');
-  const { EmbeddingService } = await import('../../analyzer/embedding-service.js');
+  const { resolveEmbedder, servedRetrievalMode } = await import('../../analyzer/embedder.js');
 
   // Forced literal-text mode: query the separate line index directly, bypassing
   // symbol search. Use when hunting a literal string (UI copy, error text).
@@ -199,20 +199,12 @@ export async function handleSearchCode(
     };
   }
 
-  // Resolve embedding service — fall back to BM25-only search if unavailable
-  let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-  let searchMode = 'hybrid';
-  try {
-    embedSvc = EmbeddingService.fromEnv();
-  } catch {
-    const cfg = await readOpenLoreConfig(absDir);
-    const svcFromConfig = cfg ? EmbeddingService.fromConfig(cfg) : null;
-    if (svcFromConfig) {
-      embedSvc = svcFromConfig;
-    } else {
-      searchMode = 'bm25_fallback';
-    }
-  }
+  // Resolve the active embedder (env → local provider → remote config); null is
+  // the first-class keyword default. retrievalMode is the honest, served mode.
+  const cfg = await readOpenLoreConfig(absDir);
+  const embedSvc = await resolveEmbedder(cfg);
+  const retrievalMode = servedRetrievalMode(embedSvc, outputDir, 'code');
+  const searchMode = retrievalMode === 'keyword' ? 'bm25_fallback' : 'hybrid';
 
   limit = Math.max(1, Math.min(limit, 100));
   const { readCachedContext } = await import('./utils.js');
@@ -297,9 +289,10 @@ export async function handleSearchCode(
   return {
     query,
     searchMode,
-    ...(searchMode === 'bm25_fallback'
+    retrievalMode,
+    ...(retrievalMode === 'keyword'
       ? {
-          note: 'Embedding server unavailable — results based on keyword matching only. Configure EMBED_BASE_URL + EMBED_MODEL for semantic search.',
+          note: 'Keyword (BM25) search — the zero-config default. For semantic ranking, run "openlore embed --local" (on-device, no API key) or set EMBED_* for a remote endpoint.',
         }
       : {}),
     count: budgeted.kept.length,
@@ -325,7 +318,7 @@ export async function handleSuggestInsertionPoints(
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
   const { VectorIndex } = await import('../../analyzer/vector-index.js');
-  const { EmbeddingService } = await import('../../analyzer/embedding-service.js');
+  const { resolveEmbedder } = await import('../../analyzer/embedder.js');
 
   if (!VectorIndex.exists(outputDir)) {
     return {
@@ -334,14 +327,10 @@ export async function handleSuggestInsertionPoints(
     };
   }
 
-  // Resolve embedding service — null triggers BM25 fallback in VectorIndex.search().
-  let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-  try {
-    embedSvc = EmbeddingService.fromEnv();
-  } catch {
-    const cfg = await readOpenLoreConfig(absDir);
-    embedSvc = cfg ? EmbeddingService.fromConfig(cfg) : null;
-  }
+  // Resolve the active embedder (env → local provider → remote config); null
+  // triggers the first-class BM25 path in VectorIndex.search().
+  const cfg = await readOpenLoreConfig(absDir);
+  const embedSvc = await resolveEmbedder(cfg);
 
   limit = Math.max(1, Math.min(limit, 20));
   const { readCachedContext } = await import('./utils.js');
@@ -533,7 +522,7 @@ export async function handleSearchSpecs(
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
   const { SpecVectorIndex } = await import('../../analyzer/spec-vector-index.js');
-  const { EmbeddingService } = await import('../../analyzer/embedding-service.js');
+  const { resolveEmbedder, servedRetrievalMode } = await import('../../analyzer/embedder.js');
 
   if (!SpecVectorIndex.exists(outputDir)) {
     return {
@@ -542,20 +531,12 @@ export async function handleSearchSpecs(
     };
   }
 
-  // Resolve embedding service — null triggers BM25 fallback in SpecVectorIndex.search().
-  let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-  let searchMode = 'hybrid';
-  try {
-    embedSvc = EmbeddingService.fromEnv();
-  } catch {
-    const cfg = await readOpenLoreConfig(absDir);
-    const svcFromConfig = cfg ? EmbeddingService.fromConfig(cfg) : null;
-    if (svcFromConfig) {
-      embedSvc = svcFromConfig;
-    } else {
-      searchMode = 'bm25_fallback';
-    }
-  }
+  // Resolve the active embedder (env → local provider → remote config); null is
+  // the first-class keyword default for spec search.
+  const cfg = await readOpenLoreConfig(absDir);
+  const embedSvc = await resolveEmbedder(cfg);
+  const retrievalMode = servedRetrievalMode(embedSvc, outputDir, 'spec');
+  const searchMode = retrievalMode === 'keyword' ? 'bm25_fallback' : 'hybrid';
 
   limit = Math.max(1, Math.min(limit, 50));
   const [results, mappingIdx] = await Promise.all([
@@ -566,9 +547,10 @@ export async function handleSearchSpecs(
   return {
     query,
     searchMode,
-    ...(searchMode === 'bm25_fallback'
+    retrievalMode,
+    ...(retrievalMode === 'keyword'
       ? {
-          note: 'No embedding endpoint — spec results based on keyword matching only. Configure EMBED_BASE_URL + EMBED_MODEL for semantic spec search.',
+          note: 'Keyword (BM25) spec search — the zero-config default. For semantic ranking, run "openlore embed --local" (on-device, no API key) or set EMBED_* for a remote endpoint.',
         }
       : {}),
     count: results.length,
@@ -602,7 +584,7 @@ export async function handleUnifiedSearch(
 
   const { UnifiedSearch, unifiedSearchAvailable } =
     await import('../../analyzer/unified-search.js');
-  const { EmbeddingService } = await import('../../analyzer/embedding-service.js');
+  const { resolveEmbedder } = await import('../../analyzer/embedder.js');
 
   if (!(await unifiedSearchAvailable(outputDir))) {
     return {
@@ -612,17 +594,9 @@ export async function handleUnifiedSearch(
     };
   }
 
-  // Resolve embedding service
-  let embedSvc: InstanceType<typeof EmbeddingService> | null = null;
-  try {
-    embedSvc = EmbeddingService.fromEnv();
-  } catch {
-    const cfg = await readOpenLoreConfig(absDir);
-    const svcFromConfig = cfg ? EmbeddingService.fromConfig(cfg) : null;
-    if (svcFromConfig) {
-      embedSvc = svcFromConfig;
-    }
-  }
+  // Resolve the active embedder (env → local provider → remote config).
+  const cfg = await readOpenLoreConfig(absDir);
+  const embedSvc = await resolveEmbedder(cfg);
 
   limit = Math.max(1, Math.min(limit, 50));
   const results = await UnifiedSearch.unifiedSearch(outputDir, query, embedSvc, {
