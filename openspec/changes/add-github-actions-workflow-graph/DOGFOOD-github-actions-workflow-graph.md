@@ -83,6 +83,29 @@ every doc claim against code + tests. No new bugs; it closed real test-coverage 
   is config, not embedded IaC, and correctly excluded there). Left untouched to keep this PR scoped;
   flagged for a separate fix.
 
+## Third round — downstream-consumer integration audit (`isIacLanguage`)
+A third pass verified every consumer of `isIacLanguage` / the IaC node set handles GitHub Actions
+identically to the 8 pre-existing ecosystems (an independent audit agent + code reading confirmed no
+per-ecosystem branching anywhere). **No bugs.** Two consumers back claims this PR makes, so each got a
+GHA-specific regression test (both now green; full suite 4700 passed):
+
+- **Incremental watcher — workflow files are skipped (the proposal's safety claim).** `detectLanguage`
+  returns `'unknown'` for `.github/workflows/*.yml` (`.yml`/`.yaml` are not in `EXT_TO_LANGUAGE`), so
+  the watcher's gate (`mcp-watcher.ts:433`) skips them — a workflow edit never reaches the call-graph /
+  node-deletion path, exactly like all IaC YAML. Added `mcp-watcher.test.ts`: editing a real
+  `.github/workflows/ci.yml` leaves the context artifact byte-identical (no-op). Previously the only
+  watcher skip test used a `.txt` file.
+- **find_dead_code — a CI workflow is never flagged dead.** `isCodeNode` (`reachability.ts:79`) excludes
+  `isIacLanguage` nodes from the dead-code universe, so a callerless workflow handle/job is never a
+  candidate (an agent must not be told "your CI workflow is dead code"). Added `reachability.test.ts`: a
+  GHA workflow + job are absent from `candidateDead` while a genuinely-dead TS function is present.
+- **Verified safe-by-precedent, no change needed:** cross-domain `linkCodeToInfra` mints no GHA edges (a
+  `.yml`/action file has no co-located code nodes, so `codeByFile.get(...)` is always undefined — same as
+  standalone Terraform); `get_map`/clustering label GHA by `className` like every IaC type;
+  `orient`/`search_code` index GHA nodes as ordinary `FunctionNode`s (no exclusion path); the federation
+  manifest is a repo index-of-indexes (no per-symbol data), and cross-repo symbol resolution passes IaC
+  nodes through unfiltered.
+
 ## Verdict
 The CI DAG is now a first-class part of the same graph as application code and the other ten IaC
 ecosystems, with zero MCP-tool or schema changes — the spec-07 projector carried it unchanged.

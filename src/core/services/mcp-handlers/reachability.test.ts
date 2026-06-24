@@ -76,6 +76,26 @@ describe('handleFindDeadCode', () => {
     expect(r.coverage.exportSignal).toBe('dependency-graph');
   });
 
+  it('never flags an IaC node (GitHub Actions workflow/job) as dead code', async () => {
+    // A CI workflow handle and its jobs have no internal callers, but they are
+    // infrastructure, not code — they must never be reported as candidate-dead (an
+    // agent relies on this: "your CI workflow is dead code" would be a false alarm).
+    const ghaNodes = [
+      node({ id: 'src/main.ts::main', fanOut: 0 }),                                // a real (imported) root
+      node({ id: 'src/orphan.ts::deadFn' }),                                       // a genuinely dead TS fn
+      node({ id: '.github/workflows/ci.yml::workflow', language: 'GitHub Actions', className: 'workflow', startLine: 1, endLine: 1 }),
+      node({ id: '.github/workflows/ci.yml::job.build', language: 'GitHub Actions', className: 'workflow-job', startLine: 5, endLine: 9 }),
+    ];
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ callGraph: graph(ghaNodes, []) } as never);
+    vi.mocked(readFile).mockResolvedValueOnce(JSON.stringify({ edges: [{ importedNames: ['main'] }] }) as never);
+    const r = await handleFindDeadCode({ directory: '/p' }) as { candidateDead: Array<{ name: string }> };
+    const dead = r.candidateDead.map(d => d.name);
+    expect(dead).toContain('deadFn');                       // the dead code fn IS a candidate
+    expect(dead).not.toContain('workflow');                 // GHA nodes are excluded from the universe
+    expect(dead).not.toContain('job.build');
+    expect(dead.some(n => n.includes('.github'))).toBe(false);
+  });
+
   it('tags confidence: static orphan high, dead cluster medium, dynamic low', async () => {
     const r = await handleFindDeadCode({ directory: '/p' }) as { candidateDead: Array<{ name: string; confidence: string }> };
     const byName = Object.fromEntries(r.candidateDead.map(d => [d.name, d.confidence]));
