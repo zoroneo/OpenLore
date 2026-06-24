@@ -499,6 +499,18 @@ const NAV_TOOLS: NavToolSpec[] = [
     }),
   },
   {
+    name: 'find_path',
+    label: 'openlore find_path',
+    description: 'Find the cheapest call path from one function to another — the route from A to B through the call graph, plus a few alternates.',
+    guideline: 'When you need the route between two functions ("how does A reach B"), call openlore_find_path with `from` and `to` — function names, or selectors like role:entrypoint / file:<path>. For a step-by-step trace of an already-known path, use trace_execution_path instead.',
+    parameters: Type.Object({
+      from: Type.String({ description: 'REQUIRED. Start endpoint: a function name, or a selector — landmark:<id> / role:entrypoint|hub|sink / file:<path>.' }),
+      to: Type.String({ description: 'REQUIRED. Goal endpoint: a function name, or a selector — landmark:<id> / role:entrypoint|hub|sink / file:<path>.' }),
+      useCallDistance: Type.Optional(Type.Boolean({ description: 'Rank by confidence-weighted call-distance (default true); false ranks by fewest hops.' })),
+      directResolvedOnly: Type.Optional(Type.Boolean({ description: 'Traverse only directly-resolved edges, ignoring synthesized dynamic-dispatch edges (default false).' })),
+    }),
+  },
+  {
     name: 'analyze_impact',
     label: 'openlore analyze_impact',
     description: 'List everything that depends on a function or type (its blast radius).',
@@ -590,6 +602,25 @@ const NAV_TOOLS: NavToolSpec[] = [
     description: 'Get a bird\'s-eye view of the codebase — domain clusters, cross-cluster dependencies, entry points, and critical hubs.',
     guideline: 'Before planning a large feature or onboarding to an unknown area, call openlore_get_architecture_overview for a structural overview.',
     parameters: Type.Object({}),
+  },
+  {
+    name: 'get_map',
+    label: 'openlore get_map',
+    description: 'The lay of the land — a coarse-to-fine map of the codebase: each region (community) as a super-node with its top files, plus how the regions connect. Drill into one region with its id.',
+    guideline: 'To get oriented in an unfamiliar codebase or see where regions connect, call openlore_get_map. Pass a `communityId` from the region view to drill into one region at function granularity.',
+    parameters: Type.Object({
+      communityId: Type.Optional(Type.String({ description: 'Optional: drill into this region (a communityId from the region view) at function granularity.' })),
+    }),
+  },
+  {
+    name: 'get_landmarks',
+    label: 'openlore get_landmarks',
+    description: 'The structural anchors of the whole repo — hubs, orchestrators, chokepoints, volatile, entrypoint, and dead functions, each labeled with evidence.',
+    guideline: 'To find the most structurally important functions before a change, call openlore_get_landmarks. Filter to one kind with `label` (hub | orchestrator | chokepoint | volatile | entrypoint | dead).',
+    parameters: Type.Object({
+      label: Type.Optional(Type.String({ description: 'Optional: return only landmarks carrying this label — hub | orchestrator | chokepoint | volatile | entrypoint | dead.' })),
+      limit: Type.Optional(Type.Number({ description: 'Max landmarks to return, ordered by fan-in (default 20, max 200).' })),
+    }),
   },
   {
     name: 'get_refactor_report',
