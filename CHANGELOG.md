@@ -7,6 +7,33 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 ### Added
 
+- **Call resolution recall — re-export / barrel resolution** (FEATURE-UPDATES proposal 4) — the import
+  resolver now follows re-export chains (`export { x } from`, `export * from`, and the TS ESM
+  `.js`-specifier forms) through any depth of barrel to a symbol's **true definition**, and that
+  re-export-aware map is **threaded into call-edge resolution** (Pass 2), which production builds never
+  did before — so a cross-file call resolves to its real target at `import` confidence (or the new
+  `re_export` confidence when a barrel hop was followed) instead of falling through to the ambiguous
+  first-same-named-candidate (`name_only`). Cycle-detected and depth-bounded; gated to `imports`-capable
+  languages; fail-soft. Strictly additive: when no re-export applies the result is identical to the direct
+  target, and directly-resolved edges (`same_file`/`self_cls`/`type_inference`) are never dropped or
+  downgraded. **Dogfood on this repo:** ambiguous `name_only` call edges fell 1067 → 87 (−92%), precise
+  cross-file edges rose 0 → 1326 `import` + 21 `re_export`, unresolved `external` fell 8742 → 8563, and
+  **29 symbols moved off the false-dead / false-entry-point list** (e.g. `EdgeStore.open`, reported as
+  having zero callers, recovered its real 22) — raising the soundness floor under every reachability
+  conclusion (`find_dead_code`, `select_tests`, `analyze_impact`, `blast_radius`,
+  `report_coverage_gaps`) at once. The resolved map is also threaded into the **incremental watcher**
+  (new `collectReExportBarrels` pulls barrel files into the subset for export-indexing only), so an
+  incremental rebuild converges to `analyze --force` on barrel edges instead of degrading them to
+  `name_only` (parity oracle Scenario 4). **Python relative imports now resolve too:** the leading-dot
+  module form (`from .impl import x`, `from ..pkg.mod import y`) is resolved to the true file, and
+  function-level (deferred / cycle-breaking) imports are captured — dogfooding a real Python repo this
+  took precise cross-file `import` edges from 0 → 102 and cut ambiguous `name_only` from 156 → 58,
+  making the registry's Python `imports` capability functional. A structural audit during
+  implementation found the proposal's other edge classes — interface→implementation, override, and
+  single-implementor dispatch (items 2/3) — **already delivered** by the shipped CHA pass
+  (`add-type-hierarchy-resolved-dispatch`); they are cross-referenced, not re-implemented. No graph-schema
+  change, no new MCP tool, no LLM. Reference: `openspec/changes/add-call-resolution-recall/`.
+
 - **Structural test-coverage gaps + `report_coverage_gaps`** (FEATURE-UPDATES proposal 5) — a
   deterministic, graph-derived report of important code with **no reaching test**, ranked by
   `hub`/`chokepoint` significance. It is the structural **inverse** of `select_tests`: seed on every
@@ -160,6 +187,24 @@ All notable changes to OpenLore are documented here. This project adheres to
   malformed host config rather than risk clobbering it.
 
 ### Fixed
+
+- **`--json` / large CLI output is no longer truncated when piped.** `process.stdout` is asynchronous on
+  a pipe (the normal case when an agent or shell captures `openlore … --json`), so a command that wrote a
+  large payload and then `process.exit()`ed lost everything past the ~64KB pipe buffer — e.g.
+  `openlore review --format json` on a real repo emitted a 100KB briefing that arrived truncated to
+  exactly 65536 bytes and failed to parse (it was fine when redirected to a file, where writes are
+  synchronous — so the bug only bit the pipe path agents actually use). A new `writeStdout` helper
+  (`src/cli/output.ts`) resolves only after the write has flushed; the JSON-emitting CLIs (`review`,
+  `coverage-gaps`, `blast-radius`, `impact-certificate`, `working-set`, `spec-store`, `audit`, `enforce`)
+  await it before exiting. Found by the full-product dogfood/`--json` purity sweep.
+
+- **HTML inline-script extraction is now truly linear on unterminated `<script>` tags.** A file full of
+  unterminated `<script` open tags drove `extractHtmlScripts` into O(N²) — each open tag re-scanned to
+  EOF for a close tag that never came — so a large/generated HTML file could stall `analyze` (measured
+  ~24s on 100k tags; the existing "no quadratic scan" guard was too small to catch it and intermittently
+  flaked CI instead). Once the close-tag search returns "none from here to EOF", no later open tag can
+  have one either, so the scan now stops — restoring O(N) (100k tags: ~24s → ~17ms). Found by the
+  full-product dogfood/CI pass.
 
 - **Provenance `gh` enrichment can no longer hang or flake CI.** `enrichWithGh` short-circuits to
   the empty map when the path is not a git repository (a non-git dir can have no GitHub remote, so
