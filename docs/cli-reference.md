@@ -40,6 +40,7 @@
 | `openlore doctor` | Check environment and configuration for common issues | No |
 | `openlore refresh-stories` | Refresh story files with latest structural context after each commit | No |
 | `openlore blast-radius` | Pre-flight structural blast-radius briefing for the current diff (advisory; `--install-hook` for a pre-commit hook) | No |
+| `openlore coverage-gaps` | Ranked structural test-coverage gaps: important code with NO reaching test (the inverse of `select_tests`), no runtime. Scope to a diff (`--base`/`--symbols`) or region (`--file-pattern`). Read-only, never blocks | Yes |
 | `openlore review` | Deterministic structural PR review (structural delta + blast radius) as a Markdown/JSON briefing; pairs with the bundled GitHub Action | No |
 | `openlore preflight` | CI staleness gate: fail when the analysis graph is stale relative to the working tree | No |
 | `openlore export scip` | Export the analysis graph as an SCIP index for the Sourcegraph / Glean ecosystem | No |
@@ -93,7 +94,7 @@ openlore install [options]   # detect agents, wire surfaces, build the index
                          #   continue, agents-md
   --preset <name>        # MCP tool preset to wire: navigation (lean default),
                          #   minimal, memory, verify, federation, coordination, or full
-  --all-tools            # Wire the full 65-tool surface (alias of --preset full)
+  --all-tools            # Wire the full 66-tool surface (alias of --preset full)
   --dry-run              # Print planned changes without writing any files
   --force                # Overwrite OpenLore-managed blocks even if hand-edited
   --uninstall            # Remove OpenLore-managed blocks and entries
@@ -109,7 +110,7 @@ openlore connect remove [agent]      # disconnect that agent
   <agent>                # Positional: claude-code | cursor | cline | continue |
                          #   agents-md (omit for an interactive picker)
   --preset <name>        # MCP tool preset to wire (same names as install)
-  --all-tools            # Wire the full 65-tool surface (alias of --preset full)
+  --all-tools            # Wire the full 66-tool surface (alias of --preset full)
   --dry-run              # Print planned changes without writing any files
   --force                # Overwrite OpenLore-managed blocks even if hand-edited
   --no-analyze           # Configure surfaces only; do not build the index
@@ -129,7 +130,7 @@ openlore mcp [options]             # start the stdio MCP server
 
   --preset <name>        # Expose a named preset (default: lean navigation, 10 tools)
   --minimal              # Expose only the core 6 governance tools
-  --all-tools            # Expose the full surface — all 65 tools (alias --preset full)
+  --all-tools            # Expose the full surface — all 66 tools (alias --preset full)
   --watch-auto           # Auto-detect + incrementally re-index the project dir
   --no-watch-auto        # Disable auto-watch (use for one-shot tool calls)
   --daemon               # Delegate tool calls to a shared `openlore serve` daemon
@@ -414,6 +415,21 @@ openlore impact-certificate --uninstall-hook      # remove the pre-commit hook b
 
 Advisory by default — it emits the certificate and exits 0; an infrastructure failure (no index, not a repo) never blocks. A repository MAY opt into blocking specific surface severities with `impactCertificate.block: ["critical"]`, in which case the `--hook` exits non-zero only when the diff opens a new path into a surface of that severity. Newly-opened-path detection is differential and deterministic (no LLM): only the changed files are re-parsed, renamed files read their base-ref content, untracked files are folded in, and an ambiguous added callee is reported, never guessed. The certificate decays via the freshness lease — when an anchored symbol later moves, `openlore spec-store status` re-fires it as a `certificate-stale` finding. The matching MCP tool `change_impact_certificate` is exposed under `openlore mcp --preset federation`.
 
+#### Test-coverage gaps
+
+Report important code with **no reaching test**, ranked by hub/chokepoint significance — the structural inverse of `select_tests` over the whole graph, with no test run, no coverage tool, and no runtime. It is gaps-only and honest: it reports "no reaching test" and never claims a symbol is "tested":
+
+```bash
+openlore coverage-gaps                              # whole repo, ranked (default 100, capped 500)
+openlore coverage-gaps --max 50                     # cap the list
+openlore coverage-gaps --file-pattern src/core/auth # region scope
+openlore coverage-gaps --base main                  # diff scope: gaps among symbols changed vs main
+openlore coverage-gaps --symbols parseConfig,login  # diff scope: only these changed symbols
+openlore coverage-gaps --json                       # machine-readable (stable shape) for CI / an orchestrator
+```
+
+A gap with no caller at all is labeled *also-dead* (distinct from `find_dead_code`); an untested entry point is *untested-not-dead*. A scope that resolves to nothing returns an explicit `note` ("nothing matched", not a reassuring "0 gaps"), and the counts (`analyzedSymbols` / `reachableFromTest`) range over the in-scope set. Read-only and advisory — it is a report and never blocks. The matching MCP tool `report_coverage_gaps` is exposed under `openlore mcp --preset full`. See [coverage-gaps.md](coverage-gaps.md).
+
 #### Enforcement gate
 
 `openlore enforce` is the **unified** finding-enforcement gate. It collects governance findings from every in-scope source, resolves each finding's enforcement class through the single declared [`enforcement.policy`](configuration.md#enforcement-policy) (with the legacy `blastRadius.block` / `impactCertificate.block` sugar lowered onto it), and — in `--hook` mode — fails the commit only when at least one finding resolves to `blocking`:
@@ -472,7 +488,7 @@ over plain HTTP so non-MCP clients (e.g. the [Pi](https://pi.dev) extension in
 
 ```bash
 openlore serve                          # navigation preset, ephemeral port, watch on
-openlore serve --preset all --port 7077 # all 65 tools on a fixed port
+openlore serve --preset all --port 7077 # all 66 tools on a fixed port
 openlore serve --no-watch               # transport only, no freshness lane
 openlore serve --stop                   # stop the daemon serving this directory
 ```

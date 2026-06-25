@@ -9,6 +9,7 @@
 | Don't know which file/function handles a concept | `search_code` |
 | Need call topology across many files | `get_subgraph` / `analyze_impact` |
 | "Which tests must I run for this change?" | `select_tests` — backward reachability to the reaching tests |
+| "Which important code has NO test reaching it?" / "is the risky part of this change untested?" | `report_coverage_gaps` (opt-in `--preset full`) — the structural inverse of `select_tests` over the whole graph: functions in no test's reachable set, ranked by hub/chokepoint significance (no runtime, no coverage tool). SOUND DIRECTION ONLY — reports "no reaching test", never claims a symbol is "tested" (reachable-from-a-test ≠ behavior-verified). A gap with no caller at all is labeled also-dead (distinct from `find_dead_code`); an untested entry point is untested-not-dead. Scope to a diff (`changedSymbols`/`diffRef`) or region (`filePattern`). Distinct from `get_test_coverage` (spec-tag based). CLI: `openlore coverage-gaps` |
 | "What's the blast radius of my diff before I commit?" | `blast_radius` — one advisory briefing: callers/layers, tests to run, anchored memories/decisions that will drift, stale specs |
 | "Post a deterministic structural review on a PR" (CLI, no MCP/agent) | `openlore review` — composes `structural_diff` + `blast_radius` into a Markdown/JSON briefing; bundled GitHub Action posts it as one sticky comment. Advisory by default; opt-in gating via `blastRadius.block`. No new MCP tool |
 | "What's unreachable / what dies if I delete X?" | `find_dead_code` — cross-language reachability (candidates) |
@@ -37,7 +38,7 @@ For all other cases (reading a file, grepping, listing files) use native tools d
 
 > **The default MCP surface is lean (change `default-to-lean-tool-surface`):** a bare
 > `openlore mcp` / `openlore install` wires the 10-tool `navigation` preset — the Spec 14
-> benchmark winner — not all 65 tools. Breadth is opt-in: `--minimal` (governance core),
+> benchmark winner — not all 66 tools. Breadth is opt-in: `--minimal` (governance core),
 > `--preset memory` / `verify` / `federation` / `coordination`, or the full surface via `--preset full`
 > (`--all-tools`). The decisions-gate workflow below needs `record_decision`, which is **not**
 > in the lean default — install with `--preset full` (or `--minimal`) on repos that gate commits.
