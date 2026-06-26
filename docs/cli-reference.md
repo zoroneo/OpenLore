@@ -41,6 +41,7 @@
 | `openlore refresh-stories` | Refresh story files with latest structural context after each commit | No |
 | `openlore blast-radius` | Pre-flight structural blast-radius briefing for the current diff (advisory; `--install-hook` for a pre-commit hook) | No |
 | `openlore coverage-gaps` | Ranked structural test-coverage gaps: important code with NO reaching test (the inverse of `select_tests`), no runtime. Scope to a diff (`--base`/`--symbols`) or region (`--file-pattern`). Read-only, never blocks | Yes |
+| `openlore certify-public-surface` | Certify the public API surface (no `--base`) or the breaking-change verdict for the working-tree diff (`--base <ref>`): removed/renamed exports, incompatible signatures, each breaking change with its in-repo consumers. Read-only, deterministic, never blocks | Yes |
 | `openlore review` | Deterministic structural PR review (structural delta + blast radius) as a Markdown/JSON briefing; pairs with the bundled GitHub Action | No |
 | `openlore preflight` | CI staleness gate: fail when the analysis graph is stale relative to the working tree | No |
 | `openlore export scip` | Export the analysis graph as an SCIP index for the Sourcegraph / Glean ecosystem | No |
@@ -94,7 +95,7 @@ openlore install [options]   # detect agents, wire surfaces, build the index
                          #   continue, agents-md
   --preset <name>        # MCP tool preset to wire: navigation (lean default),
                          #   minimal, memory, verify, federation, coordination, or full
-  --all-tools            # Wire the full 66-tool surface (alias of --preset full)
+  --all-tools            # Wire the full 67-tool surface (alias of --preset full)
   --dry-run              # Print planned changes without writing any files
   --force                # Overwrite OpenLore-managed blocks even if hand-edited
   --uninstall            # Remove OpenLore-managed blocks and entries
@@ -110,7 +111,7 @@ openlore connect remove [agent]      # disconnect that agent
   <agent>                # Positional: claude-code | cursor | cline | continue |
                          #   agents-md (omit for an interactive picker)
   --preset <name>        # MCP tool preset to wire (same names as install)
-  --all-tools            # Wire the full 66-tool surface (alias of --preset full)
+  --all-tools            # Wire the full 67-tool surface (alias of --preset full)
   --dry-run              # Print planned changes without writing any files
   --force                # Overwrite OpenLore-managed blocks even if hand-edited
   --no-analyze           # Configure surfaces only; do not build the index
@@ -130,7 +131,7 @@ openlore mcp [options]             # start the stdio MCP server
 
   --preset <name>        # Expose a named preset (default: lean navigation, 10 tools)
   --minimal              # Expose only the core 6 governance tools
-  --all-tools            # Expose the full surface — all 66 tools (alias --preset full)
+  --all-tools            # Expose the full surface — all 67 tools (alias --preset full)
   --watch-auto           # Auto-detect + incrementally re-index the project dir
   --no-watch-auto        # Disable auto-watch (use for one-shot tool calls)
   --daemon               # Delegate tool calls to a shared `openlore serve` daemon
@@ -435,6 +436,19 @@ openlore coverage-gaps --json                       # machine-readable (stable s
 
 A gap with no caller at all is labeled *also-dead* (distinct from `find_dead_code`); an untested entry point is *untested-not-dead*. A scope that resolves to nothing returns an explicit `note` ("nothing matched", not a reassuring "0 gaps"), and the counts (`analyzedSymbols` / `reachableFromTest`) range over the in-scope set. Read-only and advisory — it is a report and never blocks. The matching MCP tool `report_coverage_gaps` is exposed under `openlore mcp --preset full`. See [coverage-gaps.md](coverage-gaps.md).
 
+#### Public API surface contract
+
+Certify whether the working-tree diff breaks the package's exported contract. With **no `--base`** it prints the public surface (exported symbols + signatures); with `--base <ref>` it prints a deterministic breaking-change verdict — each changed export classified `breaking` / `non-breaking` / `potentially-breaking`, and each breaking one paired with the in-repo consumers it breaks:
+
+```bash
+openlore certify-public-surface                     # print the public surface (exported symbols + signatures)
+openlore certify-public-surface --base main         # breaking-change verdict for the working tree vs main
+openlore certify-public-surface --max 50            # cap the surface listing in surface mode (default 200, cap 500)
+openlore certify-public-surface --base HEAD --json  # machine-readable verdict (stable shape) for CI / an orchestrator
+```
+
+The closed classification rules: a **removed** or **renamed** export, an **added required parameter**, a parameter made **required**, or a **narrowed** parameter/return type is `breaking`; an added **trailing optional** parameter, a **new export**, or a **widened** return type is `non-breaking`; anything that cannot be *proven* compatible from the available signatures (untyped/dynamically-typed, or an incomparable type change) is `potentially-breaking` — **never silently safe**, since there is no type checker and no build in the loop. A renamed export is reported as a rename (via symbol-identity continuity), not a remove+add. A symbol still defined but no longer exported is reported as `visibility-reduced` (public → private); a re-export (`export { X } from …`) follows its definition — it is tracked at the definition site, not separately at the barrel, so a barrel'd symbol is never double-counted. External/unindexed consumers are disclosed as a known-unknowable boundary, not implied absent. Signature classification covers TypeScript/JavaScript/Python; other languages fail-soft to surface membership only (a removed/added export is still reported, without a signature classification). Test files are excluded from the surface. Read-only and advisory — it is a report and never blocks. The matching MCP tool `certify_public_surface` is exposed under `openlore mcp --preset full`.
+
 #### Enforcement gate
 
 `openlore enforce` is the **unified** finding-enforcement gate. It collects governance findings from every in-scope source, resolves each finding's enforcement class through the single declared [`enforcement.policy`](configuration.md#enforcement-policy) (with the legacy `blastRadius.block` / `impactCertificate.block` sugar lowered onto it), and — in `--hook` mode — fails the commit only when at least one finding resolves to `blocking`:
@@ -493,7 +507,7 @@ over plain HTTP so non-MCP clients (e.g. the [Pi](https://pi.dev) extension in
 
 ```bash
 openlore serve                          # navigation preset, ephemeral port, watch on
-openlore serve --preset all --port 7077 # all 66 tools on a fixed port
+openlore serve --preset all --port 7077 # all 67 tools on a fixed port
 openlore serve --no-watch               # transport only, no freshness lane
 openlore serve --stop                   # stop the daemon serving this directory
 ```
