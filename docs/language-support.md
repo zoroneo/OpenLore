@@ -16,7 +16,7 @@ Each language backs a fixed, closed set of capabilities. A capability is either 
 | `imports` | Relative-import resolution into the `import`-confidence cross-file edge path. For TS/JS this follows re-export/barrel chains (`export { x } from`, `export * from`) to the true definition, labelling the recovered edge `re_export`. For Python it resolves the leading-dot module form (`from .impl import x`, `from ..pkg.mod import y`), including function-level (deferred) imports. | `IMPORT_RESOLUTION_LANGUAGES` (`import-resolver-bridge.ts`) |
 | `cfgOverlay` | A control-flow-graph overlay (branches/loops) via the data-driven CFG `SPECS` table. | `cfgSupportsLanguage()` (`cfg.ts`) |
 | `typeInference` | Lightweight receiver-type inference, used to resolve method calls to their class. | `TYPE_INFERENCE_LANGUAGES` (`type-inference-engine.ts`) |
-| `styleFingerprint` | Codebase style / enforced-scope fingerprint. **Not yet built for any language.** | — |
+| `styleFingerprint` | Descriptive per-language idiom-frequency profile (function form, binding, conditional, async, string, naming case) with an evidence floor + enforcement-awareness. Backed for TypeScript/JavaScript/Python/Go. | `STYLE_FINGERPRINT_LANGUAGES` (`style-fingerprint.ts`) |
 | `iacProjection` | Infrastructure-as-code projection (resources/edges) onto the unified graph. | `isIacLanguage()` / `IAC_LANGUAGES` (`iac/types.ts`) |
 
 ## The registry is derived, not hand-listed
@@ -25,8 +25,8 @@ The declarative registry (`src/core/analyzer/language-support.ts`) is the single
 "what we know about language L" — but it is **computed** from the same structures the extractors
 consult at run time (the table above), never hand-maintained in parallel. So the coverage matrix
 cannot silently drift from what the analyzer actually does. `language-support.test.ts` behaviorally
-cross-checks **every member** of the `signatures`, `callGraph`, `imports`, `typeInference`, and
-`cfgOverlay` sets by running the real extractor on a per-language fixture and asserting it produces
+cross-checks **every member** of the `signatures`, `callGraph`, `imports`, `typeInference`,
+`cfgOverlay`, and `styleFingerprint` sets by running the real extractor on a per-language fixture and asserting it produces
 output (a malformed entry that produced nothing fails the test, not just the predicate tautology);
 `cfgOverlay` and `iacProjection` are additionally asserted exactly against their predicates
 (`cfgSupportsLanguage`, `isIacLanguage`) for every language, and `iacProjection`'s per-ecosystem node
@@ -34,6 +34,11 @@ tagging is covered by the dedicated `iac/*.test.ts` suite and an end-to-end anal
 
 This means an over-claimed matrix is structurally prevented — which matters, because an over-claimed
 coverage matrix is worse than none.
+
+> **JavaScript note.** JavaScript is parsed by the TypeScript extractor, so a JS-only repo may report
+> its detected language as `TypeScript` in some repo-level views even though JS is a first-class
+> registry key (named-mode `get_language_support` for `JavaScript` reports its real capabilities, and
+> the style fingerprint slices JS and TS apart by the file's actual language).
 
 ## The fail-soft contract (uniform)
 
