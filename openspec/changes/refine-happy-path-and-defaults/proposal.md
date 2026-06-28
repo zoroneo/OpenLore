@@ -15,17 +15,22 @@
 >   job (set up · navigate · govern a change · inspect · multi-repo · advanced/experimental) via a faithful
 >   `groupedFormatHelp` override; uncategorized commands fall to an "Other" group so none is ever hidden.
 >   6 unit tests + a wiring guard.
-> - ✅ `mcp-handlers` / **ConciseByDefaultDetailedOnRequest** — SHIPPED (first increment + sub-parts).
+> - ✅ `mcp-handlers` / **ConciseByDefaultDetailedOnRequest** — SHIPPED (mechanism + verbose-tool family).
 >   Added the shared verbosity mechanism in `progressive.ts` — `ResponseFormat` type,
 >   `normalizeResponseFormat()` (concise-by-default; anything but the exact `'detailed'` resolves to
->   concise, never silently the large payload), and `truncationReceipt()` (omitted count + the exact
->   call to get the rest). Applied to the most-verbose tool, `get_duplicate_report`: it now defaults to a
->   concise summary (stats + top clone groups + truncation receipt) and returns the full report only on
->   `responseFormat:"detailed"`. Dogfooded on this repo: **87% smaller** by default (3.0 KB vs 23.9 KB;
->   68 clone groups → top 10 + a "58 omitted" receipt). The truncation-receipt and output-budget
->   sub-parts were already satisfied across the surface (e.g. `coverage-gaps` `omitted`, `public-surface`
->   `truncated`, `briefing-since` `buildTruncationReceipt` — an explicit "no silent cap" contract). The
->   remaining verbose tools (the inventory family) adopt the shared helper opportunistically.
+>   concise, never silently the large payload), `truncationReceipt()`, and `summarizeListInventory()`
+>   (one shared summarizer for the uniform `{cached,total,<list>}` inventory shape). Applied to the
+>   verbose tools: `get_duplicate_report` (stats + top clone groups) **and** the four list inventories —
+>   `get_middleware_inventory`, `get_schema_inventory`, `get_ui_component_inventory`, `get_env_vars` —
+>   each now concise by default (total + a 20-item sample + a truncation receipt), full only on
+>   `responseFormat:"detailed"`. Dogfooded on this repo: `get_duplicate_report` 87% smaller (23.9 KB →
+>   3.0 KB); `get_env_vars` 45% smaller (39 vars → top 20 + "19 omitted"); small inventories return in
+>   full (no data loss). Concise scales — cheap for large, harmless for small. The truncation-receipt and
+>   output-budget sub-parts were already satisfied surface-wide (`coverage-gaps` `omitted`,
+>   `public-surface` `truncated`, `briefing-since` `buildTruncationReceipt` — "no silent cap"). The two
+>   heterogeneous-shape inventories (`get_route_inventory`, `get_external_packages`) keep their full
+>   output and adopt the contract opportunistically. (Full-surface payload budget bumped 86 KB → 88 KB —
+>   a conscious decision, the `detailed` escape is what makes the concise default safe.)
 > - ✅ `overview` / **DocumentationSingleSourceOfTruth** — SHIPPED. Added `docs/README.md`, a task→doc
 >   index mapping intent to the one canonical page (linked from the top-level README "Documentation").
 >   Designated canonical pages for the overlapping concepts and added cross-link banners on the
@@ -362,15 +367,17 @@ structured result.
 
 #### Requirement: ConciseByDefaultDetailedOnRequest
 
-> ✅ IMPLEMENTED (2026-06-28, PR #218) — shared mechanism + first verbose tool; sub-parts already met.
+> ✅ IMPLEMENTED (2026-06-28, PR #218) — shared mechanism + the verbose-tool family; sub-parts already met.
 > `progressive.ts` provides the reusable contract: `ResponseFormat`, `normalizeResponseFormat()`
-> (concise-by-default, never silently detailed), and `truncationReceipt()`. `get_duplicate_report` adopts
-> it — concise by default (stats + top clone groups + receipt), `responseFormat:"detailed"` for the full
-> report; the schema advertises the enum. Measured **87% byte reduction** by default on this repo. The
-> *truncation-receipt* and *output-budget* clauses were already satisfied surface-wide (`coverage-gaps`
-> `omitted`, `public-surface` `truncated`, `briefing-since` `buildTruncationReceipt` — an explicit "no
-> silent cap"). The remaining verbose tools (the inventory family) adopt the shared helper
-> opportunistically; the mechanism and default-concise contract are in place.
+> (concise-by-default, never silently detailed), `truncationReceipt()`, and `summarizeListInventory()`.
+> Adopted by `get_duplicate_report` and the four uniform list inventories (`get_middleware_inventory`,
+> `get_schema_inventory`, `get_ui_component_inventory`, `get_env_vars`) — concise by default (total +
+> a 20-item sample + a receipt), `responseFormat:"detailed"` for the full payload; the schemas advertise
+> the enum. Measured reductions on this repo: 87% (`get_duplicate_report`), 45% (`get_env_vars`); small
+> inventories return in full (no data loss). The *truncation-receipt* and *output-budget* clauses were
+> already satisfied surface-wide (`coverage-gaps` `omitted`, `public-surface` `truncated`,
+> `briefing-since` `buildTruncationReceipt` — "no silent cap"). The two heterogeneous-shape inventories
+> (`get_route_inventory`, `get_external_packages`) adopt the contract opportunistically.
 
 Any tool whose detailed output can exceed a concise summary SHALL accept a `responseFormat` parameter with
 values `concise` and `detailed`, defaulting to `concise`. Each tool's response SHALL stay within the

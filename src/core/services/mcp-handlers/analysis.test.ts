@@ -783,6 +783,27 @@ describe('handleGetEnvVars', () => {
     expect(result.cached).toBe(false);
     expect(result).toHaveProperty('envVars');
   });
+
+  // ConciseByDefaultDetailedOnRequest: a large inventory summarizes by default.
+  it('defaults to a concise summary (sample + truncation receipt) for a large inventory', async () => {
+    const payload = Array.from({ length: 30 }, (_, i) => ({ name: `VAR_${i}`, file: 'src/config.ts' }));
+    await writeAnalysisFile(tmpDir, ARTIFACT_ENV_INVENTORY, payload);
+    const { handleGetEnvVars } = await import('./analysis.js');
+    const result = await handleGetEnvVars(tmpDir) as Record<string, unknown>;
+    expect(result.responseFormat).toBe('concise');
+    expect(result.total).toBe(30);
+    expect((result.envVars as unknown[]).length).toBe(20); // CONCISE_INVENTORY_SAMPLE
+    expect((result.truncation as { omitted: number }).omitted).toBe(10);
+  });
+
+  it('returns the full inventory with responseFormat:"detailed"', async () => {
+    const payload = Array.from({ length: 30 }, (_, i) => ({ name: `VAR_${i}`, file: 'src/config.ts' }));
+    await writeAnalysisFile(tmpDir, ARTIFACT_ENV_INVENTORY, payload);
+    const { handleGetEnvVars } = await import('./analysis.js');
+    const result = await handleGetEnvVars(tmpDir, 'detailed') as Record<string, unknown>;
+    expect((result.envVars as unknown[]).length).toBe(30);
+    expect(result.truncation).toBeUndefined();
+  });
 });
 
 // ============================================================================

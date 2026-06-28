@@ -537,8 +537,14 @@ describe('tools/list payload budget (spec-28)', () => {
   // adjacent tools' descriptions. The family key is the machine-readable grouping that
   // makes the full surface discoverable by family rather than as a flat list — a
   // conscious budget decision, not silent drift.
+  // Bumped 86_000 → 88_000 when the concise/detailed verbosity contract (change:
+  // refine-happy-path-and-defaults / ConciseByDefaultDetailedOnRequest) added a
+  // `responseFormat` enum property (+ a one-line description) to the five verbose
+  // list tools (get_duplicate_report + the four list inventories). The opt-in
+  // `detailed` escape is what lets the concise default be safe — a conscious
+  // budget decision, not silent drift.
   it('full surface stays within its prefix budget', () => {
-    expect(payloadBytes({ preset: 'full' })).toBeLessThan(86_000);
+    expect(payloadBytes({ preset: 'full' })).toBeLessThan(88_000);
   });
 
   it('the lean DEFAULT surface (no selector) is the lean navigation payload, not the full one', () => {

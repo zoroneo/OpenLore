@@ -94,19 +94,26 @@ on their own branches/PRs and are checked off here as they ship.
 - [x] Cold-start self-bootstrap (`cold-start-bootstrap.ts`); schema-reset self-heal via detached
       `analyze --force` (`mcp-watcher.ts`). No code change required.
 
-## Slice 9 — `mcp-handlers` / ConciseByDefaultDetailedOnRequest  (SHIPPED — PR #218; first increment)
+## Slice 9 — `mcp-handlers` / ConciseByDefaultDetailedOnRequest  (SHIPPED — PR #218; mechanism + family)
 
 - [x] Shared mechanism in `progressive.ts`: `ResponseFormat` type, `normalizeResponseFormat()`
-      (concise-by-default; only the exact `'detailed'` opts into the full payload), `truncationReceipt()`.
-- [x] Applied to `get_duplicate_report` (the most-verbose tool): concise summary by default
-      (stats + top 10 clone groups + truncation receipt); `responseFormat:"detailed"` returns the full
-      report. Dispatch + inputSchema (enum) + description updated.
-- [x] Tests: `progressive.test.ts` (normalize/receipt units) + `analysis.test.ts` (concise default,
-      detailed pass-through, truncation receipt, bad-value→concise, fail-soft on unknown shape).
-- [x] Dogfood (real stdio): 87% smaller by default (3.0 KB vs 23.9 KB; 68 groups → top 10 + "58 omitted").
+      (concise-by-default; only the exact `'detailed'` opts into the full payload), `truncationReceipt()`,
+      and `summarizeListInventory()` (one summarizer for the uniform `{cached,total,<list>}` shape).
+- [x] Applied to `get_duplicate_report` (stats + top 10 clone groups + receipt) and the four uniform list
+      inventories — `get_middleware_inventory`, `get_schema_inventory`, `get_ui_component_inventory`,
+      `get_env_vars` (total + 20-item sample + receipt). Dispatch + inputSchema (shared
+      `RESPONSE_FORMAT_PROP` enum) + descriptions updated for all five.
+- [x] Tests: `progressive.test.ts` (normalize/receipt/summarizer units) + `analysis.test.ts`
+      (concise default, detailed pass-through, truncation receipt, small-list-full, bad-value→concise,
+      fail-soft on unknown shape) for both `get_duplicate_report` and `get_env_vars`.
+- [x] Dogfood (real stdio): `get_duplicate_report` 87% smaller (23.9 KB → 3.0 KB); `get_env_vars` 45%
+      smaller (39 → top 20 + "19 omitted"); small inventories return in full (no data loss).
+- [x] Full-surface payload budget bumped 86 KB → 88 KB (conscious — the `detailed` escape makes the
+      concise default safe); doc byte-figure guard (±3 KB) absorbed the growth.
 - [x] Sub-parts already satisfied surface-wide: truncation receipts (`coverage-gaps` `omitted`,
       `public-surface` `truncated`, `briefing-since` `buildTruncationReceipt` — "no silent cap") and
-      output budgets. Remaining verbose tools (inventory family) adopt the helper opportunistically.
+      output budgets. The two heterogeneous inventories (`get_route_inventory`, `get_external_packages`)
+      adopt the contract opportunistically.
 
 ## Remaining slices (blocked on external dependencies — no clean code left in this change)
 
@@ -118,10 +125,10 @@ on their own branches/PRs and are checked off here as they ship.
       `tool-contract.test.ts` ("each member names at least one near-sibling in its own description"); the
       remaining "lead-with-action" prose quality is not deterministically testable and is left as-is.
 
-## Verification (PR #218, after slices 1, 2, 5, 6, 7, 9)
+## Verification (PR #218, after slices 1, 2, 5, 6, 7, 9 + inventory family)
 
 - [x] `npm run build` clean; `tsc --noEmit` clean.
-- [x] `vitest run src examples` green — 283 files, 5581 passed, 2 skipped (the lone intermittent
+- [x] `vitest run src examples` green — 283 files, 5587 passed, 2 skipped (the lone intermittent
       `mcp-watcher-parity` flake under full-suite load is pre-existing and passes in isolation).
 - [x] Value preserved: no tool/command/preset/language removed (a tool was renamed with a permanent
       alias — the prior name still works); zero required keys unchanged; no LLM, no network, no artifact.

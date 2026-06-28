@@ -139,6 +139,18 @@ export {
 // dropping the one fact that matters (it must be absolute, not relative).
 const DIR_DESC = 'Absolute project path';
 
+/**
+ * Shared inputSchema property for the concise/detailed verbosity contract
+ * (ConciseByDefaultDetailedOnRequest). A verbose list tool returns a concise
+ * summary (total + a sample + a truncation receipt) by default and the full
+ * payload only when `responseFormat:"detailed"` is requested.
+ */
+const RESPONSE_FORMAT_PROP = {
+  type: 'string',
+  enum: ['concise', 'detailed'],
+  description: 'Output verbosity. "concise" (default): total + a sample + a truncation receipt. "detailed": the full inventory.',
+} as const;
+
 // Optional federation scope, shared by the four federation-aware conclusion tools
 // (analyze_impact, select_tests, find_dead_code, find_path). Inert unless an
 // `.openlore/federation.json` registry exists (built via `openlore federation add`),
@@ -1175,11 +1187,13 @@ export const TOOL_DEFINITIONS = [
       'Reads the pre-computed middleware-inventory.json artifact when available, ' +
       'otherwise scans source files live. ' +
       'Supports Express, Hono, Fastify, NestJS, Next.js, and more. ' +
+      'Returns a concise summary by default; pass responseFormat:"detailed" for the full inventory. ' +
       'Run analyze_codebase first for the fastest results.',
     inputSchema: {
       type: 'object',
       properties: {
         directory: { type: 'string', description: DIR_DESC },
+        responseFormat: RESPONSE_FORMAT_PROP,
       },
       required: ['directory'],
     },
@@ -1192,11 +1206,13 @@ export const TOOL_DEFINITIONS = [
       'Reads the pre-computed schema-inventory.json artifact when available, ' +
       'otherwise scans source files live. ' +
       'Supports Prisma, TypeORM, Drizzle ORM, and SQLAlchemy. ' +
+      'Returns a concise summary by default; pass responseFormat:"detailed" for the full inventory. ' +
       'Run analyze_codebase first for the fastest results.',
     inputSchema: {
       type: 'object',
       properties: {
         directory: { type: 'string', description: DIR_DESC },
+        responseFormat: RESPONSE_FORMAT_PROP,
       },
       required: ['directory'],
     },
@@ -1209,11 +1225,13 @@ export const TOOL_DEFINITIONS = [
       'Reads the pre-computed ui-inventory.json artifact when available, ' +
       'otherwise scans source files live. ' +
       'Supports React, Vue, Svelte, and Angular. ' +
+      'Returns a concise summary by default; pass responseFormat:"detailed" for the full inventory. ' +
       'Run analyze_codebase first for the fastest results.',
     inputSchema: {
       type: 'object',
       properties: {
         directory: { type: 'string', description: DIR_DESC },
+        responseFormat: RESPONSE_FORMAT_PROP,
       },
       required: ['directory'],
     },
@@ -1227,11 +1245,13 @@ export const TOOL_DEFINITIONS = [
       'Reads the pre-computed env-inventory.json artifact when available, ' +
       'otherwise scans source files live. ' +
       'Supports JS/TS (process.env), Python (os.environ/os.getenv), Go (os.Getenv), Ruby (ENV[]). ' +
+      'Returns a concise summary by default; pass responseFormat:"detailed" for the full inventory. ' +
       'Run analyze_codebase first for the fastest results.',
     inputSchema: {
       type: 'object',
       properties: {
         directory: { type: 'string', description: DIR_DESC },
+        responseFormat: RESPONSE_FORMAT_PROP,
       },
       required: ['directory'],
     },

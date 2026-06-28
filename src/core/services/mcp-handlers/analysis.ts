@@ -48,7 +48,7 @@ import { readOpenLoreConfig } from '../config-manager.js';
 import { validateDirectory, readCachedContext, isCacheFresh, safeJoin, safeOpenspecDir } from './utils.js';
 import { buildWeightedAdjacency, weightedBfs } from './graph.js';
 import { personalizedPageRank } from '../../analyzer/personalized-pagerank.js';
-import { applyTokenBudget, normalizeResponseFormat, truncationReceipt, type ResponseFormat } from './progressive.js';
+import { applyTokenBudget, normalizeResponseFormat, truncationReceipt, summarizeListInventory, type ResponseFormat } from './progressive.js';
 import type { SerializedCallGraph } from '../../analyzer/call-graph.js';
 import type { MappingArtifact } from '../../generator/mapping-generator.js';
 import { openloreAudit } from '../../../api/audit.js';
@@ -586,17 +586,19 @@ export async function handleGetRouteInventory(
  * Falls back to re-computing from source files if the artifact is missing.
  */
 export async function handleGetMiddlewareInventory(
-  directory: string
+  directory: string,
+  responseFormat: ResponseFormat = 'concise',
 ): Promise<Record<string, unknown>> {
   const absDir = await validateDirectory(directory);
   const artifactPath = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, ARTIFACT_MIDDLEWARE_INVENTORY);
+  const hint = 'call get_middleware_inventory with responseFormat:"detailed" for the full inventory';
 
   // Try reading cached artifact first
   try {
     const raw = await readFile(artifactPath, 'utf-8');
     const inventory = JSON.parse(raw);
     if (!Array.isArray(inventory)) throw new Error('malformed cached middleware inventory');
-    return { cached: true, total: inventory.length, entries: inventory };
+    return summarizeListInventory({ cached: true, total: inventory.length, entries: inventory }, 'entries', responseFormat, hint);
   } catch {
     // Artifact not present or malformed — run live extraction
   }
@@ -616,7 +618,7 @@ export async function handleGetMiddlewareInventory(
   const filePaths = repoMap.allFiles.map(f => f.path);
 
   const entries = await extractMiddleware(filePaths, absDir);
-  return { cached: false, total: entries.length, entries };
+  return summarizeListInventory({ cached: false, total: entries.length, entries }, 'entries', responseFormat, hint);
 }
 
 // ============================================================================
@@ -628,16 +630,18 @@ export async function handleGetMiddlewareInventory(
  * Falls back to re-computing from source files if the artifact is missing.
  */
 export async function handleGetSchemaInventory(
-  directory: string
+  directory: string,
+  responseFormat: ResponseFormat = 'concise',
 ): Promise<Record<string, unknown>> {
   const absDir = await validateDirectory(directory);
   const artifactPath = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, ARTIFACT_SCHEMA_INVENTORY);
+  const hint = 'call get_schema_inventory with responseFormat:"detailed" for the full inventory';
 
   try {
     const raw = await readFile(artifactPath, 'utf-8');
     const schemas = JSON.parse(raw);
     if (!Array.isArray(schemas)) throw new Error('malformed cached schema inventory');
-    return { cached: true, total: schemas.length, schemas };
+    return summarizeListInventory({ cached: true, total: schemas.length, schemas }, 'schemas', responseFormat, hint);
   } catch {
     // Artifact not present or malformed — run live extraction
   }
@@ -657,7 +661,7 @@ export async function handleGetSchemaInventory(
   const filePaths = repoMap.allFiles.map(f => f.path);
 
   const schemas = await extractSchemas(filePaths, absDir);
-  return { cached: false, total: schemas.length, schemas };
+  return summarizeListInventory({ cached: false, total: schemas.length, schemas }, 'schemas', responseFormat, hint);
 }
 
 // ============================================================================
@@ -669,16 +673,18 @@ export async function handleGetSchemaInventory(
  * Falls back to re-computing from source files if the artifact is missing.
  */
 export async function handleGetUIComponents(
-  directory: string
+  directory: string,
+  responseFormat: ResponseFormat = 'concise',
 ): Promise<Record<string, unknown>> {
   const absDir = await validateDirectory(directory);
   const artifactPath = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, ARTIFACT_UI_INVENTORY);
+  const hint = 'call get_ui_component_inventory with responseFormat:"detailed" for the full inventory';
 
   try {
     const raw = await readFile(artifactPath, 'utf-8');
     const components = JSON.parse(raw);
     if (!Array.isArray(components)) throw new Error('malformed cached UI inventory');
-    return { cached: true, total: components.length, components };
+    return summarizeListInventory({ cached: true, total: components.length, components }, 'components', responseFormat, hint);
   } catch {
     // Artifact not present or malformed — run live extraction
   }
@@ -698,7 +704,7 @@ export async function handleGetUIComponents(
   const filePaths = repoMap.allFiles.map(f => f.path);
 
   const components = await extractUIComponents(filePaths, absDir);
-  return { cached: false, total: components.length, components };
+  return summarizeListInventory({ cached: false, total: components.length, components }, 'components', responseFormat, hint);
 }
 
 // ============================================================================
@@ -710,16 +716,18 @@ export async function handleGetUIComponents(
  * Falls back to re-computing from source files if the artifact is missing.
  */
 export async function handleGetEnvVars(
-  directory: string
+  directory: string,
+  responseFormat: ResponseFormat = 'concise',
 ): Promise<Record<string, unknown>> {
   const absDir = await validateDirectory(directory);
   const artifactPath = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, ARTIFACT_ENV_INVENTORY);
+  const hint = 'call get_env_vars with responseFormat:"detailed" for the full inventory';
 
   try {
     const raw = await readFile(artifactPath, 'utf-8');
     const envVars = JSON.parse(raw);
     if (!Array.isArray(envVars)) throw new Error('malformed cached env inventory');
-    return { cached: true, total: envVars.length, envVars };
+    return summarizeListInventory({ cached: true, total: envVars.length, envVars }, 'envVars', responseFormat, hint);
   } catch {
     // Artifact not present or malformed — run live extraction
   }
@@ -739,7 +747,7 @@ export async function handleGetEnvVars(
   const filePaths = repoMap.allFiles.map(f => f.path);
 
   const envVars = await extractEnvVars(filePaths, absDir);
-  return { cached: false, total: envVars.length, envVars };
+  return summarizeListInventory({ cached: false, total: envVars.length, envVars }, 'envVars', responseFormat, hint);
 }
 
 // ============================================================================

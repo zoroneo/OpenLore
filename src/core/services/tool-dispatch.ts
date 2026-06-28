@@ -253,17 +253,17 @@ export async function dispatchTool(
     const { directory } = args as { directory: string };
     return handleGetRouteInventory(directory);
   } else if (name === 'get_middleware_inventory') {
-    const { directory } = args as { directory: string };
-    return handleGetMiddlewareInventory(directory);
+    const { directory, responseFormat } = args as { directory: string; responseFormat?: 'concise' | 'detailed' };
+    return handleGetMiddlewareInventory(directory, responseFormat);
   } else if (name === 'get_schema_inventory') {
-    const { directory } = args as { directory: string };
-    return handleGetSchemaInventory(directory);
+    const { directory, responseFormat } = args as { directory: string; responseFormat?: 'concise' | 'detailed' };
+    return handleGetSchemaInventory(directory, responseFormat);
   } else if (name === 'get_ui_component_inventory') {
-    const { directory } = args as { directory: string };
-    return handleGetUIComponents(directory);
+    const { directory, responseFormat } = args as { directory: string; responseFormat?: 'concise' | 'detailed' };
+    return handleGetUIComponents(directory, responseFormat);
   } else if (name === 'get_env_vars') {
-    const { directory } = args as { directory: string };
-    return handleGetEnvVars(directory);
+    const { directory, responseFormat } = args as { directory: string; responseFormat?: 'concise' | 'detailed' };
+    return handleGetEnvVars(directory, responseFormat);
   } else if (name === 'get_external_packages') {
     const { directory } = args as { directory: string };
     return handleGetExternalPackages(directory);

@@ -2,7 +2,7 @@
  * Spec 25 Phase C — progressive-disclosure helpers (P2–P4).
  */
 import { describe, it, expect } from 'vitest';
-import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote, normalizeResponseFormat, truncationReceipt } from './progressive.js';
+import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote, normalizeResponseFormat, truncationReceipt, summarizeListInventory } from './progressive.js';
 
 describe('expandHandle (P2)', () => {
   it('formats a deterministic name::filePath handle', () => {
@@ -85,5 +85,33 @@ describe('truncationReceipt', () => {
   it('returns a receipt when items were omitted, null otherwise', () => {
     expect(truncationReceipt(5, 'ask for more')).toEqual({ omitted: 5, detail: 'ask for more' });
     expect(truncationReceipt(0, 'ask for more')).toBeNull();
+  });
+});
+
+describe('summarizeListInventory (ConciseByDefaultDetailedOnRequest)', () => {
+  const big = { cached: true, total: 25, items: Array.from({ length: 25 }, (_, i) => ({ n: i })) };
+
+  it('detailed returns the result unchanged', () => {
+    expect(summarizeListInventory(big, 'items', 'detailed', 'more')).toBe(big);
+  });
+
+  it('concise keeps total + a sample + a truncation receipt', () => {
+    const out = summarizeListInventory(big, 'items', 'concise', 'ask detailed', 20) as Record<string, unknown>;
+    expect(out.responseFormat).toBe('concise');
+    expect(out.total).toBe(25);
+    expect((out.items as unknown[]).length).toBe(20);
+    expect((out.truncation as { omitted: number }).omitted).toBe(5);
+  });
+
+  it('concise with a small list returns the full list and no truncation', () => {
+    const small = { cached: false, total: 2, items: [{ n: 1 }, { n: 2 }] };
+    const out = summarizeListInventory(small, 'items', 'concise', 'ask detailed') as Record<string, unknown>;
+    expect((out.items as unknown[]).length).toBe(2);
+    expect(out.truncation).toBeUndefined();
+  });
+
+  it('is fail-soft: a non-array listKey returns the result unchanged', () => {
+    const weird = { cached: true, total: 0, items: 'oops' };
+    expect(summarizeListInventory(weird, 'items', 'concise', 'm')).toBe(weird);
   });
 });
