@@ -198,8 +198,8 @@ export async function dispatchTool(
       args as { directory: string; limit?: number; minFanIn?: number };
     return handleGetCriticalHubs(directory, limit, minFanIn);
   } else if (name === 'get_duplicate_report') {
-    const { directory } = args as { directory: string };
-    return handleGetDuplicateReport(directory);
+    const { directory, responseFormat } = args as { directory: string; responseFormat?: 'concise' | 'detailed' };
+    return handleGetDuplicateReport(directory, responseFormat);
   } else if (name === 'get_function_skeleton') {
     const { directory, filePath } = args as { directory: string; filePath: string };
     return handleGetFunctionSkeleton(directory, filePath);

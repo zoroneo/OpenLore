@@ -15,6 +15,17 @@
 >   job (set up · navigate · govern a change · inspect · multi-repo · advanced/experimental) via a faithful
 >   `groupedFormatHelp` override; uncategorized commands fall to an "Other" group so none is ever hidden.
 >   6 unit tests + a wiring guard.
+> - ✅ `mcp-handlers` / **ConciseByDefaultDetailedOnRequest** — SHIPPED (first increment + sub-parts).
+>   Added the shared verbosity mechanism in `progressive.ts` — `ResponseFormat` type,
+>   `normalizeResponseFormat()` (concise-by-default; anything but the exact `'detailed'` resolves to
+>   concise, never silently the large payload), and `truncationReceipt()` (omitted count + the exact
+>   call to get the rest). Applied to the most-verbose tool, `get_duplicate_report`: it now defaults to a
+>   concise summary (stats + top clone groups + truncation receipt) and returns the full report only on
+>   `responseFormat:"detailed"`. Dogfooded on this repo: **87% smaller** by default (3.0 KB vs 23.9 KB;
+>   68 clone groups → top 10 + a "58 omitted" receipt). The truncation-receipt and output-budget
+>   sub-parts were already satisfied across the surface (e.g. `coverage-gaps` `omitted`, `public-surface`
+>   `truncated`, `briefing-since` `buildTruncationReceipt` — an explicit "no silent cap" contract). The
+>   remaining verbose tools (the inventory family) adopt the shared helper opportunistically.
 > - ✅ `overview` / **DocumentationSingleSourceOfTruth** — SHIPPED. Added `docs/README.md`, a task→doc
 >   index mapping intent to the one canonical page (linked from the top-level README "Documentation").
 >   Designated canonical pages for the overlapping concepts and added cross-link banners on the
@@ -48,9 +59,12 @@
 > - ✅ `config` / **DefaultsTrackCurrentLineage** (model-pin clause) — already satisfied in `main`:
 >   `DEFAULT_ANTHROPIC_MODEL` is `claude-sonnet-4-6` and `mcp-tool-count-doc.test.ts` already guards the
 >   documented tool count. (Gap #7's "stale pin" claim was based on a stale design note; corrected below.)
-> - ⏳ Remaining requirements (DefaultSurfaceRevealsAllFaces — needs an agent benchmark;
->   ProgressiveCatalogDisclosure — needs host tool-search support; ConciseByDefaultDetailedOnRequest —
->   broad, per-tool concise/detailed design) — not yet implemented; each is independently shippable.
+> - ⏳ Remaining requirements: **DefaultSurfaceRevealsAllFaces** — needs an agent benchmark to clear the
+>   default flip (mechanism, the `substrate` preset, already exists); **ProgressiveCatalogDisclosure** —
+>   native `defer_loading` is a host/API feature outside the MCP server's control, and the server-side
+>   answer (the preset system + per-tool `annotations.family`) already ships, so this is effectively
+>   addressed pending host adoption. No further independently-shippable code remains in this change
+>   without those external dependencies.
 
 ## The gap
 
@@ -347,6 +361,16 @@ structured result.
 - **AND** the tool's result carries the not-ready flag and the rebuild command
 
 #### Requirement: ConciseByDefaultDetailedOnRequest
+
+> ✅ IMPLEMENTED (2026-06-28, PR #218) — shared mechanism + first verbose tool; sub-parts already met.
+> `progressive.ts` provides the reusable contract: `ResponseFormat`, `normalizeResponseFormat()`
+> (concise-by-default, never silently detailed), and `truncationReceipt()`. `get_duplicate_report` adopts
+> it — concise by default (stats + top clone groups + receipt), `responseFormat:"detailed"` for the full
+> report; the schema advertises the enum. Measured **87% byte reduction** by default on this repo. The
+> *truncation-receipt* and *output-budget* clauses were already satisfied surface-wide (`coverage-gaps`
+> `omitted`, `public-surface` `truncated`, `briefing-since` `buildTruncationReceipt` — an explicit "no
+> silent cap"). The remaining verbose tools (the inventory family) adopt the shared helper
+> opportunistically; the mechanism and default-concise contract are in place.
 
 Any tool whose detailed output can exceed a concise summary SHALL accept a `responseFormat` parameter with
 values `concise` and `detailed`, defaulting to `concise`. Each tool's response SHALL stay within the

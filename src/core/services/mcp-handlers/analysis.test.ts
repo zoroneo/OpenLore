@@ -200,7 +200,7 @@ describe('handleGetDuplicateReport', () => {
     expect(result.error).toContain('corrupted');
   });
 
-  it('returns parsed duplicates report', async () => {
+  it('returns an unrecognized-shape report unchanged (fail-soft) under either format', async () => {
     const payload = { groups: [{ files: ['a.ts', 'b.ts'], similarity: 0.9 }] };
     const dir = join(tmpDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
     await mkdir(dir, { recursive: true });
@@ -209,6 +209,65 @@ describe('handleGetDuplicateReport', () => {
     const result = await handleGetDuplicateReport(tmpDir) as typeof payload;
     expect(result.groups).toHaveLength(1);
     expect(result.groups[0].similarity).toBe(0.9);
+  });
+
+  // ConciseByDefaultDetailedOnRequest: a real { cloneGroups, stats } report.
+  function makeReport(groupCount: number) {
+    const cloneGroups = Array.from({ length: groupCount }, (_, i) => ({
+      type: 'exact',
+      similarity: 1,
+      lineCount: groupCount - i, // descending, so order is observable
+      instances: [{ file: `a${i}.ts`, name: `fn${i}` }, { file: `b${i}.ts`, name: `fn${i}` }],
+    }));
+    return { cloneGroups, stats: { totalFunctions: 100, duplicatedFunctions: groupCount * 2, duplicationRatio: 0.1, cloneGroupCount: groupCount } };
+  }
+
+  async function writeReport(report: unknown): Promise<void> {
+    const dir = join(tmpDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'duplicates.json'), JSON.stringify(report), 'utf-8');
+  }
+
+  it('defaults to a concise summary (stats + top groups), not the full report', async () => {
+    await writeReport(makeReport(3));
+    const { handleGetDuplicateReport } = await import('./analysis.js');
+    const result = await handleGetDuplicateReport(tmpDir) as {
+      responseFormat: string; totalCloneGroups: number; topGroups: unknown[]; stats: { cloneGroupCount: number }; cloneGroups?: unknown;
+    };
+    expect(result.responseFormat).toBe('concise');
+    expect(result.totalCloneGroups).toBe(3);
+    expect(result.topGroups).toHaveLength(3);
+    expect(result.stats.cloneGroupCount).toBe(3);
+    // Concise omits the full per-instance group array.
+    expect(result.cloneGroups).toBeUndefined();
+  });
+
+  it('returns the full report unchanged with responseFormat:"detailed"', async () => {
+    const report = makeReport(3);
+    await writeReport(report);
+    const { handleGetDuplicateReport } = await import('./analysis.js');
+    const result = await handleGetDuplicateReport(tmpDir, 'detailed') as typeof report;
+    expect(result.cloneGroups).toHaveLength(3);
+    expect(result.cloneGroups[0].instances).toHaveLength(2);
+  });
+
+  it('carries a truncation receipt when concise drops clone groups', async () => {
+    await writeReport(makeReport(15)); // > the 10-group concise cap
+    const { handleGetDuplicateReport } = await import('./analysis.js');
+    const result = await handleGetDuplicateReport(tmpDir) as {
+      topGroups: unknown[]; truncation?: { omitted: number; detail: string };
+    };
+    expect(result.topGroups).toHaveLength(10);
+    expect(result.truncation?.omitted).toBe(5);
+    expect(result.truncation?.detail).toMatch(/detailed/);
+  });
+
+  it('treats an unknown responseFormat value as concise (never silently detailed)', async () => {
+    await writeReport(makeReport(2));
+    const { handleGetDuplicateReport } = await import('./analysis.js');
+    // @ts-expect-error — exercising the runtime normalization of a bad value
+    const result = await handleGetDuplicateReport(tmpDir, 'verbose') as { responseFormat?: string };
+    expect(result.responseFormat).toBe('concise');
   });
 });
 

@@ -94,19 +94,35 @@ on their own branches/PRs and are checked off here as they ship.
 - [x] Cold-start self-bootstrap (`cold-start-bootstrap.ts`); schema-reset self-heal via detached
       `analyze --force` (`mcp-watcher.ts`). No code change required.
 
-## Remaining slices (not started — each independently shippable)
+## Slice 9 — `mcp-handlers` / ConciseByDefaultDetailedOnRequest  (SHIPPED — PR #218; first increment)
 
-- [ ] `mcp-quality` / DefaultSurfaceRevealsAllFaces — run the substrate-vs-navigation benchmark; flip default.
-- [ ] `mcp-quality` / ProgressiveCatalogDisclosure — adopt Tool Search / `defer_loading` where supported.
-- [ ] `mcp-quality` / NoRedundantConclusions (prose) — sibling "use X instead" in description prose
-      (already enforced as a CI guard in `tool-contract.test.ts`; prose-quality strengthening pending).
-- [ ] `mcp-handlers` / ConciseByDefaultDetailedOnRequest — `responseFormat` + truncation receipts
-      (needs per-tool concise/detailed design; broad surface).
+- [x] Shared mechanism in `progressive.ts`: `ResponseFormat` type, `normalizeResponseFormat()`
+      (concise-by-default; only the exact `'detailed'` opts into the full payload), `truncationReceipt()`.
+- [x] Applied to `get_duplicate_report` (the most-verbose tool): concise summary by default
+      (stats + top 10 clone groups + truncation receipt); `responseFormat:"detailed"` returns the full
+      report. Dispatch + inputSchema (enum) + description updated.
+- [x] Tests: `progressive.test.ts` (normalize/receipt units) + `analysis.test.ts` (concise default,
+      detailed pass-through, truncation receipt, bad-value→concise, fail-soft on unknown shape).
+- [x] Dogfood (real stdio): 87% smaller by default (3.0 KB vs 23.9 KB; 68 groups → top 10 + "58 omitted").
+- [x] Sub-parts already satisfied surface-wide: truncation receipts (`coverage-gaps` `omitted`,
+      `public-surface` `truncated`, `briefing-since` `buildTruncationReceipt` — "no silent cap") and
+      output budgets. Remaining verbose tools (inventory family) adopt the helper opportunistically.
 
-## Verification (PR #218, after slices 1, 2, 5, 6, 7)
+## Remaining slices (blocked on external dependencies — no clean code left in this change)
+
+- [ ] `mcp-quality` / DefaultSurfaceRevealsAllFaces — the `substrate` preset (mechanism) exists; the
+      default flip is **benchmark-gated** and the agent benchmark has not been run here.
+- [ ] `mcp-quality` / ProgressiveCatalogDisclosure — native `defer_loading` is a host/API feature, not an
+      MCP-server capability; the server-side answer (preset system + `annotations.family`) already ships.
+- [x] `mcp-quality` / NoRedundantConclusions (prose) — the sibling cross-reference is ALREADY ENFORCED by
+      `tool-contract.test.ts` ("each member names at least one near-sibling in its own description"); the
+      remaining "lead-with-action" prose quality is not deterministically testable and is left as-is.
+
+## Verification (PR #218, after slices 1, 2, 5, 6, 7, 9)
 
 - [x] `npm run build` clean; `tsc --noEmit` clean.
-- [x] `vitest run src examples` green — 283 files, 5575 passed, 2 skipped.
+- [x] `vitest run src examples` green — 283 files, 5581 passed, 2 skipped (the lone intermittent
+      `mcp-watcher-parity` flake under full-suite load is pre-existing and passes in isolation).
 - [x] Value preserved: no tool/command/preset/language removed (a tool was renamed with a permanent
       alias — the prior name still works); zero required keys unchanged; no LLM, no network, no artifact.
 - [ ] `openspec validate refine-happy-path-and-defaults` (run at archive time).

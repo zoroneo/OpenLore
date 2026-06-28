@@ -48,7 +48,7 @@ import { readOpenLoreConfig } from '../config-manager.js';
 import { validateDirectory, readCachedContext, isCacheFresh, safeJoin, safeOpenspecDir } from './utils.js';
 import { buildWeightedAdjacency, weightedBfs } from './graph.js';
 import { personalizedPageRank } from '../../analyzer/personalized-pagerank.js';
-import { applyTokenBudget } from './progressive.js';
+import { applyTokenBudget, normalizeResponseFormat, truncationReceipt, type ResponseFormat } from './progressive.js';
 import type { SerializedCallGraph } from '../../analyzer/call-graph.js';
 import type { MappingArtifact } from '../../generator/mapping-generator.js';
 import { openloreAudit } from '../../../api/audit.js';
@@ -180,10 +180,21 @@ export async function handleGetRefactorReport(directory: string): Promise<unknow
   return analyzeForRefactoring(ctx.callGraph as SerializedCallGraph);
 }
 
+/** How many clone groups the concise duplicate report keeps before truncating. */
+const DUPLICATE_REPORT_CONCISE_GROUPS = 10;
+
 /**
  * Read the cached duplicate detection result.
+ *
+ * `responseFormat` (default `concise`) controls verbosity
+ * (ConciseByDefaultDetailedOnRequest): a whole-repo clone report can be large, so
+ * the default returns the stats plus the top clone groups (ranked by line count)
+ * with a truncation receipt; `detailed` returns the full report unchanged.
  */
-export async function handleGetDuplicateReport(directory: string): Promise<unknown> {
+export async function handleGetDuplicateReport(
+  directory: string,
+  responseFormat: ResponseFormat = 'concise',
+): Promise<unknown> {
   const absDir = await validateDirectory(directory);
   const cachePath = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, 'duplicates.json');
 
@@ -198,11 +209,45 @@ export async function handleGetDuplicateReport(directory: string): Promise<unkno
     };
   }
 
+  let parsed: unknown;
   try {
-    return JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch {
     return { error: 'Duplicate report cache is corrupted. Re-run analyze_codebase.' };
   }
+
+  const format = normalizeResponseFormat(responseFormat);
+  if (format === 'detailed') return parsed;
+
+  // Concise (default): summarize the clone groups. Fail-soft — if the cache is not
+  // the expected { cloneGroups, stats } shape, return it unchanged rather than drop data.
+  const obj = parsed as { cloneGroups?: unknown; stats?: unknown };
+  if (!Array.isArray(obj.cloneGroups)) return parsed;
+
+  const groups = obj.cloneGroups as Array<{
+    type?: string;
+    similarity?: number;
+    lineCount?: number;
+    instances?: Array<{ file?: string; name?: string }>;
+  }>;
+  const topGroups = groups.slice(0, DUPLICATE_REPORT_CONCISE_GROUPS).map((g) => ({
+    type: g.type,
+    similarity: g.similarity,
+    lineCount: g.lineCount,
+    instanceCount: Array.isArray(g.instances) ? g.instances.length : 0,
+    files: Array.isArray(g.instances) ? g.instances.map((i) => i.file).filter(Boolean) : [],
+  }));
+  const receipt = truncationReceipt(
+    groups.length - topGroups.length,
+    'call get_duplicate_report with responseFormat:"detailed" for the full report',
+  );
+  return {
+    responseFormat: 'concise',
+    stats: obj.stats,
+    totalCloneGroups: groups.length,
+    topGroups,
+    ...(receipt ? { truncation: receipt } : {}),
+  };
 }
 
 /**

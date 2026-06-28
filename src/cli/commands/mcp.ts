@@ -280,6 +280,8 @@ export const TOOL_DEFINITIONS = [
       'Type 3 (near-clones with Jaccard similarity ≥ 0.7 on token n-grams). ' +
       'This is the WHOLE-REPO audit of every clone group; for the pre-write "does a near-duplicate ' +
       'of THIS function already exist?" one-vs-all query, use find_clones instead. ' +
+      'Returns a concise summary (stats + top clone groups + a truncation receipt) by default; ' +
+      'pass responseFormat:"detailed" for the full report. ' +
       'Run analyze_codebase first.',
     inputSchema: {
       type: 'object',
@@ -287,6 +289,11 @@ export const TOOL_DEFINITIONS = [
         directory: {
           type: 'string',
           description: 'Absolute path to the project directory (must have been analyzed first)',
+        },
+        responseFormat: {
+          type: 'string',
+          enum: ['concise', 'detailed'],
+          description: 'Output verbosity. "concise" (default): stats + the top clone groups + a truncation receipt. "detailed": the full report.',
         },
       },
       required: ['directory'],

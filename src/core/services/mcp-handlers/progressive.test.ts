@@ -2,7 +2,7 @@
  * Spec 25 Phase C — progressive-disclosure helpers (P2–P4).
  */
 import { describe, it, expect } from 'vitest';
-import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote } from './progressive.js';
+import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote, normalizeResponseFormat, truncationReceipt } from './progressive.js';
 
 describe('expandHandle (P2)', () => {
   it('formats a deterministic name::filePath handle', () => {
@@ -68,5 +68,22 @@ describe('collapseExactDuplicates (P3)', () => {
 describe('omissionNote', () => {
   it('states the count and the expansion hint', () => {
     expect(omissionNote(3, 'raise tokenBudget')).toBe('3 more result(s) omitted to fit tokenBudget — raise tokenBudget');
+  });
+});
+
+describe('normalizeResponseFormat (ConciseByDefaultDetailedOnRequest)', () => {
+  it('returns "detailed" only for the exact string, else concise', () => {
+    expect(normalizeResponseFormat('detailed')).toBe('detailed');
+    expect(normalizeResponseFormat('concise')).toBe('concise');
+    expect(normalizeResponseFormat(undefined)).toBe('concise');
+    expect(normalizeResponseFormat('verbose')).toBe('concise');
+    expect(normalizeResponseFormat(null)).toBe('concise');
+  });
+});
+
+describe('truncationReceipt', () => {
+  it('returns a receipt when items were omitted, null otherwise', () => {
+    expect(truncationReceipt(5, 'ask for more')).toEqual({ omitted: 5, detail: 'ask for more' });
+    expect(truncationReceipt(0, 'ask for more')).toBeNull();
   });
 });
