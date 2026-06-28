@@ -64,8 +64,16 @@
 > - ✅ `config` / **DefaultsTrackCurrentLineage** (model-pin clause) — already satisfied in `main`:
 >   `DEFAULT_ANTHROPIC_MODEL` is `claude-sonnet-4-6` and `mcp-tool-count-doc.test.ts` already guards the
 >   documented tool count. (Gap #7's "stale pin" claim was based on a stale design note; corrected below.)
-> - 🔄 `mcp-quality` / **DefaultSurfaceRevealsAllFaces** — GATE RUN & CLEARED; flip recommended, awaiting
->   sign-off on the published-default change. All three gate quantities now measured and favor the flip:
+> - ✅ `mcp-quality` / **DefaultSurfaceRevealsAllFaces** — SHIPPED. The default MCP surface is now the
+>   `substrate` preset (13 tools, both faces) — `LEAN_DEFAULT_PRESET` flipped `navigation` → `substrate`,
+>   recorded as decision **c79ec7ca / ADR-0023 (supersedes ADR-0022 a6c916ed)**. Validated by the full
+>   3-phase methodology: deterministic token-economy + face-coverage (`bench:surface`), selection accuracy
+>   (`bench:selection`, 2 passes: 90/100 vs 80/0), AND end-to-end task COMPLETION (`bench:completion`,
+>   **2 models — sonnet + the weaker haiku — × both repo tiers**: 100% correctness everywhere, NO
+>   regression, substrate cheaper on 3 of 4 cells). `navigation` stays a one-flag reversible escape
+>   (`--preset navigation`). Guards, payload budgets, BREADTH_POINTER, README/CLAUDE.md/docs all updated to
+>   the substrate default; a default `openlore install` now wires `--preset substrate` (dogfooded).
+> - (historical) GATE RUN & CLEARED, then executed. All three gate quantities measured and favored the flip:
 >   (1) TOKEN ECONOMY (`scripts/bench-preset-surface.ts`) — substrate ~4.5k tokens, +~1.2k over navigation,
 >   within the ~10k tool-search threshold; (2) FACE COVERAGE — substrate reveals all four faces
 >   (navigate/change/remember/verify), navigation only navigate (CI-guarded in `mcp-presets.test.ts`);
@@ -429,12 +437,13 @@ extends, and SHALL NOT weaken, the existing token-budget and `MAX_PROVENANCE_EDG
 > default is navigate-only, so the flip is both meaningful and structurally ready. The third quantity —
 > *selection accuracy* — requires a live agent over a task corpus (protocol documented in the harness).
 >
-> **Update (2026-06-28): the agent benchmark has now been RUN (Claude Code CLI, `scripts/bench-preset-selection.ts`,
-> 2 reproducible passes) and CLEARED.** Substrate scored **90%** vs navigation **80%** on shared tool
-> selection (NO regression — better) and **100%** vs **0%** on governance-face tasks. With all three gate
-> quantities favoring the flip and no regression shown, the default is eligible to move to `substrate`.
-> Executing the one-line `LEAN_DEFAULT_PRESET` flip (+ its guard/doc/ADR-0022-supersession updates) is held
-> for explicit sign-off, as a change to the published product default is outward-facing.
+> **✅ DONE (2026-06-28): the gate ran in full and the default was flipped to `substrate`.** Evidence:
+> selection accuracy (`bench-preset-selection.ts`, 2 passes: substrate 90% vs navigation 80% shared, 100%
+> vs 0% governance) AND end-to-end task completion (`bench-preset-completion.ts`, sonnet + the weaker haiku
+> × both repo tiers: 100% correctness everywhere, no regression, substrate cheaper on 3 of 4 cells), atop
+> the deterministic token-economy + face-coverage gate. `LEAN_DEFAULT_PRESET` is now `substrate`; the flip
+> is recorded as decision c79ec7ca / ADR-0023 superseding ADR-0022 (a6c916ed). `--preset navigation`
+> remains a one-flag reversible escape.
 
 The active out-of-box default tool surface SHALL expose at least one tool from each high-value face of the
 substrate — **navigate**, **recall** (the remember family's read), **verify**, and **change-weigh** — so

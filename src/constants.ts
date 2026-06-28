@@ -207,14 +207,19 @@ export const MCP_TOOL_MAX_BYTES = 256 * 1024;
 
 // ── MCP tool-surface defaults (change: default-to-lean-tool-surface) ─────────────
 /**
- * The lean default MCP surface wired when no `--preset` is given: the Spec 14
- * benchmark-winning `navigation` preset (graph-traversal core). Exposing the full
- * registry by default contradicts both that result and the mcp-quality
- * minimize-tool-surface rule, so breadth is opt-in. Defined here — not in mcp.ts —
- * so the lightweight install adapters can name the default without importing the
- * heavy MCP module. Single source of truth for the preset name.
+ * The default MCP surface wired when no `--preset` is given: the `substrate`
+ * preset — the navigation graph-traversal core PLUS the governance READS that make
+ * OpenLore both-faced out of the box (recall + verify_claim + blast_radius). Flipped
+ * from `navigation` after the DefaultSurfaceRevealsAllFaces benchmark (decision
+ * c79ec7ca, superseding ADR-0022 a6c916ed): across two models and both repo tiers the
+ * wider surface showed NO task-completion or selection-accuracy regression and stayed
+ * within the token-economy budget, while navigation alone hid the governance face from
+ * a default install. Breadth beyond substrate stays opt-in (`--preset full`); the lean
+ * navigate-only core stays a one-flag reversible escape (`--preset navigation`).
+ * Defined here — not in mcp.ts — so the lightweight install adapters can name the
+ * default without importing the heavy MCP module. Single source of truth.
  */
-export const LEAN_DEFAULT_PRESET = 'navigation';
+export const LEAN_DEFAULT_PRESET = 'substrate';
 /** Explicit selector that restores the full `TOOL_DEFINITIONS` surface (and its alias). */
 export const FULL_PRESET = 'full';
 export const FULL_PRESET_ALIAS = 'all';

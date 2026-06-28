@@ -113,7 +113,7 @@ describe('feature-inventory', () => {
       JSON.stringify({ mcpServers: { openlore: { command: 'npx', args: ['--yes', 'openlore', 'mcp'] } } })
     );
     const inv = await collectFeatureInventory(dir);
-    expect(byId(inv.features, 'mcp-tool-preset').detail).toMatch(/navigation/);
+    expect(byId(inv.features, 'mcp-tool-preset').detail).toMatch(/substrate/);
   });
 
   it('detects architecture invariants from .openlore/architecture.json', async () => {

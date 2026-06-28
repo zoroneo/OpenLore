@@ -239,7 +239,7 @@ A reviewer doesn't even need an agent: **`openlore review --base main`** compose
 
 ## Agent Cheat Sheet
 
-The default MCP surface is the lean **`navigation`** preset — 10 tools, the Spec 14 benchmark winner; the full surface of **72 tools** is opt-in via `--preset full`. Every tool declares one of six **capability families** — `navigate` · `change` · `remember` · `verify` · `coordinate` · `federate` — surfaced in its MCP `annotations.family`, so a wide surface stays discoverable by family rather than as a flat list. Reach for the right tool by situation:
+The default MCP surface is the **`substrate`** preset — 13 tools: the navigation graph-traversal core plus the three highest-value governance reads (`recall`, `verify_claim`, `blast_radius`), so an agent is both-faced out of the box. It cleared the DefaultSurfaceRevealsAllFaces benchmark — no task-completion or tool-selection regression vs. the lean core across two models and both repo tiers. The lean navigate-only **`navigation`** preset (10 tools) stays a one-flag escape (`--preset navigation`), and the full surface of **72 tools** is opt-in via `--preset full`. Every tool declares one of six **capability families** — `navigate` · `change` · `remember` · `verify` · `coordinate` · `federate` — surfaced in its MCP `annotations.family`, so a wide surface stays discoverable by family rather than as a flat list. Reach for the right tool by situation:
 
 | Situation | Tool |
 |-----------|------|
@@ -455,7 +455,7 @@ OpenLore's architecture is governed by the same decision system it ships. These 
 | **Decisions project onto the graph the same way** | A parser→projector split turns the decision store into `decision::` nodes + `affects` edges — governance becomes a deterministic graph join | `src/core/decisions/project.ts` |
 | **EdgeStore uses SCHEMA_VERSION rebuild-on-bump, not migrations** | The graph is fully derivable from source, so a schema change drops and rebuilds — no migration code, no drift | `src/core/services/edge-store.ts` |
 | **BM25 keyword retrieval is the zero-network floor** | `orient`/`search_code` work with no API key or embedding server; dense embeddings are an optional upgrade | Spec 06 |
-| **The default MCP surface is the lean `navigation` preset** | A lean graph-traversal surface wins the Spec 14 agent benchmark, so `openlore install` wires it by default; the full set is one opt-in away | Spec 14 |
+| **The default MCP surface is the `substrate` preset (both faces)** | The navigation core plus the top governance reads; cleared the DefaultSurfaceRevealsAllFaces benchmark (no regression across two models / both tiers), so `openlore install` wires it by default. Lean `navigation` and the full set are one opt-in away | ADR-0023 (supersedes ADR-0022) |
 
 This is the live decision log the pre-commit gate enforces. See [docs/governance-dogfooding.md](docs/governance-dogfooding.md).
 

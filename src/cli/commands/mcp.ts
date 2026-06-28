@@ -2278,12 +2278,12 @@ interface McpServerOptions {
  * `openlore install`. Adds zero tool schemas (change: default-to-lean-tool-surface).
  */
 export const BREADTH_POINTER =
-  'OpenLore is running its lean default tool surface (the navigation core). ' +
-  'More tools are available behind named presets — both faces of the substrate ' +
-  '(`--preset substrate` = navigation + recall + verify_claim + blast_radius), ' +
-  'governance (`--preset minimal`), memory (`--preset memory`), claim verification ' +
-  '(`--preset verify`), multi-repo federation (`--preset federation`), or the full ' +
-  'surface (`--preset full`). Re-wire with `openlore install --preset <name>`.';
+  'OpenLore is running its default tool surface (the substrate core: navigate + ' +
+  'recall + verify_claim + blast_radius — both faces of the substrate). More tools ' +
+  'are available behind named presets — the full surface (`--preset full`), multi-repo ' +
+  'federation (`--preset federation`), parallel-work coordination (`--preset coordination`), ' +
+  'or the lean navigate-only core (`--preset navigation`). Re-wire with ' +
+  '`openlore install --preset <name>`.';
 
 /**
  * True when the active surface IS the lean default (the `navigation` preset) —

@@ -63,9 +63,9 @@ describe('MCP tool presets', () => {
   // change: unify-navigation-and-governance-substrate — the `substrate` preset spans BOTH
   // faces: the navigation graph-traversal core plus the three highest-value governance
   // READS (recall, verify_claim, blast_radius). It holds reads only — no remember /
-  // record_decision write, no commit gate. The active default stays `navigation` until the
-  // benchmark clears `substrate` (ADR-0022 evidence-backed default), so `substrate` must
-  // NOT be the no-selector default surface.
+  // record_decision write, no commit gate. `substrate` is now the no-selector DEFAULT
+  // surface (decision c79ec7ca superseding ADR-0022, after the DefaultSurfaceRevealsAllFaces
+  // benchmark cleared it across two models and both repo tiers with no regression).
   it('substrate preset = navigation core + recall + verify_claim + blast_radius (reads only)', () => {
     const tools = selectActiveTools(TOOL_DEFINITIONS, { preset: 'substrate' }).map(t => t.name);
     expect(new Set(tools)).toEqual(new Set([...NAV, 'recall', 'verify_claim', 'blast_radius']));
@@ -75,20 +75,23 @@ describe('MCP tool presets', () => {
     }
   });
 
-  it('substrate is a selectable preset, never the no-selector default (default stays navigation)', () => {
-    // Until the benchmark clears the wider default, no-selector resolves to navigation.
+  it('substrate IS the no-selector default surface (the benchmark-cleared flip)', () => {
     expect(resolvePresetName({})).toBe(LEAN_DEFAULT_PRESET);
-    expect(LEAN_DEFAULT_PRESET).toBe('navigation');
-    expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).not.toContain('recall');
-    expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).not.toContain('verify_claim');
+    expect(LEAN_DEFAULT_PRESET).toBe('substrate');
+    // The default now reveals the governance READS that navigation alone hid.
+    expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).toContain('recall');
+    expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).toContain('verify_claim');
+    expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).toContain('blast_radius');
+    // governance WRITES / gate still require an explicit wider preset.
+    expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).not.toContain('record_decision');
   });
 
-  // DefaultSurfaceRevealsAllFaces (change: refine-happy-path-and-defaults): the
-  // candidate default `substrate` must be FACE-COMPLETE — it exposes at least one tool
-  // from each high-value face (navigate + remember + verify + change) — while the current
-  // lean default does not. This is the structural precondition the benchmark-gated flip
-  // depends on; the deterministic token-economy + face-coverage evidence is produced by
-  // scripts/bench-preset-surface.ts.
+  // DefaultSurfaceRevealsAllFaces (change: refine-happy-path-and-defaults): the default
+  // `substrate` surface is FACE-COMPLETE — it exposes at least one tool from each
+  // high-value face (navigate + remember + verify + change) — whereas the lean
+  // navigate-only `navigation` preset does not. The token-economy + face-coverage
+  // evidence is produced by scripts/bench-preset-surface.ts; the task-completion +
+  // selection evidence by scripts/bench-preset-{completion,selection}.ts.
   const facesOf = (preset: string): Set<CapabilityFamily> => {
     const fams = new Set<CapabilityFamily>();
     for (const t of selectActiveTools(TOOL_DEFINITIONS, { preset })) {
@@ -99,17 +102,17 @@ describe('MCP tool presets', () => {
   };
   const HIGH_VALUE_FACES: CapabilityFamily[] = ['navigate', 'remember', 'verify', 'change'];
 
-  it('substrate reveals all high-value faces (navigate + remember + verify + change)', () => {
-    const faces = facesOf('substrate');
+  it('the default (substrate) surface reveals all high-value faces (navigate + remember + verify + change)', () => {
+    const faces = facesOf(LEAN_DEFAULT_PRESET);
     for (const face of HIGH_VALUE_FACES) {
-      expect(faces.has(face), `substrate must expose the "${face}" face`).toBe(true);
+      expect(faces.has(face), `the default surface must expose the "${face}" face`).toBe(true);
     }
   });
 
-  it('the lean navigation default reveals only the navigate face (so the flip adds value)', () => {
-    const faces = facesOf(LEAN_DEFAULT_PRESET);
+  it('the lean navigation preset reveals only the navigate face (so the substrate default adds value)', () => {
+    const faces = facesOf('navigation');
     expect([...faces]).toEqual(['navigate']);
-    // The flip to substrate is meaningful precisely because it adds the missing faces.
+    // The default is substrate precisely because navigation alone hid the other faces.
     expect(HIGH_VALUE_FACES.every(f => faces.has(f))).toBe(false);
   });
 
@@ -232,11 +235,11 @@ describe('MCP tool presets', () => {
   // change: default-to-lean-tool-surface — the default was inverted. No selector
   // now resolves to the lean default surface (the navigation preset), NOT the full
   // registry. The full surface is opt-in via --preset full / --all-tools.
-  it('no selector exposes the LEAN DEFAULT surface (navigation), not the full set', () => {
+  it('no selector exposes the DEFAULT surface (substrate), not the full set', () => {
     const tools = selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name);
-    expect(new Set(tools)).toEqual(new Set(NAV));
+    expect(new Set(tools)).toEqual(new Set([...NAV, 'recall', 'verify_claim', 'blast_radius']));
     expect(tools.length).toBeLessThan(TOOL_DEFINITIONS.length); // strictly smaller than full
-    expect(LEAN_DEFAULT_PRESET).toBe('navigation'); // the lean default IS the navigation preset
+    expect(LEAN_DEFAULT_PRESET).toBe('substrate'); // the default IS the substrate preset
   });
 
   it('--preset full / --all-tools / --preset all expose the full TOOL_DEFINITIONS surface', () => {
@@ -280,14 +283,14 @@ describe('MCP tool presets', () => {
   });
 
   // change: add-structural-claim-verification / add-decision-reference-claim-verification —
-  // verify_claim (incl. the decision-current kind) is gated to the opt-in `verify` preset,
-  // never the lean default/navigation surface. Guards the spec claim that the capability is
-  // "registered only in an opt-in preset (verify)".
-  it('verify_claim is gated to the verify preset, never in the default/navigation surface', () => {
+  // verify_claim (incl. the decision-current kind) rides the `verify` preset AND the
+  // substrate default (both-faces reads), but NOT the lean navigate-only `navigation` preset.
+  it('verify_claim is in the verify preset and the substrate default, but not the lean navigation preset', () => {
     const verify = selectActiveTools(TOOL_DEFINITIONS, { preset: 'verify' }).map(t => t.name);
     expect(new Set(verify)).toEqual(new Set(['orient', 'search_code', 'verify_claim']));
     expect(selectActiveTools(TOOL_DEFINITIONS, { preset: 'navigation' }).map(t => t.name)).not.toContain('verify_claim');
-    expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).not.toContain('verify_claim');
+    // The default surface is now substrate, which DOES include verify_claim.
+    expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).toContain('verify_claim');
   });
 
   // The decision-reference clause: the verify_claim schema must advertise the
@@ -308,8 +311,8 @@ describe('MCP tool presets', () => {
 // breadth-pointer decision, so they can never disagree.
 // ============================================================================
 describe('resolvePresetName (canonical selector resolution)', () => {
-  it('no selector resolves to the lean default (navigation)', () => {
-    expect(resolvePresetName({})).toBe('navigation');
+  it('no selector resolves to the default (substrate)', () => {
+    expect(resolvePresetName({})).toBe('substrate');
     expect(resolvePresetName({})).toBe(LEAN_DEFAULT_PRESET);
   });
   it('full-surface selectors all resolve to "full"', () => {
@@ -335,14 +338,15 @@ describe('resolvePresetName (canonical selector resolution)', () => {
 // wires the default). Any other surface is a deliberate different choice → no
 // pointer. It rides the MCP instructions channel and adds zero tool schemas.
 // ============================================================================
-describe('breadth discoverability on the lean default surface', () => {
-  it('the pointer fires for the lean default surface, however it was selected', () => {
+describe('breadth discoverability on the default surface', () => {
+  it('the pointer fires for the default surface, however it was selected', () => {
     expect(leanDefaultActive({})).toBe(true);                       // bare `openlore mcp`
-    expect(leanDefaultActive({ preset: 'navigation' })).toBe(true); // how install wires it
+    expect(leanDefaultActive({ preset: 'substrate' })).toBe(true);  // how install wires the default
   });
 
   it('the pointer is suppressed on every other (deliberately chosen) surface', () => {
     expect(leanDefaultActive({ minimal: true })).toBe(false);
+    expect(leanDefaultActive({ preset: 'navigation' })).toBe(false); // the lean core is now a deliberate downgrade
     expect(leanDefaultActive({ preset: 'memory' })).toBe(false);
     expect(leanDefaultActive({ preset: 'verify' })).toBe(false);
     expect(leanDefaultActive({ preset: 'federation' })).toBe(false);
@@ -353,8 +357,8 @@ describe('breadth discoverability on the lean default surface', () => {
 
   it('the pointer names how to opt into breadth, every option in copy-pasteable --preset form', () => {
     expect(BREADTH_POINTER).toMatch(/--preset full/);
-    expect(BREADTH_POINTER).toMatch(/--preset memory/);
-    expect(BREADTH_POINTER).toMatch(/--preset minimal/); // governance, not the bare --minimal flag
+    expect(BREADTH_POINTER).toMatch(/--preset federation/);
+    expect(BREADTH_POINTER).toMatch(/--preset navigation/); // the lean navigate-only escape
     expect(BREADTH_POINTER).toMatch(/openlore install --preset/);
     // Every `--preset <name>` the pointer advertises must resolve to a real surface.
     for (const m of BREADTH_POINTER.matchAll(/--preset (\w+)/g)) {
@@ -362,11 +366,11 @@ describe('breadth discoverability on the lean default surface', () => {
     }
   });
 
-  it('the pointer adds no tool schemas — the lean default surface size is unchanged by it', () => {
+  it('the pointer adds no tool schemas — the default surface size is unchanged by it', () => {
     // The pointer rides the instructions channel; the active tool set is exactly
-    // the navigation preset regardless.
+    // the substrate default preset regardless.
     expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).toEqual(
-      selectActiveTools(TOOL_DEFINITIONS, { preset: 'navigation' }).map(t => t.name),
+      selectActiveTools(TOOL_DEFINITIONS, { preset: 'substrate' }).map(t => t.name),
     );
   });
 });
@@ -578,17 +582,18 @@ describe('tools/list payload budget (spec-28)', () => {
     expect(payloadBytes({ preset: 'full' })).toBeLessThan(88_000);
   });
 
-  it('the lean DEFAULT surface (no selector) is the lean navigation payload, not the full one', () => {
-    // No selector now pays the navigation budget, not the ~46 KB full prefix —
-    // this is the per-session byte win the change ships. Nav ceiling bumped
-    // 13_300 → 13_700 when the `family` annotation was added to every tool (the lean
-    // surface's 10 tools each carry `"family":"navigate"`) — conscious decision.
-    expect(payloadBytes({})).toBe(payloadBytes({ preset: 'navigation' }));
-    expect(payloadBytes({})).toBeLessThan(13_700);
+  it('the DEFAULT surface (no selector) is the substrate payload, well under the full one', () => {
+    // No selector now pays the substrate budget (~18 KB), not the ~85 KB full prefix.
+    // Substrate adds three governance-read tools (recall, verify_claim, blast_radius)
+    // to the navigation core; the benchmark (decision c79ec7ca) showed the wider default
+    // pays for itself with no task-completion or selection regression. Ceiling sits just
+    // above the measured substrate size with ~1 tool of headroom — a conscious decision.
+    expect(payloadBytes({})).toBe(payloadBytes({ preset: 'substrate' }));
+    expect(payloadBytes({})).toBeLessThan(19_000);
     expect(payloadBytes({})).toBeLessThan(payloadBytes({ preset: 'full' }));
   });
 
-  it('navigation preset stays lean (the low-overhead surface that wins the benchmark)', () => {
+  it('navigation preset stays lean (the low-overhead navigate-only escape)', () => {
     expect(payloadBytes({ preset: 'navigation' })).toBeLessThan(13_700);
   });
 

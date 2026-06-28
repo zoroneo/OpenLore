@@ -42,13 +42,15 @@
 
 For all other cases (reading a file, grepping, listing files) use native tools directly.
 
-> **The default MCP surface is lean (change `default-to-lean-tool-surface`):** a bare
-> `openlore mcp` / `openlore install` wires the 10-tool `navigation` preset — the Spec 14
-> benchmark winner — not all 72 tools. Breadth is opt-in: `--preset substrate` (both faces — the
-> navigation core + `recall` + `verify_claim` + `blast_radius`), `--minimal` (governance core),
+> **The default MCP surface is the `substrate` preset (change `refine-happy-path-and-defaults`):** a bare
+> `openlore mcp` / `openlore install` wires the 13-tool `substrate` preset — both faces of the substrate
+> (the `navigation` core + `recall` + `verify_claim` + `blast_radius`) — not all 72 tools. It cleared the
+> DefaultSurfaceRevealsAllFaces benchmark (no task-completion or selection regression across two models /
+> both tiers; decision c79ec7ca / ADR-0023, superseding ADR-0022). Narrower/wider is opt-in: the lean
+> navigate-only `navigation` preset (10 tools, the one-flag escape), `--minimal` (governance core),
 > `--preset memory` / `verify` / `federation` / `coordination`, or the full surface via `--preset full`
-> (`--all-tools`). The decisions-gate workflow below needs `record_decision`, which is **not**
-> in the lean default — install with `--preset full` (or `--minimal`) on repos that gate commits.
+> (`--all-tools`). The decisions-gate workflow below needs `record_decision`, which is **not** in the
+> default — install with `--preset full` (or `--minimal`) on repos that gate commits.
 
 > **OpenLore is one substrate with two faces (change `unify-navigation-and-governance-substrate`).**
 > Navigation (read the graph) and governance/memory (anchor facts, weigh changes) share one graph, one
@@ -59,7 +61,8 @@ For all other cases (reading a file, grepping, listing files) use native tools d
 > list. Adjacent tools in one family are NOT merged when each returns a distinct conclusion; each names
 > its near-sibling instead (`NoRedundantConclusions`). `tool-contract.test.ts` fails CI if a new tool
 > forgets a family, or an adjacent tool fails to cross-reference its sibling. The active out-of-box
-> default stays `navigation`; `substrate` flips to default only on benchmark evidence (ADR-0022).
+> default is `substrate` (both faces) — flipped from `navigation` on benchmark evidence (ADR-0023,
+> superseding ADR-0022); `--preset navigation` remains the lean navigate-only escape.
 
 > **Memory tools (`remember`/`recall`) are opt-in:** they ship in the `memory` preset
 > (`openlore mcp --preset memory`), not the default or `minimal` surface, per the
@@ -138,3 +141,21 @@ Present to the user:
 If yes: run `openlore decisions --consolidate --gate` and handle the result.
 If no: retry with `git commit --no-verify` to skip the gate.
 <!-- end-openlore-decisions-instructions -->
+
+<!-- BEGIN OPENLORE (managed — edits inside this block will be overwritten) -->
+<!-- openlore-fingerprint: 25cdd746ebf39b56 -->
+This project uses OpenLore for persistent architectural memory.
+
+ALWAYS call `orient()` (via the openlore MCP server, or `npx openlore orient --json`)
+before reading source files when starting a new task. This returns the relevant
+functions, callers, spec sections, and insertion points for the task at hand —
+one structural lookup instead of file-by-file rediscovery.
+
+OpenLore prefixes tool responses with a brief, factual freshness note (the
+Epistemic Lease) once your cached context has aged or the repo has moved since
+your last `orient()`. It is informational — re-`orient()` if you are relying on
+cached cross-module structure; otherwise carry on.
+
+For the MCP setup, ensure `openlore mcp` is configured as an MCP server.
+See https://github.com/clay-good/OpenLore for details.
+<!-- END OPENLORE -->

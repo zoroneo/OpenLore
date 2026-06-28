@@ -71,7 +71,7 @@ describe('openlore install (end-to-end)', () => {
     const mcp = JSON.parse(await readFile(join(dir, '.mcp.json'), 'utf8'));
     expect(mcp.mcpServers.openlore).toEqual({
       command: 'npx',
-      args: ['--yes', 'openlore', 'mcp', '--preset', 'navigation'],
+      args: ['--yes', 'openlore', 'mcp', '--preset', 'substrate'],
     });
     expect(mcp._openlore.managed).toBe(true);
 
@@ -105,12 +105,12 @@ describe('openlore install (end-to-end)', () => {
 
   // change: default-to-lean-tool-surface — install wires the lean default by default
   // and the full surface only on explicit --preset full.
-  it('default install wires --preset navigation; --preset full wires the full surface', async () => {
+  it('default install wires --preset substrate; --preset full wires the full surface', async () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# project\n');
 
     await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
     let mcp = JSON.parse(await readFile(join(dir, '.mcp.json'), 'utf8'));
-    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'navigation']);
+    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'substrate']);
 
     // Re-install with --preset full restores the prior all-tools surface (idempotent merge).
     const code = await runInstall({ cwd: dir, agent: 'claude-code', preset: 'full', analyze: false, force: true });
@@ -149,7 +149,7 @@ describe('openlore install (end-to-end)', () => {
     const mcpPath = join(dir, '.cursor/mcp.json');
     await runInstall({ cwd: dir, agent: 'cursor', analyze: false });
     let mcp = JSON.parse(await readFile(mcpPath, 'utf8'));
-    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'navigation']);
+    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'substrate']);
 
     // The .mdc body is preset-independent → unchanged on this re-install. The MCP
     // entry must STILL switch to full (the bug left it stale at navigation).
@@ -160,7 +160,7 @@ describe('openlore install (end-to-end)', () => {
     // …and back to the lean default.
     await runInstall({ cwd: dir, agent: 'cursor', analyze: false });
     mcp = JSON.parse(await readFile(mcpPath, 'utf8'));
-    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'navigation']);
+    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'substrate']);
   });
 
   it('re-running install is a no-op (no writes, exit 0)', async () => {
@@ -313,7 +313,7 @@ describe('openlore install (end-to-end)', () => {
     // change: default-to-lean-tool-surface — default wires the lean navigation surface.
     expect(mcp.mcpServers.openlore).toEqual({
       command: 'npx',
-      args: ['--yes', 'openlore', 'mcp', '--preset', 'navigation'],
+      args: ['--yes', 'openlore', 'mcp', '--preset', 'substrate'],
     });
     expect(mcp._openlore.managed).toBe(true);
 
@@ -355,7 +355,7 @@ describe('openlore install (end-to-end)', () => {
     const code = await runInstall({ cwd: dir, agent: 'claude-code', analyze: false });
     expect(code).toBe(0);
     const mcp = JSON.parse(await readFile(join(dir, '.mcp.json'), 'utf8'));
-    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'navigation']);
+    expect(mcp.mcpServers.openlore.args).toEqual(['--yes', 'openlore', 'mcp', '--preset', 'substrate']);
   });
 
   it('auto-detects multiple surfaces when no --agent passed', async () => {

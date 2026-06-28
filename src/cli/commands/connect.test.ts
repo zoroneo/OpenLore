@@ -56,11 +56,11 @@ describe('install --preset (PresetAwareConnect)', () => {
 
   // change: default-to-lean-tool-surface — no preset now wires the lean navigation
   // default surface explicitly, not the bare (formerly full) server.
-  it('wires the lean navigation default when no preset is given', async () => {
+  it('wires the substrate default when no preset is given', async () => {
     await runInstall({ agent: 'claude-code', analyze: false, cwd: dir });
     const mcp = await readJson('.mcp.json');
     expect((mcp.mcpServers as Record<string, { args: string[] }>).openlore.args).toEqual([
-      '--yes', 'openlore', 'mcp', '--preset', 'navigation',
+      '--yes', 'openlore', 'mcp', '--preset', 'substrate',
     ]);
   });
 
@@ -100,7 +100,7 @@ describe('connect --yes (zero-interaction)', () => {
     expect(await exists('.mcp.json')).toBe(true);
     const mcp = await readJson('.mcp.json');
     expect((mcp.mcpServers as Record<string, { args: string[] }>).openlore.args).toEqual([
-      '--yes', 'openlore', 'mcp', '--preset', 'navigation',
+      '--yes', 'openlore', 'mcp', '--preset', 'substrate',
     ]);
   });
 });

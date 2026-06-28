@@ -34,6 +34,10 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 // track the lean default preset (the navigation surface), exactly as the full-surface
 // count tracks TOOL_DEFINITIONS.length. Sourced from the preset so it can't drift.
 const LEAN_DEFAULT_COUNT = TOOL_PRESETS[LEAN_DEFAULT_PRESET].size;
+// The navigation preset is no longer the default (decision c79ec7ca flipped the default
+// to substrate) but is still a documented named preset and a one-flag escape, so docs that
+// cite its size legitimately mention NAV_COUNT alongside the substrate default count.
+const NAV_COUNT = TOOL_PRESETS['navigation'].size;
 
 // Files whose every "<N> tools" mention the regex catches is the live full surface.
 // cli-reference.md: its sole match ("all <count> tools on a fixed port") is the full
@@ -50,21 +54,22 @@ const LEAN_DEFAULT_COUNT = TOOL_PRESETS[LEAN_DEFAULT_PRESET].size;
 // it alongside the full surface (change: default-to-lean-tool-surface); a dedicated
 // guard below asserts those docs cite exactly LEAN_DEFAULT_COUNT so it can't drift either.
 const GUARDED_DOCS: Array<{ rel: string; allowPresetCounts?: number[] }> = [
-  { rel: 'README.md', allowPresetCounts: [LEAN_DEFAULT_COUNT] },
-  { rel: 'docs/mcp-tools.md', allowPresetCounts: [LEAN_DEFAULT_COUNT] },
-  // cli-reference.md documents the per-command surfaces: the lean `navigation` default
-  // (LEAN_DEFAULT_COUNT) for install/mcp and the `minimal` governance core (6); both are
-  // allowlisted preset sizes, while the file is still guarded for its full-surface claims.
-  { rel: 'docs/cli-reference.md', allowPresetCounts: [LEAN_DEFAULT_COUNT, 6] },
+  { rel: 'README.md', allowPresetCounts: [LEAN_DEFAULT_COUNT, NAV_COUNT] },
+  { rel: 'docs/mcp-tools.md', allowPresetCounts: [LEAN_DEFAULT_COUNT, NAV_COUNT] },
+  // cli-reference.md documents the per-command surfaces: the `substrate` default
+  // (LEAN_DEFAULT_COUNT), the `navigation` escape (NAV_COUNT), and the `minimal`
+  // governance core (6); all are allowlisted preset sizes, while the file is still
+  // guarded for its full-surface claims.
+  { rel: 'docs/cli-reference.md', allowPresetCounts: [LEAN_DEFAULT_COUNT, NAV_COUNT, 6] },
   { rel: 'docs/governance-dogfooding.md' },
-  { rel: 'docs/agent-setup.md', allowPresetCounts: [LEAN_DEFAULT_COUNT, 6] },
-  { rel: 'openspec/specs/cli/spec.md', allowPresetCounts: [LEAN_DEFAULT_COUNT] },
+  { rel: 'docs/agent-setup.md', allowPresetCounts: [LEAN_DEFAULT_COUNT, NAV_COUNT, 6] },
+  { rel: 'openspec/specs/cli/spec.md', allowPresetCounts: [LEAN_DEFAULT_COUNT, NAV_COUNT] },
   // CLAUDE.md and install.md drifted to a stale "65" (in `not all 65 tools` / `full 65-tool
   // surface` phrasings) while every guarded doc was green, because they were NOT guarded and
   // the regex missed the hyphenated `N-tool` form. Both are now guarded and the regex below
   // catches `N-tool` too, so this class of drift fails CI here.
-  { rel: 'CLAUDE.md', allowPresetCounts: [LEAN_DEFAULT_COUNT] },
-  { rel: 'docs/install.md', allowPresetCounts: [LEAN_DEFAULT_COUNT] },
+  { rel: 'CLAUDE.md', allowPresetCounts: [LEAN_DEFAULT_COUNT, NAV_COUNT] },
+  { rel: 'docs/install.md', allowPresetCounts: [LEAN_DEFAULT_COUNT, NAV_COUNT] },
 ];
 
 // Docs that document the lean DEFAULT surface must cite exactly its preset size, so the
@@ -100,7 +105,7 @@ describe('documented MCP tool count', () => {
 // change: default-to-lean-tool-surface — the documented lean DEFAULT count must equal
 // the navigation preset size, so neither the default nor the full figure can drift.
 describe('documented lean default tool count', () => {
-  it.each(LEAN_DEFAULT_DOCS)('%s cites the lean default surface as the navigation preset size', (rel) => {
+  it.each(LEAN_DEFAULT_DOCS)('%s cites the default surface as the substrate preset size', (rel) => {
     const text = readFileSync(join(repoRoot, rel), 'utf8');
     const counts = [...text.matchAll(/(\d+)(?:-tools?\b|\s+(?:[A-Za-z][\w-]*\s+)?tools\b)/g)].map(m => Number(m[1]));
     expect(

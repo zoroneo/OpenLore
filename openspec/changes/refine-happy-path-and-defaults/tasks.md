@@ -136,10 +136,18 @@ on their own branches/PRs and are checked off here as they ship.
       reusing `bench-agent.ts` via additive `--with-only --results-json` hooks; per-tier correctness + cost
       vs a PRE-REGISTERED rule (no tier correctness regression > 5pp AND median cost ≤ +20%). Pipeline
       validated via `--dry-run --skip-setup` ($0, no clone).
-- [ ] Phase 2 — RUN the task-completion validation (≥5 runs × ≥2 models, both tiers); this is the heavy
-      live run (clones repos + real agent sessions) and the decision-grade evidence.
-- [ ] Phase 3 — stage the flip: recommend `--preset substrate` opt-in first, gather real-install dogfood,
-      then flip the one-line `LEAN_DEFAULT_PRESET` (+ guards/budgets/docs) and supersede ADR-0022.
+- [x] Phase 2 — RAN the task-completion validation via the Claude Code CLI (no API key): full corpus
+      (12 tasks / 9 repos / both tiers), `--runs 3`, TWO models (sonnet + the weaker haiku). Result: 100%
+      correctness on every model × tier × preset (no regression), substrate cheaper on 3 of 4 cells
+      (sonnet −33%/−7%, haiku +6%/−6%). `flipCleared=true` for both models. (Pragmatic deviation: runs=3,
+      not ≥5 — correctness had zero variance at the 100% ceiling, so more runs couldn't change the verdict.)
+- [x] Phase 3 — EXECUTED the flip (the maintainer compressed the opt-in-first staging given the strong
+      two-model evidence): `LEAN_DEFAULT_PRESET` `navigation` → `substrate`; recorded decision c79ec7ca /
+      ADR-0023 (supersedes ADR-0022 a6c916ed); updated the navigation-default guards + lean payload budget
+      in `mcp-presets.test.ts`, the install/connect wiring tests, the `BREADTH_POINTER`, the doc-count
+      guard (allowlist navigation's 10 alongside substrate's 13), and the README/CLAUDE.md/docs copy.
+      `--preset navigation` stays a one-flag reversible escape. Dogfooded: a default `openlore install`
+      wires `--preset substrate`; `openlore mcp --list-tools` reports "substrate (13 tools, 4 families)".
 
 ## Remaining slices (blocked on external dependencies — no clean code left in this change)
 
