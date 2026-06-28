@@ -22,7 +22,23 @@ on their own branches/PRs and are checked off here as they ship.
 - [x] Verify: `tsc --noEmit` clean; `vitest run src examples` green (280 files, 5556 passed, 2 skipped).
 - [x] Value preserved: no tool/command/preset removed; zero required keys unchanged; no LLM, no network.
 
-## Slice 2 — `config` / DefaultsTrackCurrentLineage  (ALREADY SATISFIED in `main`)
+## Slice 2 — `cli` / CommandSurfaceGroupedByJob  (SHIPPED — PR #218)
+
+- [x] `src/cli/help-groups.ts`: `COMMAND_GROUPS` (6 job groups, ordered) + `groupForCommand()` +
+      `groupedFormatHelp()` — a faithful Commander-12 `formatHelp` reproduction that groups only the
+      Commands section; uncategorized commands fall to an "Other" group (never hidden).
+- [x] Wire `program.configureHelp({ formatHelp: groupedFormatHelp })` in `src/cli/index.ts`.
+- [x] Tests: `help-groups.test.ts` (6 — grouping, order, Other fallback, omit-empty-group, usage/options
+      preserved) + `index-help.test.ts` wiring guard.
+- [x] Dogfood: `openlore --help` renders all commands under their job groups; experimental suites under
+      "Advanced / experimental"; epilog still follows; no OpenLore command in "Other".
+
+## Slice 3 — `cli` / TruthfulDoctorExitCodes  (ALREADY SATISFIED in `main`)
+
+- [x] `doctor` returns `warn` (not `fail`) for a missing LLM/embedding key; exits `0` on the no-LLM path.
+- [x] Node floor checked to the minor version (≥ 22.5). Locked by existing `doctor.test.ts` cases.
+
+## Slice 4 — `config` / DefaultsTrackCurrentLineage  (ALREADY SATISFIED in `main`)
 
 - [x] `DEFAULT_ANTHROPIC_MODEL` is `claude-sonnet-4-6` (matches the runtime config default) — no drift.
 - [x] `mcp-tool-count-doc.test.ts` already guards the documented tool count against `TOOL_DEFINITIONS`.
@@ -36,13 +52,13 @@ on their own branches/PRs and are checked off here as they ship.
 - [ ] `mcp-quality` / ConsistentToolNaming — reconcile names with permanent aliases + a naming guard.
 - [ ] `mcp-quality` / NoRedundantConclusions (prose) — sibling "use X instead" in description prose.
 - [ ] `mcp-handlers` / ConciseByDefaultDetailedOnRequest — `responseFormat` + truncation receipts.
-- [ ] `cli` / TruthfulDoctorExitCodes — exit 0 on the no-LLM happy path; minor-version Node guard.
 - [ ] `cli` / GuaranteedIndexAtFirstSession — surface skipped/failed build with its one remediation.
-- [ ] `cli` / CommandSurfaceGroupedByJob — group `openlore --help` by job; mark experimental suites.
 - [ ] `overview` / DocumentationSingleSourceOfTruth — one canonical page per concept; task→doc index.
 
-## Verification (Slice 1)
+## Verification (PR #218, after slices 1–2)
 
-- [x] `npm run build` clean.
-- [x] `vitest run src examples` green.
+- [x] `npm run build` clean; `tsc --noEmit` clean.
+- [x] `vitest run src examples` green — 281 files, 5563 passed, 2 skipped.
+- [x] Value preserved: no tool/command/preset/language removed; zero required keys unchanged; no LLM,
+      no network, no persisted artifact.
 - [ ] `openspec validate refine-happy-path-and-defaults` (run at archive time).

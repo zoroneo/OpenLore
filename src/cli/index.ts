@@ -68,6 +68,7 @@ import { panicReplayCommand } from './commands/panic-replay.js';
 import { gryphWatchCommand } from './commands/gryph-watch.js';
 import { updateCommand } from './commands/update.js';
 import { featuresCommand } from './commands/features.js';
+import { groupedFormatHelp } from './help-groups.js';
 import { configureLogger } from '../utils/logger.js';
 import { notifyIfUpdateAvailable } from '../core/services/update-notifier.js';
 
@@ -129,6 +130,9 @@ program
       'New here? Run `openlore install` to wire your coding agent and build the index in one step.'
   )
   .version(version)
+  // Group the ~49 commands by job in `openlore --help` so the front door is legible
+  // (CommandSurfaceGroupedByJob). Presentation only — every command stays invocable.
+  .configureHelp({ formatHelp: groupedFormatHelp })
   .option('-q, --quiet', 'Minimal output (errors only)', false)
   .option('-v, --verbose', 'Show debug information', false)
   .option('--no-color', 'Disable colored output (also enables timestamps)')

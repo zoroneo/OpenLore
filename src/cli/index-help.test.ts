@@ -24,6 +24,13 @@ describe('CLI onboarding front door', () => {
     expect(source).not.toMatch(/openlore test\s+Generate spec-driven tests/);
   });
 
+  it('groups the command surface by job in --help (CommandSurfaceGroupedByJob)', () => {
+    // The ~49 commands must render grouped by job, not as one flat list, so the
+    // front door is legible. Lock the wiring so it cannot be silently dropped.
+    expect(source).toContain('groupedFormatHelp');
+    expect(source).toMatch(/configureHelp\(\{\s*formatHelp:\s*groupedFormatHelp\s*\}\)/);
+  });
+
   it('surfaces `openlore features` so opt-in capabilities are discoverable from the front door', () => {
     // ZeroConfigWithGuidedActivation: a user must be able to find "where do I turn on X?"
     // without grepping the docs — the front-door epilog names the features command.

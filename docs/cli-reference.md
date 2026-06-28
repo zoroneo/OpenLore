@@ -1,5 +1,9 @@
 ## Commands
 
+> `openlore --help` groups these commands by job — **set up & run · navigate · govern a change ·
+> inspect · multi-repo · advanced/experimental** — so the front door stays legible as the surface grows.
+> The table below is the full alphabetical reference.
+
 | Command | Description | API Key |
 |---------|-------------|---------|
 | `openlore init` | Initialize configuration | No |

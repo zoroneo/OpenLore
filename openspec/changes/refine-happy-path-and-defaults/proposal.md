@@ -7,18 +7,25 @@
 > a preserved escape hatch. Grounded in the north star (`overview/spec.md`, decision `c6d1ad07`):
 > deterministic, locally-computed structural context; conclusion over graph; no LLM in the hot path.
 >
-> **Implementation progress (see `tasks.md`):**
-> - ✅ `config` / **ZeroConfigWithGuidedActivation** — SHIPPED on branch `feat/guided-feature-activation`.
->   New `openlore features` command + shared `collectFeatureInventory()` (deterministic, local, fail-soft)
->   list every opt-in feature, whether it is active, and the one command/snippet to enable it. 17 unit
->   tests + a front-door discoverability guard; full suite green (5556 passed).
+> **Implementation progress (see `tasks.md`) — all on PR #218, branch `feat/guided-feature-activation`:**
+> - ✅ `config` / **ZeroConfigWithGuidedActivation** — SHIPPED. New `openlore features` command + shared
+>   `collectFeatureInventory()` (deterministic, local, fail-soft) list every opt-in feature, whether it is
+>   active, and the one command/snippet to enable it. 17 unit tests + a front-door discoverability guard.
+> - ✅ `cli` / **CommandSurfaceGroupedByJob** — SHIPPED. `openlore --help` now groups its ~49 commands by
+>   job (set up · navigate · govern a change · inspect · multi-repo · advanced/experimental) via a faithful
+>   `groupedFormatHelp` override; uncategorized commands fall to an "Other" group so none is ever hidden.
+>   6 unit tests + a wiring guard.
+> - ✅ `cli` / **TruthfulDoctorExitCodes** — already satisfied in `main`: `doctor` returns `warn` (not
+>   `fail`) for a missing optional LLM/embedding key, exits `0` on the no-LLM happy path, and checks the
+>   Node floor to the minor version (≥ 22.5). Locked by existing tests (`doctor.test.ts` "missing
+>   LLM/embedding alone does NOT fail (exit stays 0)").
 > - ✅ `config` / **DefaultsTrackCurrentLineage** (model-pin clause) — already satisfied in `main`:
 >   `DEFAULT_ANTHROPIC_MODEL` is `claude-sonnet-4-6` and `mcp-tool-count-doc.test.ts` already guards the
 >   documented tool count. (Gap #7's "stale pin" claim was based on a stale design note; corrected below.)
 > - ⏳ Remaining requirements (ReadyOrHonestFirstUse, DefaultSurfaceRevealsAllFaces,
 >   ProgressiveCatalogDisclosure, ConsistentToolNaming, ConciseByDefaultDetailedOnRequest,
->   TruthfulDoctorExitCodes, GuaranteedIndexAtFirstSession, CommandSurfaceGroupedByJob,
->   DocumentationSingleSourceOfTruth) — not yet implemented; each is independently shippable.
+>   GuaranteedIndexAtFirstSession, DocumentationSingleSourceOfTruth) — not yet implemented; each is
+>   independently shippable.
 
 ## The gap
 
@@ -454,6 +461,13 @@ leaving an empty store. Every terminal command SHALL print exactly **one** clear
 
 #### Requirement: TruthfulDoctorExitCodes
 
+> ✅ ALREADY SATISFIED in `main` (verified 2026-06-28, PR #218). `doctor` returns `warn` (not `fail`) for
+> a missing optional LLM/embedding key and exits `0` on the no-LLM happy path (exit `1` only on a genuine
+> `fail`: bad Node version, missing/unparseable config, critically low disk). The Node floor is checked to
+> the minor version (≥ 22.5, for `node:sqlite`). Locked by existing tests in `doctor.test.ts`
+> ("missing LLM/embedding alone does NOT fail (exit stays 0)", "warns (not fails) when … missing API key").
+> No code change required by this change.
+
 `openlore doctor` SHALL exit `0` whenever the no-LLM, no-API-key happy path is fully functional. The
 absence of an optional LLM or embedding API key SHALL be reported as a `warn`, never a `fail`, and SHALL
 NOT cause a non-zero exit. The runtime Node version floor required by `node:sqlite` (≥ 22.5) SHALL be
@@ -478,6 +492,13 @@ capability absence MAY NOT.
 ### ADDED Requirements
 
 #### Requirement: CommandSurfaceGroupedByJob
+
+> ✅ IMPLEMENTED (2026-06-28, PR #218). `src/cli/help-groups.ts` defines the job groups and a
+> `groupedFormatHelp` that faithfully reproduces Commander 12's `formatHelp` but renders the Commands
+> section grouped by job; wired via `program.configureHelp({ formatHelp: groupedFormatHelp })`. The
+> `panic-*` suite and `gryph-watch` are under "Advanced / experimental". Presentation only — every
+> command stays invocable, and any uncategorized command falls to an "Other" group (never hidden).
+> Tests: `help-groups.test.ts` (6 cases) + an `index-help.test.ts` wiring guard.
 
 `openlore --help` SHALL present its commands grouped by job — *set up*, *navigate*, *govern a change*,
 *inspect*, and *advanced / experimental* — rather than as one flat alphabetical list, mirroring the
