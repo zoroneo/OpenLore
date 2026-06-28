@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('./utils.js', () => ({
+  notReadyResult: (error: string, reason: string) => ({ error, notReady: true, reason, remedy: 'openlore analyze' }),
   validateDirectory: vi.fn(async (dir: string) => dir),
   readCachedContext: vi.fn(async () => null),
 }));

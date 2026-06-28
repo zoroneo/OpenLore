@@ -10,7 +10,7 @@
  */
 
 import { relative } from 'node:path';
-import { validateDirectory, readCachedContext } from './utils.js';
+import { validateDirectory, readCachedContext, notReadyResult } from './utils.js';
 import { buildClusterView } from './analysis.js';
 import { buildClusterGraph } from '../../analyzer/cluster-graph.js';
 import type { SerializedCallGraph } from '../../analyzer/call-graph.js';
@@ -21,7 +21,7 @@ const MAP_MAX_REGIONS = 40;
 export async function handleGetMap(directory: string, communityId?: string): Promise<unknown> {
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
-  if (!ctx?.callGraph) return { error: 'No call graph. Run analyze_codebase first.' };
+  if (!ctx?.callGraph) return notReadyResult('No call graph. Run analyze_codebase first.', 'index-absent');
   const cg = ctx.callGraph as SerializedCallGraph;
 
   // Drill-in: function-granularity view of one region (same shape as get_cluster).

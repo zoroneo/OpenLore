@@ -60,9 +60,25 @@ on their own branches/PRs and are checked off here as they ship.
       dispatches; a genuinely unknown name still returns unknown-tool. `tools/list` shows only the canonical.
 - [x] `remember`/`recall`/`orient` intentionally NOT renamed (no value-destroying churn — Non-goals).
 
+## Slice 6 — `mcp-handlers` / ReadyOrHonestFirstUse  (SHIPPED — PR #218; default surface + core graph primitives)
+
+- [x] Shared helper `notReadyResult(message, reason)` in `mcp-handlers/utils.ts` → structured
+      `{ error, notReady: true, reason: 'index-absent' | 'graph-unavailable', remedy: 'openlore analyze' }`;
+      human `error` preserved verbatim (existing `.error` callers/tests unaffected).
+- [x] Routed every graph-dependent guard in the navigation (default) preset + core graph primitives
+      through it: `graph.ts` (19 sites — subgraph, call_graph, impact, trace, signatures, file-deps, …),
+      `orient.ts`, `pathfind.ts` (find_path), `map.ts` (get_map), `landmarks.ts` (get_landmarks),
+      `semantic.ts` (search_code, suggest_insertion_points).
+- [x] Tests: `utils.test.ts` notReadyResult unit cases; updated the `./utils.js` mocks in the affected
+      handler tests; full suite green.
+- [x] Dogfood (real stdio, bare repo): every navigation-preset graph tool returns `notReady:true` +
+      `reason` + `remedy:'openlore analyze'`; `get_function_skeleton` correctly OUT of scope (reads
+      source files, not the graph); a genuinely unknown tool still errors.
+- [x] Scope note: pre-existing behavior was already honest (never silent-empty); this makes it
+      machine-actionable + consistent. Opt-in specialized handlers stay honest, migrate opportunistically.
+
 ## Remaining slices (not started — each independently shippable)
 
-- [ ] `mcp-handlers` / ReadyOrHonestFirstUse — not-ready conclusion / self-bootstrap instead of silent empty.
 - [ ] `mcp-quality` / DefaultSurfaceRevealsAllFaces — run the substrate-vs-navigation benchmark; flip default.
 - [ ] `mcp-quality` / ProgressiveCatalogDisclosure — adopt Tool Search / `defer_loading` where supported.
 - [ ] `mcp-quality` / NoRedundantConclusions (prose) — sibling "use X instead" in description prose.
@@ -70,10 +86,10 @@ on their own branches/PRs and are checked off here as they ship.
 - [ ] `cli` / GuaranteedIndexAtFirstSession — surface skipped/failed build with its one remediation.
 - [ ] `overview` / DocumentationSingleSourceOfTruth — one canonical page per concept; task→doc index.
 
-## Verification (PR #218, after slices 1, 2, 5)
+## Verification (PR #218, after slices 1, 2, 5, 6)
 
 - [x] `npm run build` clean; `tsc --noEmit` clean.
-- [x] `vitest run src examples` green — 282 files, 5570 passed, 2 skipped.
+- [x] `vitest run src examples` green — 282 files, 5572 passed, 2 skipped.
 - [x] Value preserved: no tool/command/preset/language removed (a tool was renamed with a permanent
       alias — the prior name still works); zero required keys unchanged; no LLM, no network, no artifact.
 - [ ] `openspec validate refine-happy-path-and-defaults` (run at archive time).

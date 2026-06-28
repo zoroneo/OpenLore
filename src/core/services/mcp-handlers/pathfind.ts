@@ -12,7 +12,7 @@
  */
 
 import { relative, isAbsolute } from 'node:path';
-import { validateDirectory, readCachedContext } from './utils.js';
+import { validateDirectory, readCachedContext, notReadyResult } from './utils.js';
 import { resolveFederationScope, locateSymbolProducers } from '../../federation/resolver.js';
 import { buildAdjacency, buildWeightedAdjacency, weightedBfs } from './graph.js';
 import type { WeightedReach } from './graph.js';
@@ -134,7 +134,7 @@ export async function handleFindPath(
 ): Promise<unknown> {
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
-  if (!ctx?.callGraph) return { error: 'No call graph. Run analyze_codebase first.' };
+  if (!ctx?.callGraph) return notReadyResult('No call graph. Run analyze_codebase first.', 'index-absent');
   const rawCg = ctx.callGraph as SerializedCallGraph;
   // Strict mode: drop synthesized dynamic-dispatch edges so both the unit and the
   // weighted adjacency built below rest only on directly-resolved edges

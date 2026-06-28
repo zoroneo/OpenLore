@@ -191,6 +191,38 @@ export function queryTooLongError(query: unknown, field = 'query'): { error: str
 }
 
 /**
+ * Why a graph-dependent tool cannot answer yet (change: refine-happy-path-and-defaults
+ * / ReadyOrHonestFirstUse):
+ *  - `index-absent`     — no analysis artifact exists at all (never built).
+ *  - `graph-unavailable`— an analysis exists but its call-graph/edge index is missing,
+ *                         typically because a version upgrade reset the graph index
+ *                         until the next `analyze`.
+ */
+export type NotReadyReason = 'index-absent' | 'graph-unavailable';
+
+/** A structured "not ready" conclusion — see {@link notReadyResult}. */
+export interface NotReadyResult {
+  error: string;
+  /** Machine-readable flag so an agent can branch without parsing the message. */
+  notReady: true;
+  reason: NotReadyReason;
+  /** The single command that makes the tool ready. */
+  remedy: string;
+}
+
+/**
+ * Build a structured, ready-or-honest "not ready" result. A graph-dependent tool
+ * invoked before a usable index exists SHALL return one of these — never a
+ * silently-degraded empty result. The human-readable `error` is preserved verbatim
+ * (so existing callers/tests that read `.error` keep working); the `notReady` flag,
+ * `reason` discriminator, and exact `remedy` command are added so an agent can act
+ * on the cause deterministically and consistently across every tool.
+ */
+export function notReadyResult(error: string, reason: NotReadyReason): NotReadyResult {
+  return { error, notReady: true, reason, remedy: 'openlore analyze' };
+}
+
+/**
  * Resolve the project's openspec directory, confined to the validated root.
  *
  * `config.openspecPath` is read from `.openlore/config.json` — an untrusted on-disk

@@ -17,7 +17,7 @@
 import { join, relative } from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import type { SerializedCallGraph } from '../../analyzer/call-graph.js';
-import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain, readCachedContext, safeJoin, safeOpenspecDir, queryTooLongError } from './utils.js';
+import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain, readCachedContext, safeJoin, safeOpenspecDir, queryTooLongError, notReadyResult } from './utils.js';
 import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote } from './progressive.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { isIacLanguage } from '../../analyzer/iac/types.js';
@@ -189,7 +189,7 @@ export async function handleOrient(
 
   if (!hasCodeIndex) {
     return {
-      error: 'No analysis found. Run "openlore analyze" first.',
+      ...notReadyResult('No analysis found. Run "openlore analyze" first.', 'index-absent'),
       hint: 'Plain "openlore analyze" builds a keyword (BM25) index that orient can use; add EMBED_* (or --embed) for semantic search.',
     };
   }

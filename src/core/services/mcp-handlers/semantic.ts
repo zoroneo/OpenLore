@@ -19,7 +19,7 @@ import {
   OPENSPEC_SPECS_SUBDIR,
 } from '../../../constants.js';
 import { fileExists } from '../../../utils/command-helpers.js';
-import { validateDirectory, safeJoin, loadMappingIndex, specsForFile, functionsForDomain, queryTooLongError } from './utils.js';
+import { validateDirectory, safeJoin, loadMappingIndex, specsForFile, functionsForDomain, queryTooLongError, notReadyResult } from './utils.js';
 import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote } from './progressive.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 
@@ -194,7 +194,7 @@ export async function handleSearchCode(
 
   if (!VectorIndex.exists(outputDir)) {
     return {
-      error: 'No search index found. Run "openlore analyze" first.',
+      ...notReadyResult('No search index found. Run "openlore analyze" first.', 'index-absent'),
       hint: 'Plain "openlore analyze" builds a keyword (BM25) index; add EMBED_BASE_URL/EMBED_MODEL for semantic search.',
     };
   }
@@ -322,7 +322,7 @@ export async function handleSuggestInsertionPoints(
 
   if (!VectorIndex.exists(outputDir)) {
     return {
-      error: 'No search index found. Run "openlore analyze" first.',
+      ...notReadyResult('No search index found. Run "openlore analyze" first.', 'index-absent'),
       hint: 'Plain "openlore analyze" builds a keyword (BM25) index; add EMBED_BASE_URL/EMBED_MODEL for semantic search.',
     };
   }

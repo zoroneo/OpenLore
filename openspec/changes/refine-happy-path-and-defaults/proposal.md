@@ -15,6 +15,15 @@
 >   job (set up · navigate · govern a change · inspect · multi-repo · advanced/experimental) via a faithful
 >   `groupedFormatHelp` override; uncategorized commands fall to an "Other" group so none is ever hidden.
 >   6 unit tests + a wiring guard.
+> - ✅ `mcp-handlers` / **ReadyOrHonestFirstUse** — SHIPPED (default surface + core graph primitives).
+>   Added a shared `notReadyResult(message, reason)` helper that returns a structured, machine-readable
+>   conclusion (`{ error, notReady: true, reason: 'index-absent'|'graph-unavailable', remedy: 'openlore
+>   analyze' }`) and routed every graph-dependent guard in the navigation (default) preset + the core
+>   graph primitives through it (orient, search_code, suggest_insertion_points, get_subgraph,
+>   trace_execution_path, analyze_impact, find_path, get_map, get_landmarks, get_call_graph, and the rest
+>   of graph.ts). An agent can now branch on `notReady`/`reason` instead of parsing English, with a
+>   consistent remedy. e2e-verified over real stdio on a bare repo; the opt-in specialized tools remain
+>   honest (plain `{error}`) and can adopt the helper opportunistically.
 > - ✅ `mcp-quality` / **ConsistentToolNaming** — SHIPPED. Added the permanent tool-name alias mechanism
 >   (`TOOL_NAME_ALIASES` + `resolveCanonicalToolName`, resolved on both the MCP stdio and `serve` HTTP
 >   transports) and used it to reconcile the one catalogued inconsistency: `get_ui_components` →
@@ -28,9 +37,9 @@
 > - ✅ `config` / **DefaultsTrackCurrentLineage** (model-pin clause) — already satisfied in `main`:
 >   `DEFAULT_ANTHROPIC_MODEL` is `claude-sonnet-4-6` and `mcp-tool-count-doc.test.ts` already guards the
 >   documented tool count. (Gap #7's "stale pin" claim was based on a stale design note; corrected below.)
-> - ⏳ Remaining requirements (ReadyOrHonestFirstUse, DefaultSurfaceRevealsAllFaces,
->   ProgressiveCatalogDisclosure, ConciseByDefaultDetailedOnRequest, GuaranteedIndexAtFirstSession,
->   DocumentationSingleSourceOfTruth) — not yet implemented; each is independently shippable.
+> - ⏳ Remaining requirements (DefaultSurfaceRevealsAllFaces, ProgressiveCatalogDisclosure,
+>   ConciseByDefaultDetailedOnRequest, GuaranteedIndexAtFirstSession, DocumentationSingleSourceOfTruth)
+>   — not yet implemented; each is independently shippable.
 
 ## The gap
 
@@ -280,6 +289,22 @@ default-flipping* — no existing requirement is weakened, and the Non-goals abo
 ### ADDED Requirements
 
 #### Requirement: ReadyOrHonestFirstUse
+
+> ✅ IMPLEMENTED (2026-06-28, PR #218) — default surface + core graph primitives. The shared helper
+> `notReadyResult(message, reason)` in `mcp-handlers/utils.ts` returns a structured conclusion
+> `{ error, notReady: true, reason: 'index-absent' | 'graph-unavailable', remedy: 'openlore analyze' }`
+> (the human `error` preserved verbatim, so existing `.error` callers/tests keep working). Every
+> graph-dependent guard in the navigation (default) preset and the core graph primitives is routed
+> through it: `orient`, `search_code`, `suggest_insertion_points`, `get_subgraph`,
+> `trace_execution_path`, `analyze_impact`, `find_path`, `get_map`, `get_landmarks`, `get_call_graph`,
+> and the remaining graph.ts handlers. The pre-existing behavior was already honest (a clear "No analysis
+> found" error, never silent-empty — verified across the handlers); this change makes that honesty
+> **machine-actionable and consistent**. e2e-dogfooded over real stdio on a bare repo (every nav-preset
+> graph tool returns the flag; `get_function_skeleton` is correctly OUT of scope — it reads source files
+> directly, not the graph). Cold-start self-bootstrap (option (a)) already exists
+> (`cold-start-bootstrap.ts`). The opt-in specialized handlers (reachability/`find_dead_code`,
+> blast-radius, coverage-gaps, env-impact, …) remain honest with a plain `{error}` and migrate to the
+> helper opportunistically.
 
 A graph-dependent tool invoked before a usable structural index exists SHALL be **ready or honest, never
 silently wrong**. It SHALL NOT return empty or keyword-only results *presented as authoritative* when the

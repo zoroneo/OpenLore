@@ -24,6 +24,7 @@ vi.mock('./utils.js', () => ({
   specsForFile: vi.fn(() => []),
   functionsForDomain: vi.fn(() => []),
   isCacheFresh: vi.fn(async () => false),
+  notReadyResult: (error: string, reason: string) => ({ error, notReady: true, reason, remedy: 'openlore analyze' }),
 }));
 
 import {

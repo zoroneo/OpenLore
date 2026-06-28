@@ -22,6 +22,7 @@ import {
   clearMappingCache,
   specsForFile,
   functionsForDomain,
+  notReadyResult,
 } from './utils.js';
 import { EdgeStore } from '../edge-store.js';
 import { logger } from '../../../utils/logger.js';
@@ -641,5 +642,22 @@ describe('functionsForDomain', () => {
     expect(fns).toHaveLength(1);
     expect(fns[0].name).toBe('login');
     expect(fns[0].requirement).toBe('Auth flow');
+  });
+});
+
+describe('notReadyResult (ReadyOrHonestFirstUse)', () => {
+  it('builds a structured, ready-or-honest result preserving the human message', () => {
+    const r = notReadyResult('No analysis found. Run "openlore analyze" first.', 'index-absent');
+    expect(r.error).toContain('No analysis found');
+    expect(r.notReady).toBe(true);
+    expect(r.reason).toBe('index-absent');
+    expect(r.remedy).toBe('openlore analyze');
+  });
+
+  it('carries the graph-unavailable reason distinctly from index-absent', () => {
+    const r = notReadyResult('Call graph not available. Re-run analyze_codebase.', 'graph-unavailable');
+    expect(r.notReady).toBe(true);
+    expect(r.reason).toBe('graph-unavailable');
+    expect(r.remedy).toBe('openlore analyze');
   });
 });

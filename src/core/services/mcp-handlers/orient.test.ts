@@ -22,6 +22,7 @@ vi.mock('./utils.js', () => ({
   isCacheFresh: vi.fn(async () => false),
   queryTooLongError: vi.fn(() => null),
   safeJoin: vi.fn((dir: string, p: string) => `${dir}/${p}`),
+  notReadyResult: (error: string, reason: string) => ({ error, notReady: true, reason, remedy: 'openlore analyze' }),
 }));
 
 vi.mock('../config-manager.js', () => ({

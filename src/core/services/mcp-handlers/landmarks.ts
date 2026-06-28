@@ -11,7 +11,7 @@
  */
 
 import { relative } from 'node:path';
-import { validateDirectory, readCachedContext } from './utils.js';
+import { validateDirectory, readCachedContext, notReadyResult } from './utils.js';
 import { deadCodeIds } from './reachability.js';
 import { computeLandmarkSignals } from '../../analyzer/landmark-signals.js';
 import type { LandmarkLabel } from '../../analyzer/landmark-signals.js';
@@ -28,7 +28,7 @@ export async function handleGetLandmarks(
 ): Promise<unknown> {
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
-  if (!ctx?.callGraph) return { error: 'No call graph. Run analyze_codebase first.' };
+  if (!ctx?.callGraph) return notReadyResult('No call graph. Run analyze_codebase first.', 'index-absent');
   const cg = ctx.callGraph as SerializedCallGraph;
 
   const label = opts.label as LandmarkLabel | undefined;

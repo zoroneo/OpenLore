@@ -5,7 +5,7 @@
  * trace_execution_path.
  */
 
-import { validateDirectory, readCachedContext } from './utils.js';
+import { validateDirectory, readCachedContext, notReadyResult } from './utils.js';
 import { resolveFederationScope, findCrossRepoConsumersBatch, findCrossRepoClientCallers } from '../../federation/resolver.js';
 import { extractRoutesFromFile, normalizeUrl, type RouteDefinition, type RouteInventory } from '../../analyzer/http-route-parser.js';
 import type { CachedContext } from './utils.js';
@@ -358,8 +358,8 @@ export async function handleGetCallGraph(directory: string): Promise<unknown> {
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
 
-  if (!ctx) return { error: 'No analysis found. Run analyze_codebase first.' };
-  if (!ctx.callGraph) return { error: 'Call graph not available in cached analysis. Re-run analyze_codebase.' };
+  if (!ctx) return notReadyResult('No analysis found. Run analyze_codebase first.', 'index-absent');
+  if (!ctx.callGraph) return notReadyResult('Call graph not available in cached analysis. Re-run analyze_codebase.', 'graph-unavailable');
 
   const cg = ctx.callGraph;
   return {
@@ -391,8 +391,8 @@ export async function handleGetSubgraph(
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
 
-  if (!ctx) return { error: 'No analysis found. Run analyze_codebase first.' };
-  if (!ctx.edgeStore) return { error: 'Call graph index is empty or unavailable — run analyze_codebase to (re)build it (a version upgrade resets the graph index until the next analyze).' };
+  if (!ctx) return notReadyResult('No analysis found. Run analyze_codebase first.', 'index-absent');
+  if (!ctx.edgeStore) return notReadyResult('Call graph index is empty or unavailable — run analyze_codebase to (re)build it (a version upgrade resets the graph index until the next analyze).', 'graph-unavailable');
 
   const lower = functionName.toLowerCase();
   let seeds = ctx.edgeStore.searchNodes(lower);
@@ -545,8 +545,8 @@ export async function handleAnalyzeImpact(
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
 
-  if (!ctx)            return { error: 'No analysis found. Run analyze_codebase first.' };
-  if (!ctx.edgeStore)  return { error: 'Call graph index is empty or unavailable — run analyze_codebase to (re)build it (a version upgrade resets the graph index until the next analyze).' };
+  if (!ctx)            return notReadyResult('No analysis found. Run analyze_codebase first.', 'index-absent');
+  if (!ctx.edgeStore)  return notReadyResult('Call graph index is empty or unavailable — run analyze_codebase to (re)build it (a version upgrade resets the graph index until the next analyze).', 'graph-unavailable');
 
   // `symbol` is required by the MCP inputSchema, but dispatchTool enforces nothing,
   // so a non-conformant caller could reach here with it undefined — return a clean
@@ -850,8 +850,8 @@ export async function handleGetLowRiskRefactorCandidates(
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
 
-  if (!ctx)           return { error: 'No analysis found. Run analyze_codebase first.' };
-  if (!ctx.callGraph) return { error: 'Call graph not available. Re-run analyze_codebase.' };
+  if (!ctx)           return notReadyResult('No analysis found. Run analyze_codebase first.', 'index-absent');
+  if (!ctx.callGraph) return notReadyResult('Call graph not available. Re-run analyze_codebase.', 'graph-unavailable');
 
   const cg       = ctx.callGraph as SerializedCallGraph;
   const hubIds   = new Set(cg.hubFunctions.map(n => n.id));
@@ -897,8 +897,8 @@ export async function handleGetLeafFunctions(
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
 
-  if (!ctx)           return { error: 'No analysis found. Run analyze_codebase first.' };
-  if (!ctx.callGraph) return { error: 'Call graph not available. Re-run analyze_codebase.' };
+  if (!ctx)           return notReadyResult('No analysis found. Run analyze_codebase first.', 'index-absent');
+  if (!ctx.callGraph) return notReadyResult('Call graph not available. Re-run analyze_codebase.', 'graph-unavailable');
 
   const cg = ctx.callGraph as SerializedCallGraph;
   const hasOutgoing = new Set(cg.edges.filter(e => e.calleeId).map(e => e.callerId));
@@ -940,8 +940,8 @@ export async function handleGetCriticalHubs(
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
 
-  if (!ctx)           return { error: 'No analysis found. Run analyze_codebase first.' };
-  if (!ctx.callGraph) return { error: 'Call graph not available. Re-run analyze_codebase.' };
+  if (!ctx)           return notReadyResult('No analysis found. Run analyze_codebase first.', 'index-absent');
+  if (!ctx.callGraph) return notReadyResult('Call graph not available. Re-run analyze_codebase.', 'graph-unavailable');
 
   const cg = ctx.callGraph as SerializedCallGraph;
   const nodeMap = new Map(cg.nodes.map(n => [n.id, n]));
@@ -1010,8 +1010,8 @@ export async function handleGetGodFunctions(
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
 
-  if (!ctx)           return { error: 'No analysis found. Run analyze_codebase first.' };
-  if (!ctx.callGraph) return { error: 'Call graph not available. Re-run analyze_codebase.' };
+  if (!ctx)           return notReadyResult('No analysis found. Run analyze_codebase first.', 'index-absent');
+  if (!ctx.callGraph) return notReadyResult('Call graph not available. Re-run analyze_codebase.', 'graph-unavailable');
 
   const cg = ctx.callGraph as SerializedCallGraph;
   let candidates: FunctionNode[];
@@ -1072,13 +1072,13 @@ export async function handleGetFileDependencies(
     const raw = await readFile(depGraphPath, 'utf-8');
     graph = JSON.parse(raw) as DepGraph;
   } catch {
-    return { error: 'No dependency graph found. Run "openlore analyze" first.' };
+    return notReadyResult('No dependency graph found. Run "openlore analyze" first.', 'index-absent');
   }
 
   // A valid-but-partial artifact (e.g. {} or an interrupted analyze) parses fine but has
   // no nodes/edges arrays — guard the shape so .find()/.map() can't throw out of the handler.
   if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
-    return { error: 'No dependency graph found. Run "openlore analyze" first.' };
+    return notReadyResult('No dependency graph found. Run "openlore analyze" first.', 'index-absent');
   }
 
   // Resolve the file path to the same form used in the graph (relative or absolute).
@@ -1146,8 +1146,8 @@ export async function handleTraceExecutionPath(
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
 
-  if (!ctx)           return { error: 'No analysis found. Run analyze_codebase first.' };
-  if (!ctx.callGraph) return { error: 'Call graph not available. Re-run analyze_codebase.' };
+  if (!ctx)           return notReadyResult('No analysis found. Run analyze_codebase first.', 'index-absent');
+  if (!ctx.callGraph) return notReadyResult('Call graph not available. Re-run analyze_codebase.', 'graph-unavailable');
 
   const cg = ctx.callGraph as SerializedCallGraph;
   const { nodeMap, forward } = buildAdjacency(cg, { directResolvedOnly });
