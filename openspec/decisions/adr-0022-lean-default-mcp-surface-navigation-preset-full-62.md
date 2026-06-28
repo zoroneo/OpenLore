@@ -2,7 +2,12 @@
 
 ## Status
 
-accepted
+superseded by ADR-0023 (decision c79ec7ca, 2026-06-28)
+
+> The default MCP surface is now the `substrate` preset (the navigation core plus `recall` +
+> `verify_claim` + `blast_radius`), after the DefaultSurfaceRevealsAllFaces benchmark cleared the flip
+> across two models and both repo tiers with no regression. `--preset navigation` remains a one-flag
+> reversible escape. This ADR is retained as the historical record of the prior lean-navigation default.
 
 **Domains**: analyzer, drift, cli
 

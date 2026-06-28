@@ -432,7 +432,7 @@ The system SHALL provide a declarative spec-store binding that resolves named ta
 > Date: 2026-06-21
 ### Requirement: LeanDefaultMcpSurfaceNavigationPresetFull62toolSurfaceIsOptinViaPresetFullAlltools
 
-The system SHALL expose the navigation preset as the default MCP tool surface and require an explicit selector (--preset full or --all-tools) to activate the complete tool registry.
+**[SUPERSEDED by c79ec7ca / ADR-0023.]** This requirement (the `navigation` preset as the default MCP surface; full surface via `--preset full` / `--all-tools`) is superseded: the default is now the `substrate` preset (the navigation core plus `recall` + `verify_claim` + `blast_radius`, 13 tools), and `--preset navigation` remains the lean navigate-only escape.
 
 > Decision recorded: a6c916ed
 > Date: 2026-06-22
@@ -460,6 +460,12 @@ The system SHALL write prove scorecards atomically with O_CREAT|O_EXCL and degra
 
 > Decision recorded: dfe33d94
 > Date: 2026-06-23
+### Requirement: FlipDefaultMcpSurfaceToTheSubstrateBothfacesPreset
+
+The system SHALL expose the substrate preset (navigation core plus recall, verify_claim, and blast_radius) as the default MCP tool surface.
+
+> Decision recorded: c79ec7ca
+> Date: 2026-06-28
 
 ## Technical Notes
 
@@ -1113,3 +1119,13 @@ but unreachable — not when keyword mode is simply the unconfigured default.
 - **GIVEN** a configured remote embedding endpoint that is unreachable
 - **WHEN** the index is built
 - **THEN** a one-time notice states the configured endpoint failed and that keyword mode is in use
+
+### Flip default MCP surface to the substrate (both-faces) preset
+
+**Status:** Approved
+**Date:** 2026-06-28
+**ID:** c79ec7ca
+
+Benchmark-cleared. The DefaultSurfaceRevealsAllFaces gate ran all three quantities and none regressed: (1) token economy — substrate ~4.5k tokens, +1.2k over navigation, within the ~10k tool-search threshold; (2) face coverage — substrate exposes navigate+change+remember+verify, navigation only navigate; (3) selection accuracy — substrate 90% vs navigation 80% on shared tool selection (no regression) and 100% vs 0% on governance, plus end-to-end task COMPLETION on the pinned real-repo corpus across TWO models (sonnet + haiku) on BOTH tiers: 100% correctness everywhere, substrate cheaper on 3 of 4 model×tier cells. The lean navigation default under-sold the substrate: agents installed the documented way never discovered recall/verify_claim/blast_radius.
+
+**Consequences:** The out-of-box default install now exposes the substrate preset (navigation core + recall + verify_claim + blast_radius, 13 tools) instead of navigation (10). No tool removed; navigation stays a named preset and is a one-flag reversible escape (--preset navigation). Reverses ADR-0022 (a6c916ed). Lean-default payload budget rises ~13.2KB to ~17.7KB. The BREADTH_POINTER now describes the substrate default and points to full/federation/navigation. Docs/guards updated to the 13-tool default.

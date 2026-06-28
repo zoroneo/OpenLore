@@ -115,7 +115,7 @@ on their own branches/PRs and are checked off here as they ship.
       output budgets. The two heterogeneous inventories (`get_route_inventory`, `get_external_packages`)
       adopt the contract opportunistically.
 
-## Slice 10 — `mcp-quality` / DefaultSurfaceRevealsAllFaces  (ADVANCED — PR #218; deterministic gate + invariant locked, flip still benchmark-gated)
+## Slice 10 — `mcp-quality` / DefaultSurfaceRevealsAllFaces  (SHIPPED — PR #218; gate run across two models, flip executed)
 
 - [x] `scripts/bench-preset-surface.ts` + `npm run bench:surface` (`--json`) — deterministic, no-LLM
       harness measuring the two agent-free gate quantities: TOKEN ECONOMY (per-preset tools/list bytes +
@@ -164,5 +164,9 @@ on their own branches/PRs and are checked off here as they ship.
       `mcp-watcher-parity` flake under full-suite load is pre-existing and passes in isolation).
 - [x] `npm run bench:surface` runs and produces the deterministic preset comparison.
 - [x] Value preserved: no tool/command/preset/language removed (a tool was renamed with a permanent
-      alias — the prior name still works); zero required keys unchanged; no LLM, no network, no artifact.
+      alias — the prior name still works; the default flip kept `--preset navigation` as a reversible
+      escape); zero required keys unchanged; no LLM, no network, no persisted artifact in any hot path.
+- [x] Spec/decision consistency: decision `c79ec7ca` approved + synced to `openspec/specs/{analyzer,drift,cli}`;
+      ADR-0023 created; ADR-0022 marked `superseded`; the prior `navigation`-default requirement annotated
+      SUPERSEDED in the three consolidated specs so no live `SHALL` contradicts the substrate default.
 - [ ] `openspec validate refine-happy-path-and-defaults` (run at archive time).

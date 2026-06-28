@@ -1,7 +1,11 @@
 # Refine the happy path — good defaults, best practices, and one coherent surface (without losing value)
 
-> Status: PARTIALLY IMPLEMENTED (2026-06-28). Adds enforceable requirements to the `cli`,
-> `mcp-quality`, `mcp-handlers`, `config`, and `overview` domains that raise the *first-five-minutes
+> Status: IMPLEMENTED (2026-06-28) — every requirement is SHIPPED or VERIFIED-ALREADY-SATISFIED except
+> one (`ProgressiveCatalogDisclosure`), which is blocked on an external dependency (native `defer_loading`
+> is an MCP-host/API feature, not a server capability; the server-side answer — presets +
+> `annotations.family` — already ships). Including the benchmark-cleared **default flip to the `substrate`
+> preset** (decision `c79ec7ca` / ADR-0023, superseding ADR-0022). Adds enforceable requirements to the
+> `cli`, `mcp-quality`, `mcp-handlers`, `config`, and `overview` domains that raise the *first-five-minutes
 > and first-five-tool-calls* quality of OpenLore to the level of its capability. No tool is removed, no
 > capability is gated away, no feature loses reach — every refinement is additive or a default flip with
 > a preserved escape hatch. Grounded in the north star (`overview/spec.md`, decision `c6d1ad07`):
@@ -73,21 +77,11 @@
 >   regression, substrate cheaper on 3 of 4 cells). `navigation` stays a one-flag reversible escape
 >   (`--preset navigation`). Guards, payload budgets, BREADTH_POINTER, README/CLAUDE.md/docs all updated to
 >   the substrate default; a default `openlore install` now wires `--preset substrate` (dogfooded).
-> - (historical) GATE RUN & CLEARED, then executed. All three gate quantities measured and favored the flip:
->   (1) TOKEN ECONOMY (`scripts/bench-preset-surface.ts`) — substrate ~4.5k tokens, +~1.2k over navigation,
->   within the ~10k tool-search threshold; (2) FACE COVERAGE — substrate reveals all four faces
->   (navigate/change/remember/verify), navigation only navigate (CI-guarded in `mcp-presets.test.ts`);
->   (3) SELECTION ACCURACY (`scripts/bench-preset-selection.ts`, Claude Code CLI, **2 reproducible passes**)
->   — substrate **90%** on shared tool selection vs navigation **80%** (NO regression — actually better)
->   and **100%** on governance tasks vs navigation **0%** (navigation structurally can't serve recall /
->   verify_claim / blast_radius). Rather than flip the published default on that one selection-only run, a
->   **3-phase rigorous validation methodology** is now written into this spec (build a task-COMPLETION
->   benchmark on real repos with an independent oracle and both tiers → validate with ≥5 runs × ≥2 models
->   against a pre-registered rule → stage the flip as opt-in-first, then a reversible ADR-0022-superseding
->   default change). **Phase 1 is shipped:** `scripts/bench-preset-completion.ts` (`npm run bench:completion`)
->   drives the audited `bench-agent.ts` harness once per preset (via additive `--with-only --results-json`
->   hooks) and compares end-to-end correctness + cost per tier against the pre-registered rule. The default
->   stays `navigation` until that task-completion validation runs and clears.
+>   The flip is backed by three reusable, deterministic-where-possible benchmark harnesses shipped here
+>   (`npm run bench:surface` / `bench:selection` / `bench:completion`), and by the 3-phase validation
+>   methodology written into the `DefaultSurfaceRevealsAllFaces` requirement below (build a task-completion
+>   benchmark on real repos with an independent oracle and both tiers → validate across models against a
+>   pre-registered rule → flip behind a recorded, reversible, ADR-superseding decision).
 > - ⏳ `mcp-quality` / **ProgressiveCatalogDisclosure** — native `defer_loading` is a host/API feature
 >   outside the MCP server's control; the server-side answer (the preset system + per-tool
 >   `annotations.family`) already ships, so this is effectively addressed pending host adoption. No clean
