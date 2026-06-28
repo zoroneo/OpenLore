@@ -47,6 +47,8 @@ That one command **auto-detects your agent** (Claude Code, Cursor, Cline, Contin
 
 …and it begins the task already knowing the relevant functions, their callers, the matching specs, the tests, and the risk of changing each one — in a single call. Full setup, variants, and verification: [5-Minute Quickstart](#5-minute-quickstart).
 
+> **Zero config, everything discoverable.** Core value needs no keys. To see every *opt-in* capability — embeddings, covering surfaces, the commit gate, the spec store, and more — whether each is active, and the one command to turn it on, run **`openlore features`**.
+
 ---
 
 ## What you get
