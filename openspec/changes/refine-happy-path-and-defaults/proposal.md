@@ -15,6 +15,17 @@
 >   job (set up · navigate · govern a change · inspect · multi-repo · advanced/experimental) via a faithful
 >   `groupedFormatHelp` override; uncategorized commands fall to an "Other" group so none is ever hidden.
 >   6 unit tests + a wiring guard.
+> - ✅ `overview` / **DocumentationSingleSourceOfTruth** — SHIPPED. Added `docs/README.md`, a task→doc
+>   index mapping intent to the one canonical page (linked from the top-level README "Documentation").
+>   Designated canonical pages for the overlapping concepts and added cross-link banners on the
+>   secondary pages (language-support↔languages, install↔agent-setup, configuration↔providers); added
+>   "historical" banners to the stale `RENAME-TO-OPENLORE.md` / `plan-rag-improvements.md` (no deletion —
+>   redirect-only). Guard test `docs-index.test.ts` fails CI on a broken index link.
+> - ✅ `cli` / **GuaranteedIndexAtFirstSession** — already satisfied in `main` (verified): `install`
+>   builds the index by default and, on a skipped/failed build, prints the one remediation
+>   (`install/index.ts` "Next step: Run \"openlore analyze\""); the MCP server self-bootstraps a cold
+>   start (`cold-start-bootstrap.ts`); a schema reset self-heals via a detached `analyze --force`
+>   (`mcp-watcher.ts` selfHeal). No code change required by this change.
 > - ✅ `mcp-handlers` / **ReadyOrHonestFirstUse** — SHIPPED (default surface + core graph primitives).
 >   Added a shared `notReadyResult(message, reason)` helper that returns a structured, machine-readable
 >   conclusion (`{ error, notReady: true, reason: 'index-absent'|'graph-unavailable', remedy: 'openlore
@@ -37,9 +48,9 @@
 > - ✅ `config` / **DefaultsTrackCurrentLineage** (model-pin clause) — already satisfied in `main`:
 >   `DEFAULT_ANTHROPIC_MODEL` is `claude-sonnet-4-6` and `mcp-tool-count-doc.test.ts` already guards the
 >   documented tool count. (Gap #7's "stale pin" claim was based on a stale design note; corrected below.)
-> - ⏳ Remaining requirements (DefaultSurfaceRevealsAllFaces, ProgressiveCatalogDisclosure,
->   ConciseByDefaultDetailedOnRequest, GuaranteedIndexAtFirstSession, DocumentationSingleSourceOfTruth)
->   — not yet implemented; each is independently shippable.
+> - ⏳ Remaining requirements (DefaultSurfaceRevealsAllFaces — needs an agent benchmark;
+>   ProgressiveCatalogDisclosure — needs host tool-search support; ConciseByDefaultDetailedOnRequest —
+>   broad, per-tool concise/detailed design) — not yet implemented; each is independently shippable.
 
 ## The gap
 
@@ -478,6 +489,12 @@ ceiling.
 
 #### Requirement: GuaranteedIndexAtFirstSession
 
+> ✅ ALREADY SATISFIED in `main` (verified 2026-06-28, PR #218). `install` builds the index by default;
+> on a skipped (`--no-analyze`) or failed build it surfaces the single remediation command
+> ("Next step: Run \"openlore analyze\"" — `src/cli/install/index.ts`). The MCP server self-bootstraps a
+> first build on cold start (`cold-start-bootstrap.ts`), and a schema-version reset self-heals via a
+> detached `analyze --force` (`mcp-watcher.ts` selfHeal). No code change required by this change.
+
 `openlore install` SHALL build the structural index by default. If the build is skipped (`--no-analyze`)
 or fails, the outcome SHALL be surfaced with the single command that completes it, and the cold-start MCP
 server SHALL self-bootstrap a first build on first graph-tool use rather than serving degraded results
@@ -613,6 +630,14 @@ documented "N tools" or "N languages" figure drifts from its measured source of 
 ### ADDED Requirements
 
 #### Requirement: DocumentationSingleSourceOfTruth
+
+> ✅ IMPLEMENTED (2026-06-28, PR #218). `docs/README.md` is the task→doc index (intent → one canonical
+> page), grouped by job and linked from the top-level README "Documentation" section. Canonical pages
+> are designated for the overlapping concepts, with cross-link banners on the secondary pages
+> (`language-support.md`↔`languages.md`, `install.md`↔`agent-setup.md`, `configuration.md`↔`providers.md`);
+> the stale `RENAME-TO-OPENLORE.md` and `plan-rag-improvements.md` carry "historical" banners pointing to
+> the index — **no reference content deleted, redirect-only**. `docs-index.test.ts` fails CI if any link
+> in the index goes dead or a canonical page is dropped.
 
 Each concept SHALL have exactly one canonical documentation page. Catalogued duplicates (e.g. language
 support, agent setup, provider/configuration) SHALL be merged into, or cross-linked to, a single

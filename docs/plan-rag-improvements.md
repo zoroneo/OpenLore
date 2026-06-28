@@ -1,5 +1,9 @@
 # Plan — openlore RAG improvements (Pistes 2, 3, 4 + orient)
 
+> **Historical planning sketch** (kept for the record). For current capabilities see the
+> [documentation index](README.md) — e.g. [semantic-search.md](semantic-search.md) and
+> [mcp-tools.md](mcp-tools.md).
+
 ## Problème concret
 
 Un agent coding reçoit une tâche sur openlore. Il appelle `orient`. `orient` retourne des fonctions et des fichiers — mais pas le contenu des specs. L'agent doit appeler `get_spec` séparément, s'il pense à le faire. Dans la pratique : il lit du code brut, infère les contrats de données lui-même, et manque les dépendances cross-domaines.

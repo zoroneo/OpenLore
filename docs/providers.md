@@ -1,5 +1,9 @@
 ## LLM Providers
 
+> This page is the canonical LLM **provider** reference. For the full `.openlore/config.json` schema
+> (including where these provider values go), see [configuration.md](configuration.md). An LLM is
+> optional — `analyze`/`orient`/the graph tools need no API key.
+
 openlore supports nine providers. The default is Anthropic Claude.
 
 | Provider | `provider` value | API key env var | Default model |

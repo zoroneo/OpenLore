@@ -1,5 +1,9 @@
 ## Configuration
 
+> This page documents `.openlore/config.json`. For the LLM **provider** table (keys, env vars,
+> default models), see [providers.md](providers.md). To list opt-in features and how to enable each,
+> run `openlore features`.
+
 `openlore init` creates `.openlore/config.json`:
 
 ```json

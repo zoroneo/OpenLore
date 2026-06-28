@@ -1,5 +1,9 @@
 # Supported languages
 
+> **Canonical capability matrix:** for *what OpenLore extracts per language* (the per-capability
+> support matrix and the "add a language" checklist), see [language-support.md](language-support.md).
+> This page is the per-language narrative; the matrix there is the source of truth.
+
 OpenLore extracts a call graph (functions as nodes, calls as edges) per file via
 tree-sitter. Every language rides the same primitives (`FunctionNode` /
 `CallEdge` / `ClassNode`) and is surfaced by every MCP tool with no tool-side

@@ -1,5 +1,8 @@
 # Rename: spec-gen → OpenLore
 
+> **Historical — completed.** The rename to OpenLore shipped long ago; this checklist is kept for the
+> record only. For current docs start at the [documentation index](README.md) and [install.md](install.md).
+
 > Source-of-truth checklist for renaming this project from **spec-gen** to **OpenLore**.
 >
 > Status: **Planning** — this document lands first (PR 1). The actual rename lands in a follow-up PR (PR 2). After merge, the codebase is re-analyzed to verify 0 residual `spec-gen` references.

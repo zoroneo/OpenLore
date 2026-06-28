@@ -490,8 +490,11 @@ We'd rather you know these up front than discover them mid-task.
 
 ## Documentation
 
+**Start here:** the [documentation index](docs/README.md) maps what you want to do to the one canonical page that answers it.
+
 | Topic | Doc |
 |-------|-----|
+| Full documentation index (task → canonical page) | [docs/README.md](docs/README.md) |
 | MCP tools reference (72 tools + parameters) | [docs/mcp-tools.md](docs/mcp-tools.md) |
 | `openlore install` — auto-configure agent surfaces | [docs/install.md](docs/install.md) |
 | Agent setup (Claude Code, Cline, OpenCode, Vibe…) | [docs/agent-setup.md](docs/agent-setup.md) |

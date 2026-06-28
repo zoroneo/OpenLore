@@ -77,19 +77,36 @@ on their own branches/PRs and are checked off here as they ship.
 - [x] Scope note: pre-existing behavior was already honest (never silent-empty); this makes it
       machine-actionable + consistent. Opt-in specialized handlers stay honest, migrate opportunistically.
 
+## Slice 7 — `overview` / DocumentationSingleSourceOfTruth  (SHIPPED — PR #218)
+
+- [x] `docs/README.md` — task→doc index (intent → one canonical page), grouped by job; linked from the
+      top-level README "Documentation" section.
+- [x] Canonical designations + cross-link banners on the overlapping pages: `language-support.md` ↔
+      `languages.md`, `install.md` ↔ `agent-setup.md`, `configuration.md` ↔ `providers.md`.
+- [x] "Historical" banners on stale pages (`RENAME-TO-OPENLORE.md`, `plan-rag-improvements.md`) pointing
+      to the index — redirect-only, no reference content deleted.
+- [x] Guard: `docs-index.test.ts` (index exists; every relative link resolves; canonical pages present).
+
+## Slice 8 — `cli` / GuaranteedIndexAtFirstSession  (ALREADY SATISFIED in `main`)
+
+- [x] `install` builds the index by default; skipped/failed build prints the one remediation
+      ("Next step: Run \"openlore analyze\"" — `src/cli/install/index.ts`).
+- [x] Cold-start self-bootstrap (`cold-start-bootstrap.ts`); schema-reset self-heal via detached
+      `analyze --force` (`mcp-watcher.ts`). No code change required.
+
 ## Remaining slices (not started — each independently shippable)
 
 - [ ] `mcp-quality` / DefaultSurfaceRevealsAllFaces — run the substrate-vs-navigation benchmark; flip default.
 - [ ] `mcp-quality` / ProgressiveCatalogDisclosure — adopt Tool Search / `defer_loading` where supported.
-- [ ] `mcp-quality` / NoRedundantConclusions (prose) — sibling "use X instead" in description prose.
-- [ ] `mcp-handlers` / ConciseByDefaultDetailedOnRequest — `responseFormat` + truncation receipts.
-- [ ] `cli` / GuaranteedIndexAtFirstSession — surface skipped/failed build with its one remediation.
-- [ ] `overview` / DocumentationSingleSourceOfTruth — one canonical page per concept; task→doc index.
+- [ ] `mcp-quality` / NoRedundantConclusions (prose) — sibling "use X instead" in description prose
+      (already enforced as a CI guard in `tool-contract.test.ts`; prose-quality strengthening pending).
+- [ ] `mcp-handlers` / ConciseByDefaultDetailedOnRequest — `responseFormat` + truncation receipts
+      (needs per-tool concise/detailed design; broad surface).
 
-## Verification (PR #218, after slices 1, 2, 5, 6)
+## Verification (PR #218, after slices 1, 2, 5, 6, 7)
 
 - [x] `npm run build` clean; `tsc --noEmit` clean.
-- [x] `vitest run src examples` green — 282 files, 5572 passed, 2 skipped.
+- [x] `vitest run src examples` green — 283 files, 5575 passed, 2 skipped.
 - [x] Value preserved: no tool/command/preset/language removed (a tool was renamed with a permanent
       alias — the prior name still works); zero required keys unchanged; no LLM, no network, no artifact.
 - [ ] `openspec validate refine-happy-path-and-defaults` (run at archive time).

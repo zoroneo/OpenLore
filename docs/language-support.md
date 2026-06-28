@@ -2,7 +2,8 @@
 
 OpenLore's reach is its languages. This page is the canonical reference for **what OpenLore
 extracts per language**, how that is made observable, and the minimal checklist for adding or
-widening a language.
+widening a language. (For the per-language narrative and examples, see
+[languages.md](languages.md).)
 
 ## The capability set
 

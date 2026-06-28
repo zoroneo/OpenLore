@@ -1,5 +1,9 @@
 ## Agent Setup
 
+> **Just want the setup steps?** Run one command — see [install.md](install.md), the canonical
+> setup guide (`openlore install` auto-detects and wires your agent). This page explains *why* the
+> wiring helps and what an agent gains; the concrete steps live there.
+
 Agents working on an unfamiliar codebase spend the first quarter of every session on discovery: reading files, running grep, inferring architecture from directory names. Each of those file reads costs tokens. On a large codebase, an agent can burn **tens of thousands of tokens** just answering "where do I even start?" — before writing a single line of useful code.
 
 openlore eliminates this overhead. Run it once, wire two files into your agent's context, and every subsequent session starts with the agent already knowing:
