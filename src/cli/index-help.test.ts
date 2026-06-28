@@ -24,6 +24,12 @@ describe('CLI onboarding front door', () => {
     expect(source).not.toMatch(/openlore test\s+Generate spec-driven tests/);
   });
 
+  it('surfaces `openlore features` so opt-in capabilities are discoverable from the front door', () => {
+    // ZeroConfigWithGuidedActivation: a user must be able to find "where do I turn on X?"
+    // without grepping the docs — the front-door epilog names the features command.
+    expect(source).toMatch(/openlore features/);
+  });
+
   it('shows help and exits 0 on a bare `openlore` (no command), not the Commander default', () => {
     // A new user typing just `openlore` to explore should get help on stdout + exit 0,
     // not Commander's default (help on stderr, exit 1).

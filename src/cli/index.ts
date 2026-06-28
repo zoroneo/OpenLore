@@ -67,6 +67,7 @@ import { panicCalibrateCommand } from './commands/panic-calibrate.js';
 import { panicReplayCommand } from './commands/panic-replay.js';
 import { gryphWatchCommand } from './commands/gryph-watch.js';
 import { updateCommand } from './commands/update.js';
+import { featuresCommand } from './commands/features.js';
 import { configureLogger } from '../utils/logger.js';
 import { notifyIfUpdateAvailable } from '../core/services/update-notifier.js';
 
@@ -156,6 +157,7 @@ Core commands (no API key):
   openlore analyze      (Re)build the structural index from static analysis
   openlore prove        Measure OpenLore's token value on YOUR repo (--estimate = no API key)
   openlore doctor       Check your setup and tell you exactly what to fix
+  openlore features     List opt-in features, what's active, and how to turn on the rest
 
 Spec authoring (optional, needs an LLM API key):
   openlore generate     Generate OpenSpec spec files from the analysis
@@ -183,6 +185,7 @@ program.addCommand(runCommand);
 program.addCommand(mcpCommand);
 program.addCommand(viewCommand);
 program.addCommand(doctorCommand);
+program.addCommand(featuresCommand);
 program.addCommand(setupCommand);
 program.addCommand(refreshStoriesCommand);
 program.addCommand(auditCommand);

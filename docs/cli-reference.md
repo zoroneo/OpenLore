@@ -38,6 +38,7 @@
 | `openlore mcp` | Start MCP server (stdio, for Cline / Claude Code) | No |
 | `openlore serve` | Start a warm local HTTP daemon exposing tools (loopback, for Pi / editors) | No |
 | `openlore doctor` | Check environment and configuration for common issues | No |
+| `openlore features` | List opt-in features, which are active, and the one command/snippet to turn on each (`--json`, `--inactive`) | No |
 | `openlore update` | Upgrade openlore to the latest published version (detects npm-global / Homebrew / npx); `--check` reports availability, `--dry-run` prints the command without running it | No |
 | `openlore refresh-stories` | Refresh story files with latest structural context after each commit | No |
 | `openlore blast-radius` | Pre-flight structural blast-radius briefing for the current diff (advisory; `--install-hook` for a pre-commit hook) | No |
@@ -338,6 +339,36 @@ Checks performed:
 | Disk space | Warns < 500 MB, fails < 200 MB |
 
 Run `openlore doctor` whenever setup instructions aren't working — it tells you exactly what to fix and how.
+
+### Features (what's on, and how to turn on the rest)
+
+OpenLore needs **zero config** for its core value — `orient`, search, blast-radius, and the whole
+structural graph work with no keys set. Everything beyond that core is an independent **opt-in** feature.
+`openlore features` is the single answer to "where do I turn on X?": it reads `.openlore/config.json` and
+a few on-disk markers and reports, for every opt-in feature, whether it is active and the one command or
+config snippet that activates it. Deterministic and local — no LLM, no network.
+
+```bash
+openlore features            # Every feature, its state, and how to enable it
+openlore features --inactive # Only what is not yet turned on
+openlore features --json     # Machine-readable inventory (for scripts / agents)
+```
+
+Features reported (active/inactive detected from config + markers):
+
+| Feature | Activate with |
+|---------|---------------|
+| Semantic embeddings | `openlore embed --local` |
+| Task-scoped context injection | on by default (`contextInjection.mode`) |
+| MCP tool surface | `openlore connect --preset <name>` |
+| Architecture invariants | `.openlore/architecture.json` (layer/forbidden rules) |
+| Change-impact certificate | `impactCertificate.surfaces` in config |
+| Enforcement policy | `enforcement.policy` in config |
+| Blast-radius blocking | `blastRadius.block` in config |
+| Commit gate (pre-commit hook) | `openlore enforce --install-hook` |
+| Agent behavioral governance (panic) | `openlore setup --panic` |
+| Spec-store binding | `specStore` in config |
+| Federation registry | `openlore federation add <path> --name <name>` |
 
 ### PR review (`openlore review`)
 
