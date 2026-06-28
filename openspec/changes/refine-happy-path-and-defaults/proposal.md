@@ -64,12 +64,19 @@
 > - ✅ `config` / **DefaultsTrackCurrentLineage** (model-pin clause) — already satisfied in `main`:
 >   `DEFAULT_ANTHROPIC_MODEL` is `claude-sonnet-4-6` and `mcp-tool-count-doc.test.ts` already guards the
 >   documented tool count. (Gap #7's "stale pin" claim was based on a stale design note; corrected below.)
-> - ⏳ Remaining requirements: **DefaultSurfaceRevealsAllFaces** — needs an agent benchmark to clear the
->   default flip (mechanism, the `substrate` preset, already exists); **ProgressiveCatalogDisclosure** —
->   native `defer_loading` is a host/API feature outside the MCP server's control, and the server-side
->   answer (the preset system + per-tool `annotations.family`) already ships, so this is effectively
->   addressed pending host adoption. No further independently-shippable code remains in this change
->   without those external dependencies.
+> - 🔄 `mcp-quality` / **DefaultSurfaceRevealsAllFaces** — ADVANCED (deterministic gate + invariant locked;
+>   flip still benchmark-gated). Added `scripts/bench-preset-surface.ts` (`npm run bench:surface`) — a
+>   deterministic, no-LLM harness that measures the two gate quantities it *can*: TOKEN ECONOMY (substrate
+>   costs +4.5 KB / ~+1.2k tokens over navigation, ~4.5k total — well within the ~10k tool-search
+>   threshold) and FACE COVERAGE (substrate reveals all four faces — navigate/change/remember/verify;
+>   navigation reveals only navigate). Locked the structural precondition with a CI guard in
+>   `mcp-presets.test.ts` (substrate IS face-complete; the lean default is navigate-only). The third gate
+>   quantity — SELECTION ACCURACY — needs a live agent over a task corpus and is not run here; the harness
+>   documents the protocol. The default deliberately stays `navigation` until that agent run clears it.
+> - ⏳ `mcp-quality` / **ProgressiveCatalogDisclosure** — native `defer_loading` is a host/API feature
+>   outside the MCP server's control; the server-side answer (the preset system + per-tool
+>   `annotations.family`) already ships, so this is effectively addressed pending host adoption. No clean
+>   server-side code remains.
 
 ## The gap
 
@@ -405,6 +412,17 @@ extends, and SHALL NOT weaken, the existing token-budget and `MAX_PROVENANCE_EDG
 ### ADDED Requirements
 
 #### Requirement: DefaultSurfaceRevealsAllFaces
+
+> 🔄 ADVANCED (2026-06-28, PR #218) — deterministic gate evidence produced + the structural precondition
+> locked; the default flip remains correctly benchmark-gated and is NOT done. `scripts/bench-preset-surface.ts`
+> (`npm run bench:surface`, `--json`) deterministically measures the two no-agent gate quantities:
+> *token economy* (substrate ~4.5k tokens, +~1.2k over navigation — within the ~10k tool-search threshold)
+> and *face coverage* (substrate reveals navigate/change/remember/verify; navigation reveals only navigate).
+> A CI guard in `mcp-presets.test.ts` locks the precondition: substrate IS face-complete and the lean
+> default is navigate-only, so the flip is both meaningful and structurally ready. The third quantity —
+> *selection accuracy* — requires a live agent over a task corpus (protocol documented in the harness) and
+> is not run here, so per this requirement's own evidence-gate the active default stays `navigation` until
+> that run clears it.
 
 The active out-of-box default tool surface SHALL expose at least one tool from each high-value face of the
 substrate — **navigate**, **recall** (the remember family's read), **verify**, and **change-weigh** — so

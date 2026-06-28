@@ -115,21 +115,33 @@ on their own branches/PRs and are checked off here as they ship.
       output budgets. The two heterogeneous inventories (`get_route_inventory`, `get_external_packages`)
       adopt the contract opportunistically.
 
+## Slice 10 — `mcp-quality` / DefaultSurfaceRevealsAllFaces  (ADVANCED — PR #218; deterministic gate + invariant locked, flip still benchmark-gated)
+
+- [x] `scripts/bench-preset-surface.ts` + `npm run bench:surface` (`--json`) — deterministic, no-LLM
+      harness measuring the two agent-free gate quantities: TOKEN ECONOMY (per-preset tools/list bytes +
+      est. tokens, using the exact budget-guard measurement) and FACE COVERAGE (capability families per
+      preset). Prints the navigation→substrate delta + a verdict on the deterministic half.
+- [x] Measured: substrate is face-complete (navigate+change+remember+verify) at ~4.5k tokens (+~1.2k over
+      navigation, within the ~10k tool-search threshold); navigation reveals only navigate.
+- [x] CI guard in `mcp-presets.test.ts`: substrate reveals all four high-value faces; the lean default is
+      navigate-only — locking the structural precondition the flip depends on.
+- [ ] SELECTION ACCURACY over a task corpus — requires a live agent (protocol documented in the harness);
+      NOT run here. Per the requirement's evidence-gate, the active default stays `navigation` until it clears.
+
 ## Remaining slices (blocked on external dependencies — no clean code left in this change)
 
-- [ ] `mcp-quality` / DefaultSurfaceRevealsAllFaces — the `substrate` preset (mechanism) exists; the
-      default flip is **benchmark-gated** and the agent benchmark has not been run here.
 - [ ] `mcp-quality` / ProgressiveCatalogDisclosure — native `defer_loading` is a host/API feature, not an
       MCP-server capability; the server-side answer (preset system + `annotations.family`) already ships.
 - [x] `mcp-quality` / NoRedundantConclusions (prose) — the sibling cross-reference is ALREADY ENFORCED by
       `tool-contract.test.ts` ("each member names at least one near-sibling in its own description"); the
       remaining "lead-with-action" prose quality is not deterministically testable and is left as-is.
 
-## Verification (PR #218, after slices 1, 2, 5, 6, 7, 9 + inventory family)
+## Verification (PR #218, after slices 1, 2, 5, 6, 7, 9 + inventory family, 10)
 
 - [x] `npm run build` clean; `tsc --noEmit` clean.
-- [x] `vitest run src examples` green — 283 files, 5587 passed, 2 skipped (the lone intermittent
+- [x] `vitest run src examples` green — 283 files, 5589 passed, 2 skipped (the lone intermittent
       `mcp-watcher-parity` flake under full-suite load is pre-existing and passes in isolation).
+- [x] `npm run bench:surface` runs and produces the deterministic preset comparison.
 - [x] Value preserved: no tool/command/preset/language removed (a tool was renamed with a permanent
       alias — the prior name still works); zero required keys unchanged; no LLM, no network, no artifact.
 - [ ] `openspec validate refine-happy-path-and-defaults` (run at archive time).

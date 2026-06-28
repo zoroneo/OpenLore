@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { selectActiveTools, TOOL_PRESETS, TOOL_DEFINITIONS, mcpCommand, BREADTH_POINTER, leanDefaultActive, resolvePresetName, renderToolSurfaceByFamily, renderActiveToolSurface } from './mcp.js';
 import { LEAN_DEFAULT_PRESET } from '../../constants.js';
+import { capabilityFamily, type CapabilityFamily } from '../../core/services/mcp-handlers/tool-contract.js';
 
 const NAV = [
   'orient', 'search_code', 'get_subgraph', 'trace_execution_path',
@@ -80,6 +81,36 @@ describe('MCP tool presets', () => {
     expect(LEAN_DEFAULT_PRESET).toBe('navigation');
     expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).not.toContain('recall');
     expect(selectActiveTools(TOOL_DEFINITIONS, {}).map(t => t.name)).not.toContain('verify_claim');
+  });
+
+  // DefaultSurfaceRevealsAllFaces (change: refine-happy-path-and-defaults): the
+  // candidate default `substrate` must be FACE-COMPLETE — it exposes at least one tool
+  // from each high-value face (navigate + remember + verify + change) — while the current
+  // lean default does not. This is the structural precondition the benchmark-gated flip
+  // depends on; the deterministic token-economy + face-coverage evidence is produced by
+  // scripts/bench-preset-surface.ts.
+  const facesOf = (preset: string): Set<CapabilityFamily> => {
+    const fams = new Set<CapabilityFamily>();
+    for (const t of selectActiveTools(TOOL_DEFINITIONS, { preset })) {
+      const f = capabilityFamily(t.name);
+      if (f) fams.add(f);
+    }
+    return fams;
+  };
+  const HIGH_VALUE_FACES: CapabilityFamily[] = ['navigate', 'remember', 'verify', 'change'];
+
+  it('substrate reveals all high-value faces (navigate + remember + verify + change)', () => {
+    const faces = facesOf('substrate');
+    for (const face of HIGH_VALUE_FACES) {
+      expect(faces.has(face), `substrate must expose the "${face}" face`).toBe(true);
+    }
+  });
+
+  it('the lean navigation default reveals only the navigate face (so the flip adds value)', () => {
+    const faces = facesOf(LEAN_DEFAULT_PRESET);
+    expect([...faces]).toEqual(['navigate']);
+    // The flip to substrate is meaningful precisely because it adds the missing faces.
+    expect(HIGH_VALUE_FACES.every(f => faces.has(f))).toBe(false);
   });
 
   // change: unify-navigation-and-governance-substrate — `--list-tools` renders the active
