@@ -39,6 +39,8 @@ interface Opts {
   withFullTools: boolean;   // WITH exposes all ~60 tools instead of a lean preset
   withPreset: string;       // lean tool preset for the WITH arm (default: navigation)
   leanOrient: boolean;      // instruct the WITH arm to call orient with lean:true (Spec 27)
+  resultsJson?: string;     // also emit machine-readable per-task cells to this path (for orchestrators)
+  withOnly: boolean;        // skip the WITHOUT baseline arm (preset-vs-preset orchestration reruns the WITH arm)
 }
 
 function parseArgs(argv: string[]): Opts {
@@ -64,6 +66,8 @@ function parseArgs(argv: string[]): Opts {
     withFullTools: argv.includes('--with-full-tools'),
     withPreset: get('--with-preset') ?? 'navigation',
     leanOrient: argv.includes('--lean-orient'),
+    resultsJson: get('--results-json'),
+    withOnly: argv.includes('--with-only'),
   };
 }
 
@@ -490,11 +494,31 @@ async function main(): Promise<void> {
     const without: Metrics[] = [];
     const withRuns: Metrics[] = [];
     for (let i = 0; i < opts.runs; i++) {
-      without.push(runAgent(task, dir, 'without', opts, configs, i));
+      // --with-only skips the baseline: a preset-vs-preset orchestrator reruns the
+      // WITH arm under each preset and never needs the (identical) WITHOUT baseline.
+      if (!opts.withOnly) without.push(runAgent(task, dir, 'without', opts, configs, i));
       withRuns.push(runAgent(task, dir, 'with', opts, configs, i));
     }
     perTask.push({ task, without: summarize(without), with: summarize(withRuns) });
     console.error(`[bench-agent] done: ${task.id}`);
+  }
+
+  // Optional machine-readable dump for orchestrators (e.g. bench-preset-completion):
+  // the per-task WITH/WITHOUT cells + the tier, so a caller can compare two presets
+  // without re-parsing the markdown report. Additive — the markdown report is unchanged.
+  if (opts.resultsJson) {
+    const payload = {
+      opts: { model: opts.model, runs: opts.runs, withPreset: opts.withPreset, withFullTools: opts.withFullTools, dryRun: opts.dryRun },
+      perTask: perTask.map((p) => ({
+        taskId: p.task.id,
+        repo: p.task.repo,
+        tier: REPOS.find((r) => r.id === p.task.repo)?.tier ?? 'large-unfamiliar',
+        without: p.without,
+        with: p.with,
+      })),
+    };
+    writeFileSync(opts.resultsJson, JSON.stringify(payload, null, 2), 'utf-8');
+    console.error(`[bench-agent] wrote machine-readable results: ${opts.resultsJson}`);
   }
 
   const report = renderReport(opts, perTask);

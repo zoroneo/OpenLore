@@ -72,10 +72,14 @@
 >   (3) SELECTION ACCURACY (`scripts/bench-preset-selection.ts`, Claude Code CLI, **2 reproducible passes**)
 >   — substrate **90%** on shared tool selection vs navigation **80%** (NO regression — actually better)
 >   and **100%** on governance tasks vs navigation **0%** (navigation structurally can't serve recall /
->   verify_claim / blast_radius). Per the requirement ("move the default unless the evaluation shows a
->   regression"), no regression was shown, so the flip is cleared. The one-line `LEAN_DEFAULT_PRESET`
->   change + its guard/doc/ADR-0022-supersession updates are held for explicit sign-off because flipping a
->   published product default is outward-facing.
+>   verify_claim / blast_radius). Rather than flip the published default on that one selection-only run, a
+>   **3-phase rigorous validation methodology** is now written into this spec (build a task-COMPLETION
+>   benchmark on real repos with an independent oracle and both tiers → validate with ≥5 runs × ≥2 models
+>   against a pre-registered rule → stage the flip as opt-in-first, then a reversible ADR-0022-superseding
+>   default change). **Phase 1 is shipped:** `scripts/bench-preset-completion.ts` (`npm run bench:completion`)
+>   drives the audited `bench-agent.ts` harness once per preset (via additive `--with-only --results-json`
+>   hooks) and compares end-to-end correctness + cost per tier against the pre-registered rule. The default
+>   stays `navigation` until that task-completion validation runs and clears.
 > - ⏳ `mcp-quality` / **ProgressiveCatalogDisclosure** — native `defer_loading` is a host/API feature
 >   outside the MCP server's control; the server-side answer (the preset system + per-tool
 >   `annotations.family`) already ships, so this is effectively addressed pending host adoption. No clean
@@ -457,6 +461,51 @@ changes.
 - **THEN** the choice is backed by an agent-benchmark result recorded as a decision
 - **AND** if the broader surface regresses selection accuracy or token economy, the default stays lean
   and the face-complete surface remains a named preset
+
+##### Validation methodology — how to build, validate, and flip (the rigorous path)
+
+The first agent run (a 13-task *selection* eval via the Claude Code CLI) cleared the gate (substrate 90%
+shared / 100% governance vs navigation 80% / 0%), but a single self-authored, single-model, selection-only
+run is suggestive, not decision-grade for reversing a *published* default. The default SHALL therefore be
+flipped only on the following rigorous basis, in three phases:
+
+**Phase 1 — Build a benchmark that measures task COMPLETION, not just selection.**
+- Measure end-to-end task completion under `navigation` vs `substrate` on the pinned real-repo corpus,
+  scored by the INDEPENDENT `expect.mustInclude` oracle (not OpenLore's own graph), reporting **correctness
+  AND efficiency** (tokens / tool-calls / cost). First-tool selection is one secondary metric, not the verdict.
+- Reuse the audited `bench-agent.ts` harness (clone @ SHA → analyze → headless `claude` → oracle → metrics)
+  rather than a second implementation. Shipped as `scripts/bench-preset-completion.ts` (`npm run
+  bench:completion`), which drives `bench-agent.ts`'s WITH arm once per preset via the additive
+  `--with-only --results-json` hook and compares the two arms per repo tier.
+- Reduce author bias: grow the corpus beyond the initial set, source the `expected` answers independently of
+  whoever writes the tasks, and keep a held-out slice not consulted while iterating.
+- Test where breadth should LOSE, not only where it wins: include the `small-familiar` tier (OpenLore's
+  documented worst case) alongside `large-unfamiliar`, so the extra tools' cost is visible.
+
+**Phase 2 — Validate with statistics and a pre-registered rule.**
+- Repeat each arm **≥5 runs across ≥2 models** (including a weaker model, where tool-confusion bites hardest);
+  report **mean ± variance**, not a point estimate.
+- The decision rule is **pre-registered** (fixed before viewing results) and encoded in the harness:
+  *flip iff, on EVERY tier, substrate's correctness is not worse than navigation's by more than 5pp, AND
+  substrate's median cost is within +20% of navigation's; otherwise hold.* The deterministic token/face
+  gate (`bench:surface`) must also still hold.
+
+**Phase 3 — Stage the flip; do not big-bang a published default.**
+- First ship `substrate` as the *recommended opt-in* (documented `openlore install --preset substrate`) and
+  gather real-install dogfood/telemetry for a release or two — real usage outweighs any benchmark.
+- Then flip behind a recorded decision: the one-line `LEAN_DEFAULT_PRESET` change, **superseding ADR-0022**
+  with the multi-run/multi-model numbers, the guard/budget/doc updates, a CHANGELOG note, and a trivially
+  reversible escape (`--preset navigation` stays a named preset).
+
+##### Scenario: The flip rests on task-completion evidence, repeated, across models, on both tiers
+
+- **GIVEN** the candidate `substrate` default and the lean `navigation` default
+- **WHEN** the flip is evaluated
+- **THEN** the evidence is end-to-end task-completion correctness + efficiency from `bench:completion`,
+  repeated across runs and models, on both the small-familiar and large-unfamiliar tiers, judged against a
+  rule fixed before the results were seen
+- **AND** the flip is staged (opt-in recommendation first, then a reversible default change that supersedes
+  ADR-0022) rather than shipped as a benchmark-driven surprise
 
 #### Requirement: ProgressiveCatalogDisclosure
 
