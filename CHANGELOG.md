@@ -7,6 +7,66 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 _Nothing yet — the next release accumulates here._
 
+## [2.1.5] - 2026-06-28
+
+**Happy-path polish + the benchmark-cleared `substrate` default** (PR #218, change
+`refine-happy-path-and-defaults`). This release raises the *first-five-minutes / first-five-tool-calls*
+quality of OpenLore to the level of its capability: it makes opt-in features discoverable, the CLI and
+tool surface legible, first use honest, and verbose output economical — and, on a benchmark run across
+two models and both repo tiers, flips the default MCP surface to the both-faces `substrate` preset.
+
+Everything is **additive and backward-compatible** — no tool, command, preset, language, or capability
+removed; no required config added; deterministic and local-first (no LLM in any serving path). The two
+behavior changes below each ship with a one-flag/one-param escape, so callers that want the prior
+behavior keep it. The runtime version is read from `package.json`, so `--version` and the `tools/list`
+banner track this bump automatically.
+
+### Changed
+
+- **Default MCP surface is now the `substrate` preset (13 tools, both faces)** — flipped from the
+  10-tool `navigation` preset. A default `openlore install` / bare `openlore mcp` now exposes the
+  navigation graph-traversal core **plus** the three highest-value governance reads (`recall`,
+  `verify_claim`, `blast_radius`), so an agent is both-faced out of the box. The flip cleared the
+  `DefaultSurfaceRevealsAllFaces` gate: deterministic token economy (~4.5k tokens, +1.2k over
+  navigation, within the ~10k tool-search threshold) and face coverage, **plus** an agent benchmark via
+  the Claude Code CLI — selection accuracy (substrate 90% vs navigation 80% shared, 100% vs 0%
+  governance) and end-to-end task completion across **two models (sonnet + the weaker haiku) and both
+  repo tiers** (100% correctness everywhere, no regression, substrate cheaper on 3 of 4 cells). Recorded
+  as decision `c79ec7ca` / **ADR-0023, superseding ADR-0022**. **Escape:** `--preset navigation`
+  restores the lean navigate-only core; `--preset full` still wires all 72 tools.
+- **Verbose tools are concise by default** (`ConciseByDefaultDetailedOnRequest`) — `get_duplicate_report`
+  and the four list inventories (`get_middleware_inventory`, `get_schema_inventory`,
+  `get_ui_component_inventory`, `get_env_vars`) now return a concise summary (totals + a sample + a
+  truncation receipt naming the fuller call) instead of the full payload. Measured **−87%**
+  (`get_duplicate_report`) and **−45%** (`get_env_vars`) on this repo; small inventories return in full
+  (no data lost). **Escape:** `responseFormat: "detailed"` returns the complete payload.
+- **`get_ui_components` → `get_ui_component_inventory`** — renamed for consistency with its
+  `get_*_inventory` siblings. The prior name keeps working forever as a permanent deprecated **alias**;
+  no caller breaks.
+
+### Added
+
+- **`openlore features`** — lists every opt-in feature (embeddings, covering surfaces, enforcement
+  policy, panic, spec store, federation, …), whether each is active, and the one command/snippet to turn
+  it on. Answers "where do I turn on X?" with zero required config. `--json`, `--inactive`.
+- **Job-grouped `openlore --help`** — the ~49 commands are grouped by job (set up · navigate · govern ·
+  inspect · multi-repo · advanced/experimental) instead of one flat list; nothing is hidden.
+- **Structured ready-or-honest first use** — a graph tool invoked before the index exists returns a
+  machine-readable `{ notReady, reason, remedy }` (or self-bootstraps) instead of a silently-empty
+  result, so an agent never mistakes "no index" for "no findings."
+- **Documentation index** — `docs/README.md` maps a task to the one canonical page; overlapping pages
+  cross-link to their canonical source; stale pages carry redirect banners.
+- **Preset benchmark harnesses** — `npm run bench:surface` / `bench:selection` / `bench:completion`
+  (deterministic + Claude Code CLI) reproduce the default-flip evidence; `bench-agent.ts` gains additive
+  `--results-json` / `--with-only` hooks.
+
+### Notes
+
+- `ProgressiveCatalogDisclosure` is satisfied by the shipped server-side design (preset fallback +
+  per-tool `annotations.family`). Native `defer_loading` / Tool Search is a client/API responsibility an
+  MCP server cannot emit, and the server-side `list_changed` alternative was rejected because it
+  invalidates the prompt cache the requirement asks to preserve.
+
 ## [2.1.4] - 2026-06-27
 
 The largest release since v2.1.2: everything merged since the `v2.1.3` tag (PRs #183–#216) plus the
