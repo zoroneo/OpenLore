@@ -1,9 +1,9 @@
 # Refine the happy path — good defaults, best practices, and one coherent surface (without losing value)
 
-> Status: IMPLEMENTED (2026-06-28) — every requirement is SHIPPED or VERIFIED-ALREADY-SATISFIED except
-> one (`ProgressiveCatalogDisclosure`), which is blocked on an external dependency (native `defer_loading`
-> is an MCP-host/API feature, not a server capability; the server-side answer — presets +
-> `annotations.family` — already ships). Including the benchmark-cleared **default flip to the `substrate`
+> Status: IMPLEMENTED (2026-06-28) — every requirement is SHIPPED, VERIFIED-ALREADY-SATISFIED, or (for
+> `ProgressiveCatalogDisclosure`) satisfied by the shipped server-side design, with the native-deferral
+> half correctly scoped to the host/API (an MCP server cannot emit `defer_loading`, and the server-side
+> `list_changed` alternative was rejected as cache-hostile). Including the benchmark-cleared **default flip to the `substrate`
 > preset** (decision `c79ec7ca` / ADR-0023, superseding ADR-0022). Adds enforceable requirements to the
 > `cli`, `mcp-quality`, `mcp-handlers`, `config`, and `overview` domains that raise the *first-five-minutes
 > and first-five-tool-calls* quality of OpenLore to the level of its capability. No tool is removed, no
@@ -82,10 +82,12 @@
 >   methodology written into the `DefaultSurfaceRevealsAllFaces` requirement below (build a task-completion
 >   benchmark on real repos with an independent oracle and both tiers → validate across models against a
 >   pre-registered rule → flip behind a recorded, reversible, ADR-superseding decision).
-> - ⏳ `mcp-quality` / **ProgressiveCatalogDisclosure** — native `defer_loading` is a host/API feature
->   outside the MCP server's control; the server-side answer (the preset system + per-tool
->   `annotations.family`) already ships, so this is effectively addressed pending host adoption. No clean
->   server-side code remains.
+> - ✅ `mcp-quality` / **ProgressiveCatalogDisclosure** — SATISFIED by the shipped server-side design. The
+>   server's obligations (expose the full catalog, provide a fallback, lose no capability) are met by the
+>   preset system + per-tool `annotations.family`. The native-deferral half (`defer_loading` / Tool Search)
+>   is a client/API feature an MCP server cannot emit; the server-side `list_changed` alternative was
+>   considered and rejected because it invalidates the prompt cache this requirement asks to preserve.
+>   No further server-side code is appropriate (it would overstep OpenLore's bounds as plumbing).
 
 ## The gap
 
@@ -511,6 +513,21 @@ flipped only on the following rigorous basis, in three phases:
   ADR-0022) rather than shipped as a benchmark-driven surprise
 
 #### Requirement: ProgressiveCatalogDisclosure
+
+> ✅ SATISFIED (2026-06-28) — by the shipped server-side design; the deferral half is a client/API
+> responsibility, out of an MCP server's control. The requirement has two joint goals: full catalog at
+> ~zero upfront cost AND preserved prompt-cache stability. The only mechanism that satisfies BOTH is
+> Anthropic's API-level `defer_loading` / Tool Search Tool, which is set by the **client** in the Messages
+> API `tools` array — an MCP server cannot emit it (its only lever is `tools/list`, whose `inputSchema`s
+> sit in the cached prefix; MCP has no "exclude from prefix" annotation). The one server-side alternative —
+> a `search_tools` meta-tool that adds tools on demand via `notifications/tools/list_changed` — was
+> **considered and rejected**: mutating the advertised tool list mid-session changes the prefix and
+> *invalidates* the prompt cache, violating this requirement's own cache-stability clause (and host
+> `list_changed` support is uneven). So the server's obligations here — *expose the full catalog, provide a
+> fallback, lose no capability* — are met by what already ships: the **preset system** (curated default +
+> `--preset full` escape) and per-tool **`annotations.family`** (the machine-readable grouping a
+> deferral-capable client uses to choose what to load). The native-deferral half correctly belongs to the
+> host/API, not OpenLore.
 
 Where the MCP host supports tool-search / deferred tool loading, the server SHALL expose the **full**
 catalog with a curated core loaded eagerly and the long-tail tools marked deferred, so that breadth costs

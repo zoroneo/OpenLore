@@ -149,10 +149,14 @@ on their own branches/PRs and are checked off here as they ship.
       `--preset navigation` stays a one-flag reversible escape. Dogfooded: a default `openlore install`
       wires `--preset substrate`; `openlore mcp --list-tools` reports "substrate (13 tools, 4 families)".
 
-## Remaining slices (blocked on external dependencies — no clean code left in this change)
+## Closed by design (no further code appropriate)
 
-- [ ] `mcp-quality` / ProgressiveCatalogDisclosure — native `defer_loading` is a host/API feature, not an
-      MCP-server capability; the server-side answer (preset system + `annotations.family`) already ships.
+- [x] `mcp-quality` / ProgressiveCatalogDisclosure — SATISFIED by the shipped server-side design. The
+      server's obligations (expose the full catalog, fallback, lose no capability) are met by the preset
+      system + per-tool `annotations.family`. Native `defer_loading` / Tool Search is a client/API feature
+      an MCP server cannot emit; the server-side `list_changed` alternative was considered and REJECTED —
+      mutating `tools/list` mid-session invalidates the prompt cache the requirement asks to preserve, and
+      host `list_changed` support is uneven. Building it would overstep OpenLore's bounds as plumbing.
 - [x] `mcp-quality` / NoRedundantConclusions (prose) — the sibling cross-reference is ALREADY ENFORCED by
       `tool-contract.test.ts` ("each member names at least one near-sibling in its own description"); the
       remaining "lead-with-action" prose quality is not deterministically testable and is left as-is.
