@@ -64,15 +64,18 @@
 > - ✅ `config` / **DefaultsTrackCurrentLineage** (model-pin clause) — already satisfied in `main`:
 >   `DEFAULT_ANTHROPIC_MODEL` is `claude-sonnet-4-6` and `mcp-tool-count-doc.test.ts` already guards the
 >   documented tool count. (Gap #7's "stale pin" claim was based on a stale design note; corrected below.)
-> - 🔄 `mcp-quality` / **DefaultSurfaceRevealsAllFaces** — ADVANCED (deterministic gate + invariant locked;
->   flip still benchmark-gated). Added `scripts/bench-preset-surface.ts` (`npm run bench:surface`) — a
->   deterministic, no-LLM harness that measures the two gate quantities it *can*: TOKEN ECONOMY (substrate
->   costs +4.5 KB / ~+1.2k tokens over navigation, ~4.5k total — well within the ~10k tool-search
->   threshold) and FACE COVERAGE (substrate reveals all four faces — navigate/change/remember/verify;
->   navigation reveals only navigate). Locked the structural precondition with a CI guard in
->   `mcp-presets.test.ts` (substrate IS face-complete; the lean default is navigate-only). The third gate
->   quantity — SELECTION ACCURACY — needs a live agent over a task corpus and is not run here; the harness
->   documents the protocol. The default deliberately stays `navigation` until that agent run clears it.
+> - 🔄 `mcp-quality` / **DefaultSurfaceRevealsAllFaces** — GATE RUN & CLEARED; flip recommended, awaiting
+>   sign-off on the published-default change. All three gate quantities now measured and favor the flip:
+>   (1) TOKEN ECONOMY (`scripts/bench-preset-surface.ts`) — substrate ~4.5k tokens, +~1.2k over navigation,
+>   within the ~10k tool-search threshold; (2) FACE COVERAGE — substrate reveals all four faces
+>   (navigate/change/remember/verify), navigation only navigate (CI-guarded in `mcp-presets.test.ts`);
+>   (3) SELECTION ACCURACY (`scripts/bench-preset-selection.ts`, Claude Code CLI, **2 reproducible passes**)
+>   — substrate **90%** on shared tool selection vs navigation **80%** (NO regression — actually better)
+>   and **100%** on governance tasks vs navigation **0%** (navigation structurally can't serve recall /
+>   verify_claim / blast_radius). Per the requirement ("move the default unless the evaluation shows a
+>   regression"), no regression was shown, so the flip is cleared. The one-line `LEAN_DEFAULT_PRESET`
+>   change + its guard/doc/ADR-0022-supersession updates are held for explicit sign-off because flipping a
+>   published product default is outward-facing.
 > - ⏳ `mcp-quality` / **ProgressiveCatalogDisclosure** — native `defer_loading` is a host/API feature
 >   outside the MCP server's control; the server-side answer (the preset system + per-tool
 >   `annotations.family`) already ships, so this is effectively addressed pending host adoption. No clean
@@ -420,9 +423,14 @@ extends, and SHALL NOT weaken, the existing token-budget and `MAX_PROVENANCE_EDG
 > and *face coverage* (substrate reveals navigate/change/remember/verify; navigation reveals only navigate).
 > A CI guard in `mcp-presets.test.ts` locks the precondition: substrate IS face-complete and the lean
 > default is navigate-only, so the flip is both meaningful and structurally ready. The third quantity —
-> *selection accuracy* — requires a live agent over a task corpus (protocol documented in the harness) and
-> is not run here, so per this requirement's own evidence-gate the active default stays `navigation` until
-> that run clears it.
+> *selection accuracy* — requires a live agent over a task corpus (protocol documented in the harness).
+>
+> **Update (2026-06-28): the agent benchmark has now been RUN (Claude Code CLI, `scripts/bench-preset-selection.ts`,
+> 2 reproducible passes) and CLEARED.** Substrate scored **90%** vs navigation **80%** on shared tool
+> selection (NO regression — better) and **100%** vs **0%** on governance-face tasks. With all three gate
+> quantities favoring the flip and no regression shown, the default is eligible to move to `substrate`.
+> Executing the one-line `LEAN_DEFAULT_PRESET` flip (+ its guard/doc/ADR-0022-supersession updates) is held
+> for explicit sign-off, as a change to the published product default is outward-facing.
 
 The active out-of-box default tool surface SHALL expose at least one tool from each high-value face of the
 substrate — **navigate**, **recall** (the remember family's read), **verify**, and **change-weigh** — so

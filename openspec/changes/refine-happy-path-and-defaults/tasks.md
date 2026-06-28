@@ -125,8 +125,14 @@ on their own branches/PRs and are checked off here as they ship.
       navigation, within the ~10k tool-search threshold); navigation reveals only navigate.
 - [x] CI guard in `mcp-presets.test.ts`: substrate reveals all four high-value faces; the lean default is
       navigate-only — locking the structural precondition the flip depends on.
-- [ ] SELECTION ACCURACY over a task corpus — requires a live agent (protocol documented in the harness);
-      NOT run here. Per the requirement's evidence-gate, the active default stays `navigation` until it clears.
+- [x] SELECTION ACCURACY — RUN via `scripts/bench-preset-selection.ts` (`npm run bench:selection`) over a
+      13-task corpus using the **Claude Code CLI** (subscription auth, no API key), **2 reproducible passes**:
+      substrate **90%** vs navigation **80%** on shared tool selection (NO regression), **100%** vs **0%**
+      on governance-face tasks (recall / verify_claim / blast_radius). Verdict: flip CLEARED.
+- [ ] EXECUTE the flip — held for explicit sign-off (outward-facing published-default change): flip the
+      one-line `LEAN_DEFAULT_PRESET` constant to `substrate`, update the navigation-default guards/budgets
+      in `mcp-presets.test.ts`, the README/CLAUDE.md/docs "lean navigation default" copy, and supersede
+      ADR-0022 with a new recorded decision citing this benchmark.
 
 ## Remaining slices (blocked on external dependencies — no clean code left in this change)
 
