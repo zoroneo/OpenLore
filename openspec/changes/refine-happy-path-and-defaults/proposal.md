@@ -15,6 +15,12 @@
 >   job (set up · navigate · govern a change · inspect · multi-repo · advanced/experimental) via a faithful
 >   `groupedFormatHelp` override; uncategorized commands fall to an "Other" group so none is ever hidden.
 >   6 unit tests + a wiring guard.
+> - ✅ `mcp-quality` / **ConsistentToolNaming** — SHIPPED. Added the permanent tool-name alias mechanism
+>   (`TOOL_NAME_ALIASES` + `resolveCanonicalToolName`, resolved on both the MCP stdio and `serve` HTTP
+>   transports) and used it to reconcile the one catalogued inconsistency: `get_ui_components` →
+>   `get_ui_component_inventory` (sharing the `_inventory` suffix with its route/middleware/schema
+>   siblings), with the prior name kept working forever as a deprecated alias. Naming + alias-integrity
+>   guard tests; e2e-dogfooded over real stdio (old name still dispatches; unknown names still fail).
 > - ✅ `cli` / **TruthfulDoctorExitCodes** — already satisfied in `main`: `doctor` returns `warn` (not
 >   `fail`) for a missing optional LLM/embedding key, exits `0` on the no-LLM happy path, and checks the
 >   Node floor to the minor version (≥ 22.5). Locked by existing tests (`doctor.test.ts` "missing
@@ -23,9 +29,8 @@
 >   `DEFAULT_ANTHROPIC_MODEL` is `claude-sonnet-4-6` and `mcp-tool-count-doc.test.ts` already guards the
 >   documented tool count. (Gap #7's "stale pin" claim was based on a stale design note; corrected below.)
 > - ⏳ Remaining requirements (ReadyOrHonestFirstUse, DefaultSurfaceRevealsAllFaces,
->   ProgressiveCatalogDisclosure, ConsistentToolNaming, ConciseByDefaultDetailedOnRequest,
->   GuaranteedIndexAtFirstSession, DocumentationSingleSourceOfTruth) — not yet implemented; each is
->   independently shippable.
+>   ProgressiveCatalogDisclosure, ConciseByDefaultDetailedOnRequest, GuaranteedIndexAtFirstSession,
+>   DocumentationSingleSourceOfTruth) — not yet implemented; each is independently shippable.
 
 ## The gap
 
@@ -385,6 +390,17 @@ the full surface stays reachable via `--preset full` / `--all-tools`.
 - **AND** the full surface remains reachable via an explicit full preset
 
 #### Requirement: ConsistentToolNaming
+
+> ✅ IMPLEMENTED (2026-06-28, PR #218) — first increment. The permanent alias mechanism is in place:
+> `TOOL_NAME_ALIASES` (prior → canonical) + `resolveCanonicalToolName()` in `tool-contract.ts`, resolved
+> up front on BOTH transports (`mcp.ts` CallTool handler + `tool-dispatch.ts` entry, reused by `serve`),
+> so a renamed tool's prior name keeps working forever. Applied to the one catalogued inconsistency:
+> `get_ui_components` → `get_ui_component_inventory` (now sharing the `_inventory` suffix with
+> `get_route_inventory`/`get_middleware_inventory`/`get_schema_inventory`). Guards in `tool-aliases.test.ts`:
+> every alias targets a registered tool, no alias shadows a live name, all names are snake_case, and the
+> inventory-retriever family shares its suffix. `remember`/`recall`/`orient` are intentionally NOT renamed
+> (memorable single-verb names; renaming would be value-destroying churn — see Non-goals). Future
+> renames reuse this mechanism.
 
 Every tool name SHALL follow `verb_noun` snake_case. The catalogued inconsistencies SHALL be reconciled so
 that sibling tools share a pattern (inventory retrievers share a suffix; durable-fact operations share the

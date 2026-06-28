@@ -72,7 +72,7 @@ const MCP_TOOLS_TABLE = `
 
 1. **\`orient "<task description>"\`** — always start here. Returns relevant functions, files, spec domains, call paths, and insertion points in one call.
 2. **If the task involves data models, APIs, or config** — call the relevant inventory tool:
-   \`get_schema_inventory\` · \`get_route_inventory\` · \`get_env_vars\` · \`get_ui_components\` · \`get_middleware_inventory\`
+   \`get_schema_inventory\` · \`get_route_inventory\` · \`get_env_vars\` · \`get_ui_component_inventory\` · \`get_middleware_inventory\`
 3. **If debugging a call flow** ("how does X reach Y?") — \`trace_execution_path\`
 4. **Before modifying a function** — \`get_subgraph\` to understand blast radius
 5. **Before opening a PR** — \`check_spec_drift\`

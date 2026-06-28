@@ -83,7 +83,7 @@ export const TOOL_REGISTRY: Record<string, ToolPlan> = {
   get_route_inventory: { kind: 'read', buildArgs: dirOnly },
   get_middleware_inventory: { kind: 'read', buildArgs: dirOnly },
   get_schema_inventory: { kind: 'read', buildArgs: dirOnly },
-  get_ui_components: { kind: 'read', buildArgs: dirOnly },
+  get_ui_component_inventory: { kind: 'read', buildArgs: dirOnly },
   get_env_vars: { kind: 'read', buildArgs: dirOnly },
   get_external_packages: { kind: 'read', buildArgs: dirOnly },
   list_spec_domains: { kind: 'read', buildArgs: dirOnly },

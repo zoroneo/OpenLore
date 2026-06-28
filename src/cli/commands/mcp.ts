@@ -48,7 +48,7 @@ import { readPanicState, mutatePanicStateLocked, getPanicSignalText } from '../.
 import { emit } from '../../core/services/telemetry.js';
 import { readOpenLoreConfig } from '../../core/services/config-manager.js';
 import { MCP_TOOL_MAX_BYTES, LEAN_DEFAULT_PRESET, FULL_PRESET, FULL_PRESET_ALIAS } from '../../constants.js';
-import { capabilityFamily, groupToolsByFamily } from '../../core/services/mcp-handlers/tool-contract.js';
+import { capabilityFamily, groupToolsByFamily, resolveCanonicalToolName } from '../../core/services/mcp-handlers/tool-contract.js';
 import {
   handleGetCallGraph,
   handleGetSubgraph,
@@ -1195,7 +1195,7 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'get_ui_components',
+    name: 'get_ui_component_inventory',
     description:
       'Return the UI component inventory for the project: all detected components with ' +
       'their framework, props, source file, and line number. ' +
@@ -2040,7 +2040,7 @@ const TOOL_ANNOTATIONS: Record<string, typeof _RO | typeof _RWI | typeof _RW> = 
   search_specs: _RO, search_unified: _RO, get_spec: _RO, get_function_body: _RO,
   get_file_dependencies: _RO, generate_change_proposal: _RW, annotate_story: _RW,
   get_route_inventory: _RO, get_middleware_inventory: _RO,
-  get_schema_inventory: _RO, get_ui_components: _RO, get_env_vars: _RO,
+  get_schema_inventory: _RO, get_ui_component_inventory: _RO, get_env_vars: _RO,
   get_external_packages: _RO, audit_spec_coverage: _RO, generate_tests: _RW,
   get_test_coverage: _RO, get_minimal_context: _RO, get_cluster: _RO,
   detect_changes: _RO, get_health_map: _RO, get_surprising_connections: _RO, record_decision: _RW, list_decisions: _RO,
@@ -2396,7 +2396,10 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args = {} } = request.params;
+    const { name: _rawName, arguments: args = {} } = request.params;
+    // Resolve a deprecated tool-name alias to its canonical name up front, so the
+    // schema lookup, arg validation, tracking, and dispatch all see one name.
+    const name = resolveCanonicalToolName(_rawName);
 
     if (options.watchAuto && !autoWatcher) {
       const dir = (args as Record<string, unknown>).directory;

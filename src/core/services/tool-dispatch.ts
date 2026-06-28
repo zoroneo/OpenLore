@@ -17,6 +17,7 @@
 
 import { DEFAULT_DRIFT_MAX_FILES } from '../../constants.js';
 import type { DecisionScope } from '../../types/index.js';
+import { resolveCanonicalToolName } from './mcp-handlers/tool-contract.js';
 
 import { handleOrient } from './mcp-handlers/orient.js';
 import { handleSelectTests } from './mcp-handlers/test-impact.js';
@@ -124,6 +125,9 @@ export async function dispatchTool(
   args: Record<string, unknown>,
   directory: string,
 ): Promise<unknown> {
+  // Resolve a deprecated tool-name alias (e.g. get_ui_components) to its canonical
+  // name so both transports dispatch identically and old callers keep working.
+  name = resolveCanonicalToolName(name);
   if (name === 'orient') {
     const { task, limit = 5, tokenBudget, lean, rankBy } = args as { task: string; limit?: number; tokenBudget?: number; lean?: boolean; rankBy?: 'distance' | 'pagerank' };
     return handleOrient(directory, task, limit, tokenBudget, lean, rankBy);
@@ -254,7 +258,7 @@ export async function dispatchTool(
   } else if (name === 'get_schema_inventory') {
     const { directory } = args as { directory: string };
     return handleGetSchemaInventory(directory);
-  } else if (name === 'get_ui_components') {
+  } else if (name === 'get_ui_component_inventory') {
     const { directory } = args as { directory: string };
     return handleGetUIComponents(directory);
   } else if (name === 'get_env_vars') {

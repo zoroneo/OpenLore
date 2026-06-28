@@ -44,21 +44,36 @@ on their own branches/PRs and are checked off here as they ship.
 - [x] `mcp-tool-count-doc.test.ts` already guards the documented tool count against `TOOL_DEFINITIONS`.
 - [ ] (Optional follow-up) A language-count drift guard, if/when a doc states a hard language count.
 
+## Slice 5 — `mcp-quality` / ConsistentToolNaming  (SHIPPED — PR #218)
+
+- [x] Permanent alias mechanism: `TOOL_NAME_ALIASES` + `resolveCanonicalToolName()` in
+      `mcp-handlers/tool-contract.ts` (single source of truth, prior → canonical).
+- [x] Resolve aliases up front on BOTH transports: `mcp.ts` CallTool handler (covers schema lookup, arg
+      validation, tracking, dispatch) + `tool-dispatch.ts` entry (covers `serve` HTTP + any direct caller).
+- [x] Reconcile `get_ui_components` → `get_ui_component_inventory` across all sites: `TOOL_DEFINITIONS`,
+      `TOOL_OUTPUT_CLASS`, `TOOL_CAPABILITY_FAMILY`, the `_RO` map, the dispatch case, `epistemic-lease`
+      weights, the live-data tool driver, and the generated AGENTS.md / digest prose; prior name kept as alias.
+- [x] Docs: `docs/mcp-tools.md` (canonical + alias note), `docs/agent-setup.md` (inventory lines).
+- [x] Guards: `tool-aliases.test.ts` (alias→registered, no-collision, passthrough, snake_case,
+      inventory-suffix family). `tool-contract.test.ts` (completeness/no-stale) stays green after the rename.
+- [x] Dogfood (real stdio JSON-RPC): old `get_ui_components` dispatches (not unknown-tool); canonical
+      dispatches; a genuinely unknown name still returns unknown-tool. `tools/list` shows only the canonical.
+- [x] `remember`/`recall`/`orient` intentionally NOT renamed (no value-destroying churn — Non-goals).
+
 ## Remaining slices (not started — each independently shippable)
 
 - [ ] `mcp-handlers` / ReadyOrHonestFirstUse — not-ready conclusion / self-bootstrap instead of silent empty.
 - [ ] `mcp-quality` / DefaultSurfaceRevealsAllFaces — run the substrate-vs-navigation benchmark; flip default.
 - [ ] `mcp-quality` / ProgressiveCatalogDisclosure — adopt Tool Search / `defer_loading` where supported.
-- [ ] `mcp-quality` / ConsistentToolNaming — reconcile names with permanent aliases + a naming guard.
 - [ ] `mcp-quality` / NoRedundantConclusions (prose) — sibling "use X instead" in description prose.
 - [ ] `mcp-handlers` / ConciseByDefaultDetailedOnRequest — `responseFormat` + truncation receipts.
 - [ ] `cli` / GuaranteedIndexAtFirstSession — surface skipped/failed build with its one remediation.
 - [ ] `overview` / DocumentationSingleSourceOfTruth — one canonical page per concept; task→doc index.
 
-## Verification (PR #218, after slices 1–2)
+## Verification (PR #218, after slices 1, 2, 5)
 
 - [x] `npm run build` clean; `tsc --noEmit` clean.
-- [x] `vitest run src examples` green — 281 files, 5563 passed, 2 skipped.
-- [x] Value preserved: no tool/command/preset/language removed; zero required keys unchanged; no LLM,
-      no network, no persisted artifact.
+- [x] `vitest run src examples` green — 282 files, 5570 passed, 2 skipped.
+- [x] Value preserved: no tool/command/preset/language removed (a tool was renamed with a permanent
+      alias — the prior name still works); zero required keys unchanged; no LLM, no network, no artifact.
 - [ ] `openspec validate refine-happy-path-and-defaults` (run at archive time).

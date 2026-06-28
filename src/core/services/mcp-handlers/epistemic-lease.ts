@@ -155,7 +155,7 @@ const TOOL_WEIGHTS: Record<string, number> = {
   get_test_coverage: 2,
   get_route_inventory: 2,
   get_schema_inventory: 2,
-  get_ui_components: 2,
+  get_ui_component_inventory: 2,
   get_middleware_inventory: 2,
 
   // Structural-heavy: graph and architecture reads

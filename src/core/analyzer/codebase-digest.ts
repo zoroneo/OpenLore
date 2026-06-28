@@ -251,7 +251,7 @@ export async function generateCodebaseDigest(
     lines.push('');
     lines.push('1. **`orient "<task description>"`** — always start here. Returns relevant functions, files, spec domains, call paths, and insertion points in one call.');
     lines.push('2. **If the task involves data models, APIs, or config** — call the relevant inventory tool:');
-    lines.push('   `get_schema_inventory` · `get_route_inventory` · `get_env_vars` · `get_ui_components` · `get_middleware_inventory`');
+    lines.push('   `get_schema_inventory` · `get_route_inventory` · `get_env_vars` · `get_ui_component_inventory` · `get_middleware_inventory`');
     lines.push('3. **If debugging a call flow** ("how does X reach Y?") — `trace_execution_path`');
     lines.push('4. **Before modifying a function** — `get_subgraph` to understand blast radius');
     lines.push('5. **Before opening a PR** — `check_spec_drift`');

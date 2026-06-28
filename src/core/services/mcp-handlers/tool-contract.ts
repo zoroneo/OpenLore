@@ -82,7 +82,7 @@ export const TOOL_OUTPUT_CLASS: Record<string, ToolOutputClass> = {
   get_route_inventory: 'conclusion',
   get_middleware_inventory: 'conclusion',
   get_schema_inventory: 'conclusion',
-  get_ui_components: 'conclusion',
+  get_ui_component_inventory: 'conclusion',
   get_env_vars: 'conclusion',
   get_external_packages: 'conclusion',
   audit_spec_coverage: 'conclusion',
@@ -213,7 +213,7 @@ export const TOOL_CAPABILITY_FAMILY: Record<string, CapabilityFamily> = {
   get_route_inventory: 'navigate',
   get_middleware_inventory: 'navigate',
   get_schema_inventory: 'navigate',
-  get_ui_components: 'navigate',
+  get_ui_component_inventory: 'navigate',
   get_env_vars: 'navigate',
   get_external_packages: 'navigate',
   audit_spec_coverage: 'navigate',
@@ -380,4 +380,38 @@ export function assertConclusionShape(toolName: string, response: unknown): void
       );
     }
   }
+}
+
+// ===========================================================================
+// Tool-name aliases (change: refine-happy-path-and-defaults / ConsistentToolNaming)
+// ===========================================================================
+//
+// When a tool is renamed for naming consistency, the PRIOR name SHALL keep
+// working forever — no existing agent, prompt, config, or doc may break. This
+// map is the single source of truth for those permanent, deprecated aliases:
+// `{ oldName: canonicalName }`. The canonical name is the one published in
+// `tools/list`; the alias is accepted on a call and resolved to the canonical
+// before lookup/validation/dispatch, so both transports (MCP stdio + serve HTTP)
+// stay in lock-step over `resolveCanonicalToolName`.
+//
+// Adding an alias here is the ONLY supported way to rename a tool. The
+// tool-aliases test guards that every alias targets a registered canonical tool
+// and that no alias collides with a live tool name.
+
+/** Permanent, deprecated tool-name aliases: prior name → canonical name. */
+export const TOOL_NAME_ALIASES: Record<string, string> = {
+  // Reconcile the inventory-retriever family: get_route_inventory /
+  // get_middleware_inventory / get_schema_inventory / get_ui_component_inventory
+  // now share the `_inventory` suffix. The shipped `get_ui_components` name keeps
+  // working as a permanent alias.
+  get_ui_components: 'get_ui_component_inventory',
+};
+
+/**
+ * Resolve a possibly-aliased tool name to its canonical name. Returns the input
+ * unchanged when it is already canonical or unknown (callers handle unknown names
+ * downstream — this never throws and never invents a name).
+ */
+export function resolveCanonicalToolName(name: string): string {
+  return TOOL_NAME_ALIASES[name] ?? name;
 }

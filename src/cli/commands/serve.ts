@@ -37,6 +37,7 @@ import { join, resolve } from 'node:path';
 import { logger } from '../../utils/logger.js';
 import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, FULL_PRESET, FULL_PRESET_ALIAS } from '../../constants.js';
 import { dispatchTool, UnknownToolError } from '../../core/services/tool-dispatch.js';
+import { resolveCanonicalToolName } from '../../core/services/mcp-handlers/tool-contract.js';
 import { validateDirectory, waitForGraphRebuild } from '../../core/services/mcp-handlers/utils.js';
 import { EdgeStore } from '../../core/services/edge-store.js';
 import { McpWatcher } from '../../core/services/mcp-watcher.js';
@@ -478,7 +479,9 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
     }
 
     if (req.method === 'POST' && url.pathname.startsWith('/tool/')) {
-      const name = decodeURIComponent(url.pathname.slice('/tool/'.length));
+      // Resolve a deprecated tool-name alias to its canonical name so the daemon
+      // transport accepts old names identically to the MCP stdio transport.
+      const name = resolveCanonicalToolName(decodeURIComponent(url.pathname.slice('/tool/'.length)));
       // The preset is ADVISORY (reported by /health for clients that want a
       // curated list, e.g. the Pi extension). The daemon dispatches any known
       // tool so it can back multiple clients with different surfaces — notably
