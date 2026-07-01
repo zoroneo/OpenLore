@@ -7,6 +7,7 @@ import {
   parseGraph,
   enrichGraphWithRefactors,
   computeBlast,
+  selectionBelongsToCluster,
 } from './utils/graph-helpers.js';
 import { FlatGraph } from './components/FlatGraph.jsx';
 import { ClusterGraph } from './components/ClusterGraph.jsx';
@@ -272,12 +273,9 @@ export default function App({ graphUrl, mappingUrl = '/api/mapping', specUrl = '
     // If we're collapsing the cluster that holds the selected node, clear the
     // selection — otherwise its edges keep rendering from the (now empty)
     // cluster center as ghost edges. Mirrors the chat-collapse guard above.
-    if (collapsing && selectedId) {
-      const selNode = graph?.nodes.find((n) => n.id === selectedId);
-      if (selNode && selNode.cluster?.id === cid) {
-        setSelectedId(null);
-        setAffectedIds([]);
-      }
+    if (collapsing && selectionBelongsToCluster(graph, selectedId, cid)) {
+      setSelectedId(null);
+      setAffectedIds([]);
     }
     setExpandedClusters((prev) => {
       const next = new Set(prev);

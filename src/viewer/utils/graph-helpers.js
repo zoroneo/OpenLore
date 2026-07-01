@@ -155,6 +155,16 @@ export function computeBlast(edges, nodeId) {
   return [...affected];
 }
 
+// True when the currently-selected node lives inside the cluster being
+// collapsed. Collapsing that cluster hides the node's marker but its
+// selection edges would otherwise keep rendering from the (now empty)
+// cluster center as ghost edges — callers clear the selection when this holds.
+export function selectionBelongsToCluster(graph, selectedId, clusterId) {
+  if (!graph || !selectedId || !clusterId) return false;
+  const node = graph.nodes?.find((n) => n.id === selectedId);
+  return !!node && node.cluster?.id === clusterId;
+}
+
 export function computeLayout(nodes, edges, W = 900, H = 540) {
   if (!nodes.length) return {};
   const pos = {};
