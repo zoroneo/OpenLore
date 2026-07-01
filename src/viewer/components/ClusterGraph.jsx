@@ -214,7 +214,7 @@ export function ClusterGraph({
 
             return edges
               .filter((e) => e.source === selectedId || e.target === selectedId)
-              .map((e, i) => {
+              .map((e) => {
                 const sp = getNodePos(e.source);
                 const tp = getNodePos(e.target);
                 if (!sp || !tp) return null;
@@ -226,7 +226,7 @@ export function ClusterGraph({
                 const isOut = e.source === selectedId;
                 return (
                   <line
-                    key={i}
+                    key={e.id ?? `${e.source}->${e.target}`}
                     x1={sp.x + nx * 14}
                     y1={sp.y + ny * 14}
                     x2={tp.x - nx * 19}
