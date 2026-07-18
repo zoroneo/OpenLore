@@ -29,7 +29,8 @@
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { isTestFile } from './test-file.js';
-import { getSkeletonContent, detectLanguage } from './code-shaper.js';
+import { getSkeletonContent } from './code-shaper.js';
+import { detectLanguage } from './language-detection.js';
 
 // ============================================================================
 // TYPES

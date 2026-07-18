@@ -8,6 +8,13 @@
  * replacing the simple file-path list with language-aware summaries.
  */
 
+// `detectLanguage` comes from the single canonical source (change:
+// fix-language-detection-single-source) — used internally below and re-exported so this
+// module's existing importers keep working. The definition and its extension map live
+// once, in the dependency-free `language-detection.ts` leaf.
+import { detectLanguage } from './language-detection.js';
+export { detectLanguage };
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -32,44 +39,6 @@ const MAX_SIGS_PER_FILE = 25;
 
 // Max chars per Stage 1 chunk (~10k tokens, safe for all providers)
 export const STAGE1_MAX_CHARS = 40_000;
-
-// ============================================================================
-// LANGUAGE DETECTION
-// ============================================================================
-
-export function detectLanguage(filePath: string): string {
-  const lower = filePath.toLowerCase();
-  // Terraform is unambiguous by extension (incl. the *.tf.json variant).
-  if (lower.endsWith('.tf') || lower.endsWith('.tfvars') || lower.endsWith('.tf.json')) {
-    return 'Terraform';
-  }
-  // Bicep is unambiguous by extension (Azure IaC DSL).
-  if (lower.endsWith('.bicep')) {
-    return 'Bicep';
-  }
-  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
-  switch (ext) {
-    case 'py':           return 'Python';
-    case 'ts': case 'tsx': case 'mts': case 'cts': return 'TypeScript';
-    case 'js': case 'jsx': case 'mjs': case 'cjs': return 'JavaScript';
-    case 'go':           return 'Go';
-    case 'rs':           return 'Rust';
-    case 'rb':           return 'Ruby';
-    case 'java':         return 'Java';
-    case 'kt': case 'kts': return 'Kotlin';
-    case 'php': case 'phtml': return 'PHP';
-    case 'cs':           return 'C#';
-    case 'cpp': case 'cc': case 'cxx': case 'h': case 'hpp': return 'C++';
-    case 'c':            return 'C';
-    case 'swift':        return 'Swift';
-    case 'scala': case 'sc': return 'Scala';
-    case 'dart':         return 'Dart';
-    case 'lua':          return 'Lua';
-    case 'ex': case 'exs': return 'Elixir';
-    case 'sh': case 'bash': return 'Bash';
-    default:             return 'unknown';
-  }
-}
 
 /**
  * Resolve the language of a `.h` header (spec-08). `.h` is claimed by both C and

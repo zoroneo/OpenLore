@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getSkeletonContent, detectLanguage, isSkeletonWorthIncluding } from './code-shaper.js';
+import { getSkeletonContent, isSkeletonWorthIncluding } from './code-shaper.js';
 
 // ── getSkeletonContent ────────────────────────────────────────────────────────
 
@@ -84,23 +84,9 @@ describe('getSkeletonContent', () => {
   });
 });
 
-// ── detectLanguage ────────────────────────────────────────────────────────────
-
-describe('detectLanguage', () => {
-  it.each([
-    ['src/foo.ts', 'TypeScript'],
-    ['src/foo.tsx', 'TypeScript'],
-    ['src/foo.js', 'JavaScript'],
-    ['src/foo.py', 'Python'],
-    ['src/foo.go', 'Go'],
-    ['src/foo.rs', 'Rust'],
-    ['src/foo.rb', 'Ruby'],
-    ['src/foo.java', 'Java'],
-    ['src/foo.xyz', 'unknown'],
-  ])('%s → %s', (path, lang) => {
-    expect(detectLanguage(path)).toBe(lang);
-  });
-});
+// `detectLanguage` moved to the single canonical source in `language-support.ts`
+// (change: fix-language-detection-single-source); its coverage + singularity guard now
+// live in `language-support.test.ts`.
 
 // ── isSkeletonWorthIncluding ──────────────────────────────────────────────────
 

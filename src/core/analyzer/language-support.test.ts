@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   CAPABILITIES,
   ALL_LANGUAGES,
@@ -12,13 +13,15 @@ import {
   languageCoverageMatrix,
   renderCoverageMatrixMarkdown,
   resolveLanguageName,
+  detectLanguage,
+  EXTENSION_TO_LANGUAGE,
   type Capability,
 } from './language-support.js';
 import { cfgSupportsLanguage, CFG_LANGUAGES } from './cfg.js';
 import { isIacLanguage, IAC_LANGUAGES } from './iac/types.js';
 import { CALLGRAPH_LANGUAGES, CallGraphBuilder, serializeCallGraph, extractFileStyle } from './call-graph.js';
 import { TYPE_INFERENCE_LANGUAGES as TI, inferTypesFromSource } from './type-inference-engine.js';
-import { SIGNATURE_LANGUAGES as SIG, extractSignatures, detectLanguage } from './signature-extractor.js';
+import { SIGNATURE_LANGUAGES as SIG, extractSignatures, detectLanguage as detectLanguageReexport } from './signature-extractor.js';
 import { IMPORT_RESOLUTION_LANGUAGES as IMP, buildBaseImportMap } from './import-resolver-bridge.js';
 import { STYLE_FINGERPRINT_LANGUAGES as STY } from './style-fingerprint.js';
 import {
@@ -435,5 +438,96 @@ describe('completeness + fail-soft + determinism', () => {
     for (const c of ['signatures', 'callGraph', 'imports', 'cfgOverlay', 'typeInference'] as Capability[]) {
       expect(ts, `TypeScript should support ${c}`).toContain(c);
     }
+  });
+});
+
+// ── single canonical source for language detection ──
+// (change: fix-language-detection-single-source)
+//
+// The analyzer once carried TWO detectLanguage functions — a complete one in
+// signature-extractor.ts and an incomplete EXT_TO_LANGUAGE-backed copy in code-shaper.ts
+// that fed AST-aware chunking. They silently diverged, so ~12 supported languages (and the
+// .mts/.cts/.jsx extension variants) resolved to 'unknown' on the chunking path. These
+// guards keep detection a single, guarded source: one definition, complete coverage, and a
+// CI failure if a copy-paste fork reappears.
+describe('single-source language detection', () => {
+  // The extension variants the deleted code-shaper map missed among languages the analyzer
+  // otherwise fully supports — the concrete regression this consolidation fixes.
+  const FORMERLY_MISSED: Array<[string, string]> = [
+    ['a.mts', 'TypeScript'], ['a.cts', 'TypeScript'], ['a.jsx', 'JavaScript'],
+    ['a.kt', 'Kotlin'], ['a.kts', 'Kotlin'], ['a.php', 'PHP'], ['a.phtml', 'PHP'],
+    ['a.cs', 'C#'], ['a.c', 'C'], ['a.scala', 'Scala'], ['a.sc', 'Scala'],
+    ['a.dart', 'Dart'], ['a.lua', 'Lua'], ['a.ex', 'Elixir'], ['a.exs', 'Elixir'],
+    ['a.sh', 'Bash'], ['a.bash', 'Bash'], ['a.swift', 'Swift'],
+    ['main.tf', 'Terraform'], ['vars.tfvars', 'Terraform'], ['a.tf.json', 'Terraform'],
+    ['main.bicep', 'Bicep'],
+  ];
+
+  it('completeness: every CODE_LANGUAGES entry resolves from a representative extension', () => {
+    const rep: Record<string, string> = {
+      TypeScript: 'x.ts', JavaScript: 'x.js', Python: 'x.py', Go: 'x.go', Rust: 'x.rs',
+      Ruby: 'x.rb', Java: 'x.java', Kotlin: 'x.kt', PHP: 'x.php', 'C#': 'x.cs',
+      'C++': 'x.cpp', C: 'x.c', Swift: 'x.swift', Scala: 'x.scala', Dart: 'x.dart',
+      Lua: 'x.lua', Elixir: 'x.ex', Bash: 'x.sh', Terraform: 'x.tf', Bicep: 'x.bicep',
+    };
+    for (const lang of CODE_LANGUAGES) {
+      const path = rep[lang];
+      expect(path, `CODE_LANGUAGES gained "${lang}" with no representative extension`).toBeDefined();
+      expect(detectLanguage(path), `${path} → ${lang}`).toBe(lang);
+    }
+  });
+
+  it.each(FORMERLY_MISSED)('formerly-missed %s resolves to %s (not unknown)', (path, lang) => {
+    expect(detectLanguage(path)).toBe(lang);
+  });
+
+  it('an unknown extension degrades honestly to "unknown", never a guess', () => {
+    expect(detectLanguage('a.unknownext')).toBe('unknown');
+    expect(detectLanguage('Makefile')).toBe('unknown');
+    expect(detectLanguage('a.md')).toBe('unknown');
+  });
+
+  it('the signature-extractor re-export is the very same canonical function', () => {
+    expect(detectLanguageReexport).toBe(detectLanguage);
+  });
+
+  it('EXTENSION_TO_LANGUAGE values are all valid CODE_LANGUAGES (never a stray tag)', () => {
+    const known = new Set(CODE_LANGUAGES);
+    for (const [ext, lang] of Object.entries(EXTENSION_TO_LANGUAGE)) {
+      expect(known.has(lang), `extension ".${ext}" maps to non-code-language "${lang}"`).toBe(true);
+    }
+  });
+
+  // Singularity guard: a second detectLanguage definition anywhere in src/ (a copy-paste
+  // re-divergence) must fail CI rather than silently ship. Scoped to the definition of the
+  // detector — repository-mapper.ts's `extToLang` is a human-facing language-BREAKDOWN map
+  // (dotted keys, display labels like "TypeScript (React)", non-code rows like CSS/JSON) that
+  // feeds no detection path, and is intentionally not in scope here.
+  it('no second detectLanguage definition or EXT_TO_LANGUAGE map exists outside the canonical module', () => {
+    const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+    const SRC = join(ROOT, 'src');
+    const CANONICAL = join('core', 'analyzer', 'language-detection.ts');
+
+    const files = readdirSync(SRC, { recursive: true, encoding: 'utf-8' })
+      .filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts'));
+    expect(files.length, 'source scan found no .ts files — walker is broken').toBeGreaterThan(100);
+
+    // A function/const/arrow definition of detectLanguage (NOT an `import`/`export {}` re-export).
+    const defRe = /(?:export\s+)?(?:async\s+)?function\s+detectLanguage\b|(?:^|\s)(?:const|let|var)\s+detectLanguage\s*[:=]/m;
+
+    const offenders: string[] = [];
+    for (const rel of files) {
+      if (rel.endsWith(CANONICAL)) continue; // the one allowed home
+      const src = readFileSync(join(SRC, rel), 'utf-8');
+      if (defRe.test(src)) offenders.push(`${rel} (detectLanguage definition)`);
+      if (/\bEXT_TO_LANGUAGE\b/.test(src)) offenders.push(`${rel} (EXT_TO_LANGUAGE map)`);
+    }
+
+    expect(
+      offenders,
+      `A second language-detection source has reappeared. detectLanguage lives once, in ` +
+        `src/${CANONICAL} (re-exported by language-support.ts). Offenders:\n` +
+        offenders.map(o => `  - ${o}`).join('\n'),
+    ).toEqual([]);
   });
 });
