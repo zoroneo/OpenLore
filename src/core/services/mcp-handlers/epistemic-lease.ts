@@ -141,10 +141,17 @@ const TOOL_WEIGHTS: Record<string, number> = {
   list_spec_domains: 1,
   list_decisions: 1,
   record_decision: 1,
+  approve_decision: 1,     // ← record_decision (1) — decision lifecycle write
+  reject_decision: 1,      // ← record_decision (1) — decision lifecycle write
+  sync_decisions: 1,       // ← record_decision (1) — decision lifecycle write
   remember: 1,
   recall: 2,
+  verify_claim: 2,         // ← recall (2) — settle one fact against the graph/store
   get_env_vars: 1,
   get_external_packages: 1,
+  federation_status: 1,    // ← get_external_packages (1) — status/inventory read
+  spec_store_status: 1,    // ← get_external_packages (1) — binding health read
+  get_language_support: 1, // ← list_spec_domains (1) — pure registry lookup
 
   // Structural: function/file-level reads
   get_spec: 2,
@@ -157,6 +164,7 @@ const TOOL_WEIGHTS: Record<string, number> = {
   get_schema_inventory: 2,
   get_ui_component_inventory: 2,
   get_middleware_inventory: 2,
+  get_style_fingerprint: 2, // ← get_signatures (2) — precomputed per-file/region profile read
 
   // Structural-heavy: graph and architecture reads
   get_architecture_overview: 3,
@@ -174,6 +182,17 @@ const TOOL_WEIGHTS: Record<string, number> = {
   detect_changes: 3,
   audit_spec_coverage: 3,
   get_minimal_context: 3,
+  check_architecture: 3,          // ← get_architecture_overview (3) — architecture read
+  get_map: 3,                     // ← get_architecture_overview (3) — region view
+  get_health_map: 3,              // ← get_architecture_overview (3) — region health view
+  get_landmarks: 3,               // ← get_critical_hubs (3) — landmark/hub region read
+  get_surprising_connections: 3,  // ← get_critical_hubs (3) — cross-module edge read
+  get_change_coupling: 3,         // ← get_file_dependencies (3) — repo-wide co-change read
+  suggest_insertion_points: 3,    // ← get_minimal_context (3) — structural placement analysis
+  working_set_context: 3,         // ← get_minimal_context (3) — budgeted structural briefing
+  structural_diff: 3,             // ← detect_changes (3) — diff-scoped structural read
+  briefing_since: 3,              // ← detect_changes (3) — changed-symbols-since-ref read
+  certify_public_surface: 3,      // ← detect_changes (3) — diff-scoped export verdict
 
   // Graph traversal / cross-module
   get_subgraph: 5,
@@ -183,10 +202,27 @@ const TOOL_WEIGHTS: Record<string, number> = {
   annotate_story: 5,
   generate_tests: 4,
   get_low_risk_refactor_candidates: 4,
+  blast_radius: 5,              // ← analyze_impact (5) — callers/layers/tests briefing over the graph
+  select_tests: 5,             // ← analyze_impact (5) — backward reachability over the graph
+  report_coverage_gaps: 5,     // ← analyze_impact (5) — whole-graph reachability (inverse of select_tests)
+  find_dead_code: 5,           // ← analyze_impact (5) — whole-graph reachability sweep
+  change_impact_certificate: 5,// ← generate_change_proposal (5) — diff-scoped multi-source certificate
+  plan_parallel_work: 5,       // ← analyze_impact (5) — footprint + hazard graph over task seeds
+  map_in_flight_conflicts: 5,  // ← plan_parallel_work (5) — same hazard classifier, harvested inputs
 
   // Deep architectural tracing
   trace_execution_path: 8,
+  find_path: 8,  // ← trace_execution_path (8) — point-to-point path traversal, documented near-twin
 };
+
+/**
+ * Read-only view of the cognitive-weight table, exported so a completeness test can
+ * cross-check it against the live tool registry (`TOOL_DEFINITIONS`) in both directions —
+ * the same closed-table discipline `TOOL_OUTPUT_CLASS` and `TOOL_CAPABILITY_FAMILY` carry.
+ * The `?? 1` fallback in `updateTracker` remains as defense in depth, but the test ensures
+ * it is never the mechanism by which a *registered* tool is scored.
+ */
+export const TOOL_COGNITIVE_WEIGHTS: Readonly<Record<string, number>> = TOOL_WEIGHTS;
 
 // ============================================================================
 // THRESHOLDS
