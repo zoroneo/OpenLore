@@ -2203,13 +2203,16 @@ export const TOOL_PRESETS: Record<string, Set<string>> = {
   coordination: new Set([
     'orient', 'plan_parallel_work', 'map_in_flight_conflicts', 'analyze_impact', 'find_path',
   ]),
-  // Both faces of the substrate (change: unify-navigation-and-governance-substrate;
+  // The navigation core plus governance reads (change: unify-navigation-and-governance-substrate;
   // architecture: UnifiedStructuralSubstrate). The `navigation` graph-traversal core
   // PLUS the three highest-value governance *reads* — recall (what is known about the
   // code I'm touching), verify_claim (settle an assertion before it reaches a human),
-  // blast_radius (weigh a diff). So an out-of-box agent gets the value of the WHOLE
-  // substrate — navigate, recall, verify, weigh — not navigation alone. Holds governance
-  // READS only: no remember/record_decision write, no commit gate. This is the *active*
+  // blast_radius (weigh a diff). So an out-of-box agent gets the value of the navigation
+  // core plus governance reads — navigate, recall, verify, weigh — not navigation alone.
+  // Holds governance READS only: no remember/record_decision write, no commit gate — so
+  // it carries the read face, NOT the write face (remember + record_decision), which stays
+  // opt-in via --preset memory/minimal/full until a benchmark-gated flip (ADR-0023). Copy
+  // must not describe this preset as carrying both capability faces while that holds. This is the *active*
   // out-of-box default (LEAN_DEFAULT_PRESET; decision c79ec7ca / ADR-0023, superseding
   // ADR-0022): the agent benchmark showed the wider surface does not regress task-completion
   // or selection accuracy and stays within the token-economy budget, across two models and
@@ -2289,8 +2292,8 @@ interface McpServerOptions {
  * `openlore install`. Adds zero tool schemas (change: default-to-lean-tool-surface).
  */
 export const BREADTH_POINTER =
-  'OpenLore is running its default tool surface (the substrate core: navigate + ' +
-  'recall + verify_claim + blast_radius — both faces of the substrate). More tools ' +
+  'OpenLore is running its default tool surface (the substrate core: the navigation ' +
+  'core plus governance reads — recall + verify_claim + blast_radius). More tools ' +
   'are available behind named presets — the full surface (`--preset full`), multi-repo ' +
   'federation (`--preset federation`), parallel-work coordination (`--preset coordination`), ' +
   'or the lean navigate-only core (`--preset navigation`). Re-wire with ' +
@@ -2760,7 +2763,7 @@ export const mcpCommand = new Command('mcp')
   .option('--watch-debounce <ms>', 'Debounce delay in ms before re-indexing after a file change (default: 400)', '400')
   .option('--watch-no-embed', 'Watch signatures only — skip live vector re-embedding (embeddings refresh at commit). Large repos auto-degrade to this.')
   .option('--minimal', 'Expose only core 6 tools (orient, search_code, record_decision, detect_changes, check_spec_drift, get_health_map). Pair with alwaysLoad: true in Claude Code for always-visible core tools.')
-  .option('--preset <name>', `Expose a named tool preset. Default (no preset) is the "${LEAN_DEFAULT_PRESET}" surface — both faces of the substrate: the graph-traversal core (orient, search_code, get_subgraph, trace_execution_path, analyze_impact, suggest_insertion_points, get_function_skeleton, get_landmarks, get_map, find_path) plus the governance reads recall + verify_claim + blast_radius (decision c79ec7ca / ADR-0023) — NOT the full registry. "navigation" = the lean navigate-only escape (the graph-traversal core alone, no governance reads); "minimal" = orient+search+governance; "memory" = orient+remember+recall; "verify" = orient+search+verify_claim; "federation" = orient + federation_status + spec_store_status + working_set_context + change_impact_certificate + map_in_flight_conflicts + the four cross-repo conclusion tools; "coordination" = orient + plan_parallel_work + map_in_flight_conflicts + analyze_impact + find_path; "full" = all ${TOOL_DEFINITIONS.length} tools (the prior default). Takes precedence over --minimal.`)
+  .option('--preset <name>', `Expose a named tool preset. Default (no preset) is the "${LEAN_DEFAULT_PRESET}" surface — the navigation core plus governance reads: the graph-traversal core (orient, search_code, get_subgraph, trace_execution_path, analyze_impact, suggest_insertion_points, get_function_skeleton, get_landmarks, get_map, find_path) plus the governance reads recall + verify_claim + blast_radius (decision c79ec7ca / ADR-0023) — NOT the full registry. "navigation" = the lean navigate-only escape (the graph-traversal core alone, no governance reads); "minimal" = orient+search+governance; "memory" = orient+remember+recall; "verify" = orient+search+verify_claim; "federation" = orient + federation_status + spec_store_status + working_set_context + change_impact_certificate + map_in_flight_conflicts + the four cross-repo conclusion tools; "coordination" = orient + plan_parallel_work + map_in_flight_conflicts + analyze_impact + find_path; "full" = all ${TOOL_DEFINITIONS.length} tools (the prior default). Takes precedence over --minimal.`)
   .option('--all-tools', `Expose the full surface — all ${TOOL_DEFINITIONS.length} tools (alias for --preset full). Opt-in breadth; the "${LEAN_DEFAULT_PRESET}" default is recommended.`)
   .option('--list-tools', 'Print the active tool surface grouped by capability family (navigate/change/remember/verify/coordinate/federate) and exit — does not start the server. Respects --preset / --all-tools.')
   .action((options: McpServerOptions) => startMcpServer(options));

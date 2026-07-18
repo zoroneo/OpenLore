@@ -16,6 +16,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { TOOL_PRESETS, BREADTH_POINTER } from './cli/commands/mcp.js';
+import { LEAN_DEFAULT_PRESET } from './constants.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), 'utf-8');
@@ -73,5 +75,70 @@ describe('honesty contract (spec-25)', () => {
 
   it('the honesty contract is written into the benchmark doc', () => {
     expect(read('docs/AGENT-BENCHMARKS.md')).toContain('Honesty contract');
+  });
+});
+
+/**
+ * mcp-quality — DefaultSurfaceCopyMatchesItsContents (change: reconcile-substrate-write-face).
+ *
+ * The default `substrate` preset holds the navigation core plus governance *reads*
+ * (recall, verify_claim, blast_radius); it carries the READ face, not the write face
+ * (remember, record_decision). "Both faces of the substrate" is therefore an over-claim
+ * — the same defect class as a tool implying completeness it lacks (NoFalseCompleteness),
+ * located in the most-read copy surface (the `instructions` breadth pointer). This guard
+ * bans that phrasing across every shipped surface WHILE the preset lacks the write face,
+ * so the retired claim cannot silently rot back in. When step 2 lands the write face
+ * (benchmark-gated, ADR-0023 process), `hasWriteFace` flips true and the ban lifts on its
+ * own — the copy would then be truthful.
+ */
+describe('default-surface copy matches its contents (mcp-quality: DefaultSurfaceCopyMatchesItsContents)', () => {
+  const substrate = TOOL_PRESETS[LEAN_DEFAULT_PRESET];
+  const hasWriteFace = substrate.has('remember') && substrate.has('record_decision');
+
+  // The over-claim: "both faces" / "both-faced" describing the reads-only default. Matched
+  // case-insensitively with a space or hyphen so "both-faced" and "both faces" both trip it.
+  const OVER_CLAIM = /both[ -]faces?|both-faced/i;
+
+  // Every shipped surface that describes the default preset. The `--preset` help lives in
+  // mcp.ts as a single-line commander option; the breadth pointer is imported directly.
+  const DOC_SURFACES = [
+    'README.md',
+    'CLAUDE.md',
+    'docs/install.md',
+    'docs/agent-setup.md',
+    'docs/cli-reference.md',
+    'docs/mcp-tools.md',
+  ];
+
+  it('the substrate default holds governance reads only (guard premise)', () => {
+    // If this fails, the write face landed — update the copy AND lift the ban below.
+    expect(substrate.has('recall')).toBe(true);
+    expect(hasWriteFace).toBe(false);
+  });
+
+  it('no shipped doc surface claims "both faces" while the preset is reads-only', () => {
+    if (hasWriteFace) return; // write face landed → the claim would be truthful; ban lifts.
+    for (const rel of DOC_SURFACES) {
+      const text = read(rel);
+      expect(OVER_CLAIM.test(text), `"both faces" over-claim must not appear in ${rel} while the substrate preset lacks the write face`).toBe(false);
+    }
+  });
+
+  it('the instructions breadth pointer does not claim "both faces"', () => {
+    if (hasWriteFace) return;
+    expect(OVER_CLAIM.test(BREADTH_POINTER), `BREADTH_POINTER must not claim "both faces" while the substrate preset lacks the write face:\n${BREADTH_POINTER}`).toBe(false);
+    // Positive: it names what the preset actually carries.
+    expect(BREADTH_POINTER.toLowerCase()).toContain('governance reads');
+  });
+
+  it('the --preset help does not claim "both faces" and names the substrate default', () => {
+    if (hasWriteFace) return;
+    const mcpSrc = read('src/cli/commands/mcp.ts');
+    const helpLine = mcpSrc.split('\n').find(l => l.includes(".option('--preset <name>'"));
+    expect(helpLine, "expected a .option('--preset <name>', ...) line in mcp.ts").toBeDefined();
+    expect(OVER_CLAIM.test(helpLine!), `the --preset help must not claim "both faces" while the substrate preset lacks the write face:\n${helpLine}`).toBe(false);
+    // The declared default is interpolated from LEAN_DEFAULT_PRESET (the single source of
+    // truth the code resolves through), not a hardcoded preset name that could drift.
+    expect(helpLine!).toContain('${LEAN_DEFAULT_PRESET}');
   });
 });

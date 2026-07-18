@@ -221,8 +221,9 @@ export const MCP_TOOL_MAX_BYTES = 256 * 1024;
 // ── MCP tool-surface defaults (change: default-to-lean-tool-surface) ─────────────
 /**
  * The default MCP surface wired when no `--preset` is given: the `substrate`
- * preset — the navigation graph-traversal core PLUS the governance READS that make
- * OpenLore both-faced out of the box (recall + verify_claim + blast_radius). Flipped
+ * preset — the navigation graph-traversal core PLUS the governance READS
+ * (recall + verify_claim + blast_radius) that give an out-of-box agent the read face
+ * on top of navigation (the write face — remember + record_decision — stays opt-in). Flipped
  * from `navigation` after the DefaultSurfaceRevealsAllFaces benchmark (decision
  * c79ec7ca, superseding ADR-0022 a6c916ed): across two models and both repo tiers the
  * wider surface showed NO task-completion or selection-accuracy regression and stayed

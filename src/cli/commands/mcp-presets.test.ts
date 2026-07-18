@@ -122,7 +122,7 @@ describe('MCP tool presets', () => {
   it('renderToolSurfaceByFamily groups the substrate surface by family, covering every tool', () => {
     const tools = selectActiveTools(TOOL_DEFINITIONS, { preset: 'substrate' });
     const text = renderToolSurfaceByFamily(tools, 'substrate');
-    // Header states the surface, tool count, and family count (both faces → 4 families).
+    // Header states the surface, tool count, and family count (navigation core + governance reads → 4 families).
     expect(text).toMatch(/substrate \(13 tools, 4 families\)/);
     // Family group headers appear, in canonical order; every tool is listed exactly once.
     expect(text).toContain('Navigate —');
@@ -601,11 +601,11 @@ describe('tools/list payload budget (spec-28)', () => {
     expect(payloadBytes({ preset: 'navigation' })).toBeLessThan(14_200);
   });
 
-  // change: unify-navigation-and-governance-substrate — the `substrate` both-faces
+  // change: unify-navigation-and-governance-substrate — the `substrate` default
   // preset is the navigation core + the three governance reads. It stays well under
   // the full surface (governance reads only, no inventories/specs/coordination), so
-  // an out-of-box agent that opts into both faces still pays a small prefix.
-  it('substrate preset (both faces) stays well under the full surface', () => {
+  // an out-of-box agent on the default surface still pays only a small prefix.
+  it('substrate preset (navigation core + governance reads) stays well under the full surface', () => {
     expect(payloadBytes({ preset: 'substrate' })).toBeLessThan(20_000);
     expect(payloadBytes({ preset: 'substrate' })).toBeLessThan(payloadBytes({ preset: 'full' }));
     expect(payloadBytes({ preset: 'substrate' })).toBeGreaterThan(payloadBytes({ preset: 'navigation' }));
