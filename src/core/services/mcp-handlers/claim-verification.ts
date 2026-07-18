@@ -361,6 +361,12 @@ interface DecisionReceipt {
     recordedAt?: string;
     /** The live decision that retired this one, when superseded. */
     supersededBy?: string;
+    /**
+     * Acceptance provenance: 'autopilot' marks an auto-accepted, not-yet-human-
+     * reviewed decision — authoritative, but the agent citing it should disclose
+     * the provenance. (change: add-decision-autopilot)
+     */
+    approvedBy?: 'human' | 'autopilot';
   };
   evidence: string;
 }
@@ -419,7 +425,7 @@ async function verifyDecisionCurrent(absDir: string, subject: string): Promise<u
     const evidence = `decision ${id} ("${shortTitle(target.title)}") was superseded by ${supersededBy}${superseder ? ` ("${shortTitle(superseder.title)}")` : ''}`;
     const receipt: DecisionReceipt = {
       indexCommit,
-      decision: { id, title: target.title, status: target.status, ...(target.recordedAt ? { recordedAt: target.recordedAt } : {}), supersededBy },
+      decision: { id, title: target.title, status: target.status, ...(target.recordedAt ? { recordedAt: target.recordedAt } : {}), ...(target.approvedBy ? { approvedBy: target.approvedBy } : {}), supersededBy },
       evidence,
     };
     return {
@@ -437,17 +443,20 @@ async function verifyDecisionCurrent(absDir: string, subject: string): Promise<u
       claim,
       verdict: 'refuted' as Verdict,
       reason: `${evidence}. Do not cite it as governing code.`,
-      receipt: { indexCommit, decision: { id, title: target.title, status: target.status, ...(target.recordedAt ? { recordedAt: target.recordedAt } : {}) }, evidence } satisfies DecisionReceipt,
+      receipt: { indexCommit, decision: { id, title: target.title, status: target.status, ...(target.recordedAt ? { recordedAt: target.recordedAt } : {}), ...(target.approvedBy ? { approvedBy: target.approvedBy } : {}) }, evidence } satisfies DecisionReceipt,
       confidenceBoundary: cleanBoundary,
     };
   }
 
-  const evidence = `decision ${id} ("${shortTitle(target.title)}") is recorded with status "${target.status}" and is not superseded by any recorded decision`;
+  const provenance = target.approvedBy === 'autopilot' && !target.humanReviewedAt
+    ? ' (auto-accepted by decision autopilot, not yet human-reviewed — disclose this provenance when citing it)'
+    : '';
+  const evidence = `decision ${id} ("${shortTitle(target.title)}") is recorded with status "${target.status}"${provenance} and is not superseded by any recorded decision`;
   return {
     claim,
     verdict: 'confirmed' as Verdict,
     reason: `${evidence}; citing it as current is sound.`,
-    receipt: { indexCommit, decision: { id, title: target.title, status: target.status, ...(target.recordedAt ? { recordedAt: target.recordedAt } : {}) }, evidence } satisfies DecisionReceipt,
+    receipt: { indexCommit, decision: { id, title: target.title, status: target.status, ...(target.recordedAt ? { recordedAt: target.recordedAt } : {}), ...(target.approvedBy ? { approvedBy: target.approvedBy } : {}) }, evidence } satisfies DecisionReceipt,
     confidenceBoundary: cleanBoundary,
   };
 }

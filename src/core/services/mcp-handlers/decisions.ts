@@ -163,7 +163,7 @@ export async function handleRecordDecision(
     await updateDecisionStore(rootPath, (s) => {
       recordedId = makeDecisionId(s.sessionId, primaryDomain, title.trim());
       return upsertDecisions(s, [{ ...decision, id: recordedId, sessionId: s.sessionId }]);
-    });
+    }, 'agent');
 
     // Consolidate in background so commit-time gate is instant
     spawnConsolidateBackground(rootPath);
@@ -208,6 +208,10 @@ export async function handleListDecisions(
         proposedRequirement: d.proposedRequirement,
         recordedAt: d.recordedAt,
         syncedToSpecs: d.syncedToSpecs,
+        // Provenance is always disclosed: an autopilot-accepted decision is
+        // authoritative but never presented as human-reviewed. (add-decision-autopilot)
+        ...(d.approvedBy ? { approvedBy: d.approvedBy } : {}),
+        ...(d.humanReviewedAt ? { humanReviewedAt: d.humanReviewedAt } : {}),
       })),
     };
   } catch (err) {
@@ -234,9 +238,10 @@ export async function handleApproveDecision(
 
     const committed = await updateDecisionStore(rootPath, (s) => patchDecision(s, id, {
       status: 'approved',
+      approvedBy: 'human',
       reviewedAt: new Date().toISOString(),
       reviewNote: note,
-    }));
+    }), 'human');
     // The patch no-ops if the decision was concurrently removed/synced — report
     // honestly rather than a false success.
     const after = committed.decisions.find((d) => d.id === id);
@@ -271,7 +276,7 @@ export async function handleRejectDecision(
       status: 'rejected',
       reviewedAt: new Date().toISOString(),
       reviewNote: note,
-    }));
+    }), 'human');
     const after = committed.decisions.find((d) => d.id === id);
     if (!after || after.status !== 'rejected') {
       return { error: `Decision ${id} could not be rejected — it was concurrently removed or changed.` };

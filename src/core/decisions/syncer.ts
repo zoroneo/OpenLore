@@ -30,6 +30,14 @@ export interface SyncOptions {
   openspecPath: string;
   specMap: SpecMap;
   dryRun?: boolean;
+  /**
+   * Also sync `auto-approved` decisions (decision autopilot). Unlike `approved`
+   * decisions — which transition to `synced` and purge — an auto-approved
+   * decision keeps its status after the spec write (it stays in the store as the
+   * human review queue) and its spec entry carries the
+   * "Auto-accepted (unreviewed)" marker. (change: add-decision-autopilot)
+   */
+  includeAutoApproved?: boolean;
 }
 
 export interface SyncResult {
@@ -43,6 +51,11 @@ export async function syncApprovedDecisions(
   options: SyncOptions,
 ): Promise<{ store: DecisionStore; result: SyncResult }> {
   const approved = store.decisions.filter((d) => d.status === 'approved');
+  // Auto-approved decisions re-sync idempotently (spec writes dedupe by id), so
+  // ones already written are skipped by their recorded syncedToSpecs.
+  const autoApproved = options.includeAutoApproved
+    ? store.decisions.filter((d) => d.status === 'auto-approved' && d.syncedToSpecs.length === 0)
+    : [];
   const synced: PendingDecision[] = [];
   const errors: Array<{ id: string; error: string }> = [];
   const modifiedSpecs = new Set<string>();
@@ -60,6 +73,23 @@ export async function syncApprovedDecisions(
         syncedToSpecs: modified,
       });
       synced.push({ ...decision, status: 'synced', syncedAt: now, syncedToSpecs: modified });
+    } catch (err) {
+      errors.push({ id: decision.id, error: String(err) });
+    }
+  }
+
+  for (const decision of autoApproved) {
+    try {
+      const modified = await syncDecision(decision, options);
+      for (const p of modified) modifiedSpecs.add(p);
+      const now = new Date().toISOString();
+      // Status stays 'auto-approved': the decision remains in the store as the
+      // human review queue until promoted or rejected.
+      updatedStore = patchDecision(updatedStore, decision.id, {
+        syncedAt: now,
+        syncedToSpecs: modified,
+      });
+      synced.push({ ...decision, syncedAt: now, syncedToSpecs: modified });
     } catch (err) {
       errors.push({ id: decision.id, error: String(err) });
     }
@@ -207,10 +237,21 @@ function appendDecisionSection(content: string, decision: PendingDecision): stri
   return content.trimEnd() + '\n\n## Decisions\n\n' + entry.trimStart();
 }
 
+/** Human-visible status label for a spec Decisions entry. Auto-accepted
+ * decisions are always marked unreviewed until a human promotes them —
+ * provenance is disclosed, never silently upgraded. (add-decision-autopilot) */
+export const AUTO_ACCEPTED_STATUS_LABEL = 'Auto-accepted (unreviewed)';
+
+function specStatusLabel(decision: PendingDecision): string {
+  return decision.approvedBy === 'autopilot' && !decision.humanReviewedAt
+    ? AUTO_ACCEPTED_STATUS_LABEL
+    : 'Approved';
+}
+
 function buildDecisionEntry(decision: PendingDecision): string {
   return `### ${decision.title}
 
-**Status:** Approved
+**Status:** ${specStatusLabel(decision)}
 **Date:** ${(decision.syncedAt ?? new Date().toISOString()).slice(0, 10)}
 **ID:** ${decision.id}
 
@@ -244,11 +285,14 @@ async function createADR(
   const adrPath = join(decisionsDir, filename);
 
   const domains = decision.affectedDomains.join(', ');
+  const adrStatus = decision.approvedBy === 'autopilot' && !decision.humanReviewedAt
+    ? 'accepted (auto-accepted, unreviewed)'
+    : 'accepted';
   const content = `# ADR-${num}: ${decision.title}
 
 ## Status
 
-accepted
+${adrStatus}
 
 **Domains**: ${domains}
 
@@ -270,6 +314,71 @@ ${decision.consequences}
 
   await writeFile(adrPath, content, 'utf-8');
   return `openspec/decisions/${filename}`;
+}
+
+// ============================================================================
+// Human review of auto-accepted decisions (change: add-decision-autopilot)
+// ============================================================================
+
+/**
+ * Rewrite the status marker of an already-synced decision across the spec/ADR
+ * files it landed in. Used when a human reviews an auto-accepted decision:
+ *   - promote → "Approved" (the unreviewed marker is dropped)
+ *   - reject  → "Rejected (auto-acceptance reverted <date>)" — a supersession-
+ *     style annotation, never a deletion: the entry (and its git history, for
+ *     asOf queries) stays in place, only its authority label changes. A synced
+ *     requirement block is annotated with a rejection line for the same reason.
+ *
+ * Returns the repo-relative paths actually modified. Missing files or absent
+ * markers are skipped silently — the ledger, not the spec text, is the
+ * authoritative trail; this is presentation-layer honesty.
+ */
+export async function rewriteSyncedDecisionStatus(
+  rootPath: string,
+  decision: PendingDecision,
+  disposition: 'promoted' | 'rejected',
+): Promise<string[]> {
+  const date = new Date().toISOString().slice(0, 10);
+  const newLabel = disposition === 'promoted'
+    ? 'Approved'
+    : `Rejected (auto-acceptance reverted ${date})`;
+  const modified: string[] = [];
+
+  for (const relPath of decision.syncedToSpecs) {
+    const absPath = join(rootPath, relPath);
+    if (!(await fileExists(absPath))) continue;
+    let content = await readFile(absPath, 'utf-8');
+    const before = content;
+
+    // Decisions-section entry: the Status line two lines above this id's marker.
+    const entryRe = new RegExp(
+      `(\\*\\*Status:\\*\\* )[^\\n]*(\\n\\*\\*Date:\\*\\* [^\\n]*\\n\\*\\*ID:\\*\\* ${decision.id}\\b)`,
+    );
+    content = content.replace(entryRe, `$1${newLabel}$2`);
+
+    // ADR file: rewrite the Status section when this file carries the decision id.
+    if (content.includes(`> Decision ID: ${decision.id}`)) {
+      content = content.replace(
+        /(## Status\n\n)[^\n]*/,
+        `$1${disposition === 'promoted' ? 'accepted' : `rejected (auto-acceptance reverted ${date})`}`,
+      );
+    }
+
+    // Synced requirement block: annotate on rejection so the requirement is not
+    // read as authoritative; leave untouched on promotion (it already reads clean).
+    if (disposition === 'rejected') {
+      const reqMarker = `> Decision recorded: ${decision.id}`;
+      if (content.includes(reqMarker) && !content.includes(`${reqMarker}\n> Rejected:`)) {
+        content = content.replace(reqMarker, `${reqMarker}\n> Rejected: ${date} (auto-acceptance reverted by human review)`);
+      }
+    }
+
+    if (content !== before) {
+      await writeFile(absPath, content, 'utf-8');
+      modified.push(relPath);
+    }
+  }
+  return modified;
 }
 
 function toPascalCase(str: string): string {

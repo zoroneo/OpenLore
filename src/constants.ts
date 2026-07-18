@@ -601,6 +601,9 @@ export const OPENLORE_DECISIONS_SUBDIR = 'decisions';
 /** Filename for the pending decisions store */
 export const DECISIONS_PENDING_FILE = 'pending.json';
 
+/** Filename for the append-only decision transition ledger (JSONL, one entry per status transition) */
+export const DECISIONS_LEDGER_FILE = 'ledger.jsonl';
+
 /** Sub-directory inside OPENLORE_DIR where code-anchored agent memory (notes) is stored */
 export const OPENLORE_MEMORY_SUBDIR = 'memory';
 

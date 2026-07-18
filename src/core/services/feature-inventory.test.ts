@@ -214,6 +214,7 @@ describe('feature-inventory', () => {
       enforcement: { policy: { x: 'blocking' } },
       panicResponse: { mode: 'advisory' },
       specStore: { name: 's', path: '~/s', targets: [] },
+      governance: { autopilot: true },
     });
     await writeFile(join(dir, '.openlore', 'architecture.json'), '{}');
     await mkdir(join(dir, '.git', 'hooks'), { recursive: true });
@@ -223,8 +224,8 @@ describe('feature-inventory', () => {
       JSON.stringify({ repos: [{ name: 'a' }] })
     );
     const inv = await collectFeatureInventory(dir);
-    // 9 opt-in features, all active.
-    expect(inv.activeCount).toBe(9);
-    expect(inv.optInCount).toBe(9);
+    // 10 opt-in features, all active (decision autopilot added the 10th).
+    expect(inv.activeCount).toBe(10);
+    expect(inv.optInCount).toBe(10);
   });
 });
