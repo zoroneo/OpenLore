@@ -2,10 +2,11 @@
 
 ## Implementation
 
-- [ ] Add the 27 missing entries to `TOOL_WEIGHTS` (epistemic-lease.ts:132-189) per the analogy
+- [x] Add the 27 missing entries to `TOOL_WEIGHTS` (epistemic-lease.ts:132-189) per the analogy
       table below — every weight is an existing entry's value, no new constants
-- [ ] Export `TOOL_WEIGHTS` (or a read-only accessor) so the completeness test can cross-check it;
+- [x] Export `TOOL_WEIGHTS` (or a read-only accessor) so the completeness test can cross-check it;
       keep the `?? 1` fallback (epistemic-lease.ts:617) as defense in depth
+      (exported as `TOOL_COGNITIVE_WEIGHTS`)
 
 ### Weight-by-analogy table (nearest weighted sibling, same traversal-depth class)
 
@@ -40,11 +41,12 @@
 | `sync_decisions` | 1 | `record_decision` (1) — decision lifecycle write |
 
 ## Verification
-- [ ] Completeness test mirroring tool-contract.test.ts:31-72: every `TOOL_DEFINITIONS` name has a
+- [x] Completeness test mirroring tool-contract.test.ts:31-72: every `TOOL_DEFINITIONS` name has a
       `TOOL_WEIGHTS` entry; no `TOOL_WEIGHTS` key names an unregistered tool
-- [ ] Mutation check: remove one entry → test fails naming the tool
-- [ ] Existing lease threshold tests stay green (thresholds unchanged)
-- [ ] Full suite green (`npm run test:run`)
+      (added to `tool-contract.test.ts` beside the sibling completeness cross-checks)
+- [x] Mutation check: remove one entry → test fails naming the tool
+- [x] Existing lease threshold tests stay green (thresholds unchanged)
+- [x] Full suite green (`npm run test:run`)
 
 ## Spec
-- [ ] `mcp-handlers` delta: ADD LeaseWeightTableIsComplete
+- [x] `mcp-handlers` delta: ADD LeaseWeightTableIsComplete

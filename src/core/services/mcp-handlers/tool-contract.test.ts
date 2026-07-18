@@ -24,6 +24,7 @@ import {
   groupToolsByFamily,
 } from './tool-contract.js';
 import { MAX_PROVENANCE_EDGES } from '../../../constants.js';
+import { TOOL_COGNITIVE_WEIGHTS } from './epistemic-lease.js';
 
 const registeredToolNames = TOOL_DEFINITIONS.map(t => t.name);
 const toolByName = new Map(TOOL_DEFINITIONS.map(t => [t.name, t]));
@@ -96,6 +97,42 @@ describe('groupToolsByFamily', () => {
     expect(grouped).toEqual([...registeredToolNames].sort());
     // An agent chooses among a handful of families, not the flat registry.
     expect(groups.length).toBeLessThanOrEqual(CAPABILITY_FAMILIES.length);
+  });
+});
+
+// ============================================================================
+// LeaseWeightTableIsComplete (mcp-handlers; change: fix-epistemic-lease-weights).
+// The epistemic lease weights each tool call to track per-session cognitive load.
+// Its weight table must cover the whole registry in both directions — the same
+// closed-table discipline TOOL_OUTPUT_CLASS and TOOL_CAPABILITY_FAMILY carry — so a
+// new tool without a declared weight fails CI rather than silently riding the `?? 1`
+// runtime fallback (a freshness signal computed from wrong inputs is a wrong signal).
+// ============================================================================
+describe('TOOL_COGNITIVE_WEIGHTS completeness', () => {
+  it('weights every registered tool (no tool falls to the runtime fallback)', () => {
+    const unweighted = registeredToolNames.filter(name => !(name in TOOL_COGNITIVE_WEIGHTS));
+    expect(unweighted).toEqual([]);
+  });
+
+  it('has no stale entries for tools that are no longer registered', () => {
+    const registered = new Set(registeredToolNames);
+    const stale = Object.keys(TOOL_COGNITIVE_WEIGHTS).filter(name => !registered.has(name));
+    expect(stale).toEqual([]);
+  });
+
+  it('assigns every weight from the existing tier set (no newly invented constant)', () => {
+    // Weights are assigned by analogy to an existing entry, never a fresh magnitude:
+    // 0 (reset), 1-2 (lightweight), 3-5 (structural/graph), 8 (deep architectural trace).
+    const allowed = new Set([0, 1, 2, 3, 4, 5, 8]);
+    for (const [name, weight] of Object.entries(TOOL_COGNITIVE_WEIGHTS)) {
+      expect(allowed.has(weight), `tool "${name}" has weight ${weight} outside the declared tier set`).toBe(true);
+    }
+  });
+
+  it('scores near-twin tools equally (find_path === trace_execution_path)', () => {
+    // Two point-to-point path traversals documented as near-twins accrue equal load —
+    // the 8× accounting gap the fix closes.
+    expect(TOOL_COGNITIVE_WEIGHTS.find_path).toBe(TOOL_COGNITIVE_WEIGHTS.trace_execution_path);
   });
 });
 
