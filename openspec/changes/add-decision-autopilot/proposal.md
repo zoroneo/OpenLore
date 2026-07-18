@@ -1,6 +1,6 @@
 # Decision autopilot: auto-accept governance with a first-class audit trail
 
-> Status: PROPOSED (2026-07-18). The decisions gate is the substrate's governance heartbeat,
+> Status: IMPLEMENTED (2026-07-18, PR #223). The decisions gate is the substrate's governance heartbeat,
 > but its only mode is *blocking human review*: every commit with staged source either stops
 > for interactive approval or is bypassed with `--no-verify`. That friction is exactly why
 > the gate ships behind a separate opt-in command and why real users end up rubber-stamping.
