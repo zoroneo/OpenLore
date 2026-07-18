@@ -89,9 +89,14 @@ describe('isDecisionsLockHeld', () => {
     await isDecisionsLockHeld(root);
     // The holder's lock survives the peeks: a second acquire still blocks.
     let acquired2 = false;
-    acquireDecisionsLock(root).then((r) => { acquired2 = true; return r; });
+    const p2 = acquireDecisionsLock(root).then((r) => { acquired2 = true; return r; });
     await sleep(300);
     expect(acquired2).toBe(false);
     await release();
+    // Drain the now-unblocked second acquire and release it. Leaving it pending
+    // lets its next poll race afterEach's rm(root): open() then rejects with
+    // ENOENT as an unhandled rejection that fails the whole run.
+    const release2 = await p2;
+    await release2();
   });
 });
