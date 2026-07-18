@@ -10,41 +10,149 @@
  */
 
 import { Command } from 'commander';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { existsSync, readFileSync } from 'node:fs';
+import { promisify } from 'node:util';
 import { logger } from '../../utils/logger.js';
 import { fetchLatestVersion, isNewer } from '../../core/services/update-notifier.js';
 
 const require = createRequire(import.meta.url);
+const execFileAsync = promisify(execFile);
 
-export type InstallMethod = 'homebrew' | 'npm-global' | 'npx' | 'unknown';
+export type InstallMethod = 'homebrew' | 'npm-global' | 'npm-local' | 'npx' | 'unknown';
 
 /**
- * Infer how the running openlore was installed from the path of the executing
- * module. Pure function of the path string so it is unit-testable.
+ * Deterministic local evidence used to tell a global npm install apart from a
+ * project-local one — the one distinction the module path alone cannot make
+ * (a Windows global prefix and a project's `node_modules/openlore/` are
+ * path-shaped alike). Every field is gathered from a local command or file read;
+ * absent fields mean "no evidence", never "false".
  */
-export function detectInstallMethod(modulePath: string): InstallMethod {
-  const p = modulePath.toLowerCase();
+export interface InstallEvidence {
+  /** Global `node_modules` root(s) from `npm root -g` (normalized). */
+  npmGlobalRoots?: string[];
+  /** True iff the project enclosing this install declares an `openlore` dependency. */
+  declaredAsProjectDependency?: boolean;
+}
+
+/** Lowercase and collapse both path separators so Windows paths match POSIX ones. */
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, '/').toLowerCase();
+}
+
+/**
+ * Infer how the running openlore was installed from the executing module path
+ * plus deterministic local evidence. Pure function of its inputs so it is
+ * unit-testable; the impure evidence gathering lives in `gatherInstallEvidence`.
+ *
+ * Global-vs-local is decided by evidence, not a substring guess: a path under a
+ * proven `npm root -g` (or a POSIX `lib/node_modules` global prefix) is global; a
+ * `node_modules/openlore/` whose enclosing project declares the dependency is
+ * local. Contradictory or absent evidence yields `'unknown'` — the command then
+ * defers to the human rather than mutating the wrong install.
+ */
+export function detectInstallMethod(
+  modulePath: string,
+  evidence: InstallEvidence = {}
+): InstallMethod {
+  const p = normalizePath(modulePath);
   if (p.includes('/cellar/') || p.includes('/homebrew/') || p.includes('/linuxbrew/')) {
     return 'homebrew';
   }
   // npx caches under .../_npx/<hash>/node_modules/... (npm) — transient, auto-floats.
   if (p.includes('/_npx/') || p.includes('/npm-cache/_npx/')) return 'npx';
-  // A global npm install lives under a global node_modules prefix.
-  if (p.includes('/node_modules/openlore/') || p.includes('/lib/node_modules/')) {
-    return 'npm-global';
-  }
+
+  // A POSIX global npm prefix always nests the package under `lib/node_modules`;
+  // a proven `npm root -g` covers every platform (incl. the Windows prefix, which
+  // has no `lib/` segment and so is indistinguishable from a project by path alone).
+  const underGlobalRoot = (evidence.npmGlobalRoots ?? []).some(
+    (root) => root && p.startsWith(normalizePath(root))
+  );
+  const looksGlobal = underGlobalRoot || p.includes('/lib/node_modules/');
+  const looksLocal = evidence.declaredAsProjectDependency === true;
+
+  // Contradictory evidence is disclosed, never guessed.
+  if (looksGlobal && looksLocal) return 'unknown';
+  if (looksGlobal) return 'npm-global';
+  if (looksLocal) return 'npm-local';
   return 'unknown';
 }
 
-/** The shell command that upgrades each install method (null = nothing to run). */
+/**
+ * Derive the project root that ENCLOSES this install (the directory containing
+ * `node_modules/openlore/`) and report whether its `package.json` declares an
+ * `openlore` dependency. Anchored to the install location, not `cwd`, so a global
+ * openlore run inside a project that also depends on it locally is not misread as
+ * local. Fail-soft: any read/parse problem is "no evidence".
+ */
+function enclosingProjectDeclaresOpenlore(modulePath: string): boolean {
+  const norm = modulePath.replace(/\\/g, '/');
+  const marker = '/node_modules/openlore/';
+  const idx = norm.toLowerCase().indexOf(marker);
+  if (idx < 0) return false;
+  const projectRoot = norm.slice(0, idx);
+  const pkgPath = `${projectRoot}/package.json`;
+  try {
+    if (!existsSync(pkgPath)) return false;
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as Record<string, unknown>;
+    for (const field of [
+      'dependencies',
+      'devDependencies',
+      'optionalDependencies',
+      'peerDependencies',
+    ]) {
+      const deps = pkg[field];
+      if (deps && typeof deps === 'object' && 'openlore' in (deps as Record<string, unknown>)) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** The global `node_modules` root reported by `npm root -g` ([] if npm is absent/slow). */
+async function queryNpmGlobalRoots(): Promise<string[]> {
+  try {
+    const { stdout } = await execFileAsync('npm', ['root', '-g'], {
+      timeout: 3000,
+      windowsHide: true,
+    });
+    const line = stdout.trim();
+    return line ? [line] : [];
+  } catch {
+    // npm missing, offline, or timed out — the evidence is simply absent.
+    return [];
+  }
+}
+
+/**
+ * Gather the deterministic local evidence `detectInstallMethod` needs. Impure
+ * (one local subprocess + one file read), fail-soft, no network.
+ */
+export async function gatherInstallEvidence(modulePath: string): Promise<InstallEvidence> {
+  return {
+    npmGlobalRoots: await queryNpmGlobalRoots(),
+    declaredAsProjectDependency: enclosingProjectDeclaresOpenlore(modulePath),
+  };
+}
+
+/**
+ * The shell command that upgrades each install method (null = nothing to run).
+ * `npm-local` returns the per-project command, but `runUpdate` only PRINTS it —
+ * a local dependency is never mutated for the user.
+ */
 export function upgradeCommandFor(method: InstallMethod): { cmd: string; args: string[] } | null {
   switch (method) {
     case 'homebrew':
       return { cmd: 'brew', args: ['upgrade', 'openlore'] };
     case 'npm-global':
       return { cmd: 'npm', args: ['install', '-g', 'openlore@latest'] };
+    case 'npm-local':
+      return { cmd: 'npm', args: ['install', 'openlore@latest'] };
     default:
       return null;
   }
@@ -81,12 +189,26 @@ export async function runUpdate(opts: UpdateOpts): Promise<number> {
   logger.info('Update', `${current} → ${latest}`);
   if (opts.check) return 0;
 
-  const method = detectInstallMethod(fileURLToPath(import.meta.url));
+  const modulePath = fileURLToPath(import.meta.url);
+  const method = detectInstallMethod(modulePath, await gatherInstallEvidence(modulePath));
   if (method === 'npx') {
     logger.info(
       'npx',
       'You run openlore via npx (`npx --yes openlore`), which already floats to the latest ' +
         'version on each run. Nothing to upgrade.'
+    );
+    return 0;
+  }
+
+  // A project-local dependency is never upgraded for the user — mutating the
+  // project's lockfile is the user's call. Report the newer version and the
+  // exact per-project command; run nothing global.
+  if (method === 'npm-local') {
+    const local = upgradeCommandFor(method)!;
+    logger.info(
+      'Project dependency',
+      `openlore is a project-local dependency here. Upgrade it in your project with:\n  ` +
+        `${local.cmd} ${local.args.join(' ')}`
     );
     return 0;
   }
