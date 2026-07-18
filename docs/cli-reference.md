@@ -42,6 +42,7 @@
 | `openlore mcp` | Start MCP server (stdio, for Cline / Claude Code) | No |
 | `openlore serve` | Start a warm local HTTP daemon exposing tools (loopback, for Pi / editors) | No |
 | `openlore doctor` | Check environment and configuration for common issues | No |
+| `openlore status` | One read-only pane of what OpenLore is doing in this repo — index freshness, search mode, wiring, governance, version (`--json`) | No |
 | `openlore features` | List opt-in features, which are active, and the one command/snippet to turn on each (`--json`, `--inactive`) | No |
 | `openlore update` | Upgrade openlore to the latest published version (detects npm-global / Homebrew / npx); `--check` reports availability, `--dry-run` prints the command without running it | No |
 | `openlore refresh-stories` | Refresh story files with latest structural context after each commit | No |
@@ -354,6 +355,24 @@ Checks performed:
 | Disk space | Warns < 500 MB, fails < 200 MB |
 
 Run `openlore doctor` whenever setup instructions aren't working — it tells you exactly what to fix and how.
+
+### Status (what the substrate is doing right now)
+
+`openlore status` is the one pane that answers the autopilot-era questions: *is my index fresh, is
+anything running, what did OpenLore accept for me, is anything waiting on me?* It composes existing
+signals only — the index-integrity attestation, the stale region, config, the wiring table, the
+decisions store + ledger, and the update-notifier cache — into one read-only conclusion. No LLM, no
+network, no writes (the index is opened read-only), sub-second.
+
+```bash
+openlore status          # Index freshness, search mode, wiring, governance, version
+openlore status --json   # Machine-readable report (for scripts / agents)
+```
+
+On a repo with no OpenLore state it degrades to a single instruction (`openlore install`) and exits 0.
+
+Its siblings answer different questions: **`doctor`** = is my *environment* healthy (and how to fix
+it); **`features`** = what could I turn *on*; **`status`** = what is the substrate *doing right now*.
 
 ### Features (what's on, and how to turn on the rest)
 

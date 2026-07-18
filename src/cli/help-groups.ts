@@ -23,7 +23,7 @@ import type { Command, Help } from 'commander';
 export const COMMAND_GROUPS: ReadonlyArray<{ title: string; commands: readonly string[] }> = [
   {
     title: 'Set up & run',
-    commands: ['install', 'connect', 'init', 'analyze', 'embed', 'mcp', 'serve', 'doctor', 'features', 'setup', 'update', 'view'],
+    commands: ['install', 'connect', 'init', 'analyze', 'embed', 'mcp', 'serve', 'doctor', 'status', 'features', 'setup', 'update', 'view'],
   },
   {
     title: 'Navigate the code',
