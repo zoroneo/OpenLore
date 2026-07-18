@@ -2,8 +2,8 @@
  * Tests for openlore view command
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { viewCommand, sanitizeErrorMessage, safePath } from './view.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { viewCommand, sanitizeErrorMessage, safePath, buildTokenInjectionScript } from './view.js';
 
 // ============================================================================
 // MOCKS
@@ -58,6 +58,14 @@ vi.mock('../../core/analyzer/code-shaper.js', () => ({
 vi.mock('../../core/services/chat-agent.js', () => ({
   runChatAgent: vi.fn().mockResolvedValue({ reply: '', filePaths: [] }),
   resolveProviderConfig: vi.fn().mockResolvedValue({ kind: 'anthropic', model: 'claude', baseUrl: '', apiKey: '' }),
+}));
+
+// Mock fs so the descriptor write in the wiring test never touches the real repo.
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn().mockResolvedValue(''),
+  writeFile: vi.fn().mockResolvedValue(undefined),
+  mkdir: vi.fn().mockResolvedValue(undefined),
+  unlink: vi.fn().mockResolvedValue(undefined),
 }));
 
 // ============================================================================
@@ -289,5 +297,111 @@ describe('safePath', () => {
     // src/../src/file.ts resolves to /project/src/file.ts
     const result = safePath('/project', 'src/../src/file.ts');
     expect(result).toBe('/project/src/file.ts');
+  });
+});
+
+// ============================================================================
+// buildTokenInjectionScript — the token/fetch shim injected into the served UI
+// ============================================================================
+
+describe('buildTokenInjectionScript', () => {
+  it('publishes the token and attaches x-openlore-token to /api requests', () => {
+    const script = buildTokenInjectionScript('deadbeef');
+    expect(script).toContain('window.__OPENLORE_TOKEN__="deadbeef"');
+    expect(script).toContain('x-openlore-token');
+    expect(script).toContain("indexOf('/api/')");
+    // Wraps fetch and is defensive (never throws into the app).
+    expect(script).toContain('window.fetch=function');
+    expect(script).toContain('try{');
+  });
+
+  it('escapes < so an odd token cannot close the <script> tag', () => {
+    const script = buildTokenInjectionScript('a"b</script>');
+    // The quote is JSON-escaped and every `<` is turned into <, so the
+    // literal </script> sequence never appears in the emitted script.
+    expect(script).toContain('\\u003c/script>');
+    expect(script).not.toContain('</script>');
+  });
+});
+
+// ============================================================================
+// API guard wiring — every /api route sits behind the shared guard
+// ============================================================================
+
+describe('view server API guard wiring', () => {
+  beforeEach(() => {
+    process.exitCode = undefined;
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    // The action installs SIGINT/SIGTERM handlers; drop them so they don't
+    // accumulate across the suite.
+    process.removeAllListeners('SIGINT');
+    process.removeAllListeners('SIGTERM');
+  });
+
+  /** Run the view action far enough to capture the vite plugin config. */
+  async function captureViteConfig() {
+    const { fileExists } = await import('../../utils/command-helpers.js');
+    // graph exists, viewer index.html exists → createServer is reached.
+    vi.mocked(fileExists).mockResolvedValue(true);
+    const { createServer } = await import('vite');
+
+    // Pass an explicit valid port: the shared viewCommand instance retains the
+    // last-parsed --port from the port-validation tests above, so an omitted
+    // --port would inherit their invalid value and bail before createServer.
+    await viewCommand.parseAsync(['node', 'view', '--no-open', '--port', '5199'], { from: 'user' });
+
+    expect(vi.mocked(createServer)).toHaveBeenCalled();
+    return vi.mocked(createServer).mock.calls[0][0] as {
+      plugins: Array<{ name?: string; configureServer?: (s: unknown) => void; transformIndexHtml?: () => unknown }>;
+    };
+  }
+
+  it('registers the /api guard before any /api/* route', async () => {
+    const cfg = await captureViteConfig();
+    const plugin = (cfg.plugins.flat() as Array<{ name?: string; configureServer?: (s: unknown) => void }>)
+      .find((p) => p && p.name === 'openlore-graph-api');
+    expect(plugin).toBeDefined();
+
+    const registrations: Array<{ path: string }> = [];
+    const fakeDevServer = {
+      middlewares: { use: (path: string) => registrations.push({ path }) },
+    };
+    plugin!.configureServer!(fakeDevServer);
+
+    const guardIdx = registrations.findIndex((r) => r.path === '/api');
+    const firstRouteIdx = registrations.findIndex((r) => r.path.startsWith('/api/'));
+    expect(guardIdx).toBeGreaterThanOrEqual(0);
+    expect(firstRouteIdx).toBeGreaterThanOrEqual(0);
+    // The guard is registered (and therefore runs) before every scoped /api/* route.
+    expect(guardIdx).toBeLessThan(firstRouteIdx);
+    // No /api/* route may be registered before the guard.
+    const routesBeforeGuard = registrations
+      .slice(0, guardIdx)
+      .filter((r) => r.path.startsWith('/api'));
+    expect(routesBeforeGuard).toEqual([]);
+  });
+
+  it('injects the token + fetch shim into the served page', async () => {
+    const cfg = await captureViteConfig();
+    const plugin = (cfg.plugins.flat() as Array<{ name?: string; transformIndexHtml?: () => unknown }>)
+      .find((p) => p && p.name === 'openlore-graph-api');
+    const tags = plugin!.transformIndexHtml!() as Array<{ tag: string; children: string; injectTo: string }>;
+    expect(tags).toHaveLength(1);
+    expect(tags[0].tag).toBe('script');
+    expect(tags[0].children).toContain('x-openlore-token');
+    expect(tags[0].children).toContain('window.__OPENLORE_TOKEN__');
+  });
+
+  it('writes a discovery descriptor on start', async () => {
+    await captureViteConfig();
+    const { writeFile } = await import('node:fs/promises');
+    const wrote = vi.mocked(writeFile).mock.calls.find(([p]) => String(p).endsWith('view.json'));
+    expect(wrote).toBeDefined();
+    const payload = JSON.parse(String(wrote![1]));
+    expect(payload).toMatchObject({ pid: process.pid, host: expect.any(String) });
+    expect(typeof payload.token).toBe('string');
+    expect(payload.token.length).toBeGreaterThan(0);
   });
 });
