@@ -26,6 +26,7 @@ import {
   OPENSPEC_DIR,
   OPENSPEC_SPECS_SUBDIR,
   ARTIFACT_REPO_STRUCTURE,
+  ARTIFACT_PARSE_HEALTH,
   DEFAULT_ANTHROPIC_MODEL,
   DEFAULT_OPENAI_MODEL,
   DEFAULT_OPENAI_COMPAT_MODEL,
@@ -159,6 +160,37 @@ async function checkAnalysis(rootPath: string): Promise<CheckResult> {
       fix: "Run 'openlore install' (one-command setup) or 'openlore analyze' to build the index",
       remediation: { kind: 'analyze', label: 'openlore analyze --force' },
     };
+  }
+}
+
+/**
+ * Parse-health check (change: add-parse-health-boundary-disclosure): surface files that parsed with
+ * errors (grammar drift, syntax errors, lossy encoding) so a degraded index isn't mistaken for a
+ * genuinely small one. Absent artifact → clean (ok). A spike after a `tree-sitter-*` bump is the
+ * signal this check exists to catch.
+ */
+async function checkParseHealth(rootPath: string): Promise<CheckResult> {
+  const path = join(rootPath, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, ARTIFACT_PARSE_HEALTH);
+  try {
+    const report = JSON.parse(await readFile(path, 'utf-8')) as {
+      totalDegradedFiles?: number;
+      byLanguage?: Array<{ language: string; degradedFiles: number }>;
+    };
+    const n = report.totalDegradedFiles ?? 0;
+    if (n === 0) return { name: 'Parse health', status: 'ok', detail: 'no files parsed with errors' };
+    const langs = (report.byLanguage ?? [])
+      .slice(0, 3)
+      .map(l => `${l.language} (${l.degradedFiles})`)
+      .join(', ');
+    return {
+      name: 'Parse health',
+      status: 'warn',
+      detail: `${n} file(s) parsed with errors — symbols/edges there are a lower bound: ${langs}`,
+      fix: "Inspect via get_language_support; if this spiked after a grammar bump, revert or re-pin the tree-sitter-* dep",
+    };
+  } catch {
+    // No artifact → nothing degraded (clean repos don't write it).
+    return { name: 'Parse health', status: 'ok', detail: 'no files parsed with errors' };
   }
 }
 
@@ -507,6 +539,7 @@ Checks performed:
         checkGit(rootPath),
         checkConfig(rootPath),
         checkAnalysis(rootPath),
+        checkParseHealth(rootPath),
         checkOpenSpecDir(rootPath),
         checkDiskSpace(rootPath),
       ]),

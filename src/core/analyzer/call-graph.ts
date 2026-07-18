@@ -33,6 +33,7 @@ import { stableSymbolId, stableClassId } from '../scip/moniker.js';
 import { synthesizeTypeHierarchyEdges, type RawMethodCall } from './cha.js';
 import { logger } from '../../utils/logger.js';
 import { tallyFileStyle, type FileStyleRaw, type StyleAstNode } from './style-fingerprint.js';
+import { tallyParseHealth, type FileParseHealth, type ParseHealthNode } from './parse-health.js';
 
 // ============================================================================
 // TYPES — extracted to ./call-graph-types.ts and re-exported here so this file
@@ -604,7 +605,7 @@ const TS_CALL_QUERY = `
 async function extractTSGraph(
   filePath: string,
   content: string
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; style?: FileStyleRaw }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; style?: FileStyleRaw; parseHealth?: FileParseHealth }> {
   const r = await getTSParser();
   if (!r) return { nodes: [], rawEdges: [], cfg: new Map() };
   const { parser, lang } = r;
@@ -745,8 +746,9 @@ async function extractTSGraph(
   }
 
   const style = tallyStyle('TypeScript', tree, nodes, filePath);
+  const parseHealth = tallyParseHealth('TypeScript', tree.rootNode as unknown as ParseHealthNode, filePath);
   const cfg = materializeCfgByNodeId(nodes, cfgByStart);
-  return { nodes, rawEdges, cfg, style };
+  return { nodes, rawEdges, cfg, style, parseHealth };
 }
 
 // ============================================================================
@@ -788,7 +790,7 @@ const PY_METHOD_CALL_QUERY = `
 async function extractPyGraph(
   filePath: string,
   content: string
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; style?: FileStyleRaw }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; style?: FileStyleRaw; parseHealth?: FileParseHealth }> {
   const r = await getPyParser();
   if (!r) return { nodes: [], rawEdges: [], cfg: new Map() };
   const { parser, lang } = r;
@@ -912,8 +914,9 @@ async function extractPyGraph(
   }
 
   const style = tallyStyle('Python', tree, nodes, filePath);
+  const parseHealth = tallyParseHealth('Python', tree.rootNode as unknown as ParseHealthNode, filePath);
   const cfg = materializeCfgByNodeId(nodes, cfgByStart);
-  return { nodes, rawEdges, cfg, style };
+  return { nodes, rawEdges, cfg, style, parseHealth };
 }
 
 // ============================================================================
@@ -941,7 +944,7 @@ const GO_CALL_QUERY = `
 async function extractGoGraph(
   filePath: string,
   content: string
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; style?: FileStyleRaw }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; style?: FileStyleRaw; parseHealth?: FileParseHealth }> {
   const r = await getGoParser();
   if (!r) return { nodes: [], rawEdges: [], cfg: new Map() };
   const { parser, lang } = r;
@@ -1006,8 +1009,9 @@ async function extractGoGraph(
   }
 
   const style = tallyStyle('Go', tree, nodes, filePath);
+  const parseHealth = tallyParseHealth('Go', tree.rootNode as unknown as ParseHealthNode, filePath);
   const cfg = materializeCfgByNodeId(nodes, cfgByStart);
-  return { nodes, rawEdges, cfg, style };
+  return { nodes, rawEdges, cfg, style, parseHealth };
 }
 
 // ============================================================================
@@ -1032,11 +1036,12 @@ const RUST_CALL_QUERY = `
 async function extractRustGraph(
   filePath: string,
   content: string
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg> }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; parseHealth?: FileParseHealth }> {
   const r = await getRustParser();
   if (!r) return { nodes: [], rawEdges: [], cfg: new Map() };
   const { parser, lang } = r;
   const tree = (parser as Parser).parse(content);
+  const parseHealth = tallyParseHealth('', tree.rootNode as unknown as ParseHealthNode, filePath);
 
   const fnQuery = new _NativeQuery!(lang as unknown as Parser.Language, RUST_FN_QUERY);
   const callQuery = new _NativeQuery!(lang as unknown as Parser.Language, RUST_CALL_QUERY);
@@ -1106,7 +1111,7 @@ async function extractRustGraph(
   }
 
   const cfg = materializeCfgByNodeId(nodes, cfgByStart);
-  return { nodes, rawEdges, cfg };
+  return { nodes, rawEdges, cfg, parseHealth };
 }
 
 // ============================================================================
@@ -1142,11 +1147,12 @@ const RUBY_BAREWORD_QUERY = `
 async function extractRubyGraph(
   filePath: string,
   content: string
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg> }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; parseHealth?: FileParseHealth }> {
   const r = await getRubyParser();
   if (!r) return { nodes: [], rawEdges: [], cfg: new Map() };
   const { parser, lang } = r;
   const tree = (parser as Parser).parse(content);
+  const parseHealth = tallyParseHealth('', tree.rootNode as unknown as ParseHealthNode, filePath);
 
   const fnQuery = new _NativeQuery!(lang as unknown as Parser.Language, RUBY_FN_QUERY);
   const callQuery = new _NativeQuery!(lang as unknown as Parser.Language, RUBY_CALL_QUERY);
@@ -1210,7 +1216,7 @@ async function extractRubyGraph(
   }
 
   const cfg = materializeCfgByNodeId(nodes, cfgByStart);
-  return { nodes, rawEdges, cfg };
+  return { nodes, rawEdges, cfg, parseHealth };
 }
 
 // ============================================================================
@@ -1347,11 +1353,12 @@ function synthesizeJavaSuperCalls(
 async function extractJavaGraph(
   filePath: string,
   content: string
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg> }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; parseHealth?: FileParseHealth }> {
   const r = await getJavaParser();
   if (!r) return { nodes: [], rawEdges: [], cfg: new Map() };
   const { parser, lang } = r;
   const tree = (parser as Parser).parse(content);
+  const parseHealth = tallyParseHealth('', tree.rootNode as unknown as ParseHealthNode, filePath);
 
   const fnQuery = new _NativeQuery!(lang as unknown as Parser.Language, JAVA_FN_QUERY);
   const callQuery = new _NativeQuery!(lang as unknown as Parser.Language, JAVA_CALL_QUERY);
@@ -1415,7 +1422,7 @@ async function extractJavaGraph(
   rawEdges.push(...synthesizeJavaSuperCalls(tree.rootNode, nodes, lang));
 
   const cfg = materializeCfgByNodeId(nodes, cfgByStart);
-  return { nodes, rawEdges, cfg };
+  return { nodes, rawEdges, cfg, parseHealth };
 }
 
 // ============================================================================
@@ -1477,11 +1484,12 @@ const CPP_CALL_MEMBER_QUERY = `
 async function extractCppGraph(
   filePath: string,
   content: string
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg> }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; parseHealth?: FileParseHealth }> {
   const r = await getCppParser();
   if (!r) return { nodes: [], rawEdges: [], cfg: new Map() };
   const { parser, lang } = r;
   const tree = (parser as Parser).parse(content);
+  const parseHealth = tallyParseHealth('', tree.rootNode as unknown as ParseHealthNode, filePath);
 
   const nodes: FunctionNode[] = [];
   const cfgByStart = new Map<number, FunctionCfg>();
@@ -1579,7 +1587,7 @@ async function extractCppGraph(
   }
 
   const cfg = materializeCfgByNodeId(nodes, cfgByStart);
-  return { nodes, rawEdges, cfg };
+  return { nodes, rawEdges, cfg, parseHealth };
 }
 
 // ============================================================================
@@ -1611,11 +1619,12 @@ const SWIFT_CALL_NAV_QUERY = `
 async function extractSwiftGraph(
   filePath: string,
   content: string
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[] }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; parseHealth?: FileParseHealth }> {
   const r = await getSwiftParser();
   if (!r) return { nodes: [], rawEdges: [] };
   const { parser, lang } = r;
   const tree = (parser as Parser).parse(content);
+  const parseHealth = tallyParseHealth('', tree.rootNode as unknown as ParseHealthNode, filePath);
 
   const fnQuery = new _NativeQuery!(lang as unknown as Parser.Language, SWIFT_FN_QUERY);
   const directCallQuery = new _NativeQuery!(lang as unknown as Parser.Language, SWIFT_CALL_DIRECT_QUERY);
@@ -1696,7 +1705,7 @@ async function extractSwiftGraph(
     rawEdges.push({ callerId: caller.id, calleeName, line: nodeCapture.node.startPosition.row + 1, calleeObject: objText });
   }
 
-  return { nodes, rawEdges };
+  return { nodes, rawEdges, parseHealth };
 }
 
 // ============================================================================
@@ -1735,6 +1744,14 @@ interface TsMatch { captures: Array<{ name: string; node: TsNodeLike }> }
  */
 interface GrammarHandle {
   withTree<T>(content: string, fn: (root: TsNodeLike, runQuery: (src: string) => TsMatch[]) => T): T;
+  /**
+   * Whether `rootNode.hasError` is trustworthy for parse-health (change:
+   * add-parse-health-boundary-disclosure). The WASM loader shares one Language object across parses,
+   * and its heap lifecycle produces spurious ERROR nodes on any parse after the first — so
+   * parse-health is fail-soft (not tallied) for WASM grammars, never falsely reported. `undefined`
+   * (native loader) means reliable. See the WASM-lifecycle note in `loadWasmGrammarSoft`.
+   */
+  parseHealthReliable?: boolean;
 }
 
 const _grammarHandleCache = new Map<string, GrammarHandle | null>();
@@ -1847,6 +1864,9 @@ async function loadWasmGrammarSoft(
           p.delete?.();
         }
       },
+      // The shared WASM Language heap yields spurious ERROR nodes on parses after the first, so
+      // hasError is not trustworthy here — parse-health is fail-soft for WASM grammars.
+      parseHealthReliable: false,
     };
     _grammarHandleCache.set(cacheKey, handle);
     return handle;
@@ -1901,7 +1921,7 @@ async function extractByQueries(
   spec: QueryLangSpec,
   filePath: string,
   content: string,
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg> }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg>; parseHealth?: FileParseHealth }> {
   const handle = await spec.loader();
   if (!handle) return { nodes: [], rawEdges: [], cfg: new Map() };
 
@@ -1968,7 +1988,11 @@ async function extractByQueries(
       rawEdges.push({ callerId: caller.id, calleeName, line: nodeCapture.node.startPosition.row + 1, calleeObject });
     }
     const cfg = materializeCfgByNodeId(nodes, cfgByStart);
-    return { nodes, rawEdges, cfg };
+    // WASM grammars (e.g. Lua) yield spurious errors after the first parse — skip parse-health there.
+    const parseHealth = handle.parseHealthReliable === false
+      ? undefined
+      : tallyParseHealth('', _root as unknown as ParseHealthNode, filePath);
+    return { nodes, rawEdges, cfg, parseHealth };
   });
 }
 
@@ -2135,7 +2159,7 @@ const DART_CLASS_TYPES = new Set(['class_definition', 'mixin_declaration', 'exte
 async function extractDartGraph(
   filePath: string,
   content: string,
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[] }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; parseHealth?: FileParseHealth }> {
   const handle = await loadWasmGrammarSoft('Dart', 'tree-sitter-wasms/out/tree-sitter-dart.wasm');
   if (!handle) return { nodes: [], rawEdges: [] };
 
@@ -2199,6 +2223,9 @@ async function extractDartGraph(
     for (const c of n.namedChildren) collectCalls(c);
   };
   collectCalls(root);
+  // Dart loads via the WASM path, whose shared Language heap yields spurious ERROR nodes after the
+  // first parse — parse-health is fail-soft (not tallied) for it (change:
+  // add-parse-health-boundary-disclosure).
   return { nodes, rawEdges };
   });
 }
@@ -2209,7 +2236,7 @@ const ELIXIR_DEF_KEYWORDS = new Set(['def', 'defp', 'defmacro', 'defmacrop']);
 async function extractElixirGraph(
   filePath: string,
   content: string,
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[] }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; parseHealth?: FileParseHealth }> {
   const loaded = await loadGrammarSoft('Elixir', () => import('tree-sitter-elixir'), m => m.default);
   if (!loaded) return { nodes: [], rawEdges: [] };
 
@@ -2291,7 +2318,8 @@ async function extractElixirGraph(
     seen.add(key);
     rawEdges.push({ callerId: caller.id, calleeName: c.name, line: c.row + 1, calleeObject: c.object });
   }
-  return { nodes, rawEdges };
+  const parseHealth = tallyParseHealth('', root as unknown as ParseHealthNode, filePath);
+  return { nodes, rawEdges, parseHealth };
   });
 }
 
@@ -3937,38 +3965,13 @@ export class CallGraphBuilder {
     const allRawEdges: RawEdge[] = [];
     const allCfgs = new Map<string, FunctionCfg>();
     const styleByFile = new Map<string, FileStyleRaw>();
+    const parseHealthByFile = new Map<string, FileParseHealth>();
 
     // Pass 1: Extract nodes and raw edges from each file
     for (const file of files) {
       try {
-        let result: { nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg?: Map<string, FunctionCfg>; style?: FileStyleRaw };
-
-        if (file.language === 'Python') {
-          result = await extractPyGraph(file.path, file.content);
-        } else if (file.language === 'TypeScript' || file.language === 'JavaScript') {
-          result = await extractTSGraph(file.path, file.content);
-        } else if (file.language === 'Go') {
-          result = await extractGoGraph(file.path, file.content);
-        } else if (file.language === 'Rust') {
-          result = await extractRustGraph(file.path, file.content);
-        } else if (file.language === 'Ruby') {
-          result = await extractRubyGraph(file.path, file.content);
-        } else if (file.language === 'Java') {
-          result = await extractJavaGraph(file.path, file.content);
-        } else if (file.language === 'C++') {
-          result = await extractCppGraph(file.path, file.content);
-        } else if (file.language === 'Swift') {
-          result = await extractSwiftGraph(file.path, file.content);
-        } else if (file.language === 'Elixir') {
-          result = await extractElixirGraph(file.path, file.content);
-        } else if (file.language === 'Dart') {
-          result = await extractDartGraph(file.path, file.content);
-        } else if (QUERY_LANG_SPECS[file.language]) {
-          // spec-08 additional languages (C#, Kotlin, PHP, C, Scala, Dart, Lua, Bash).
-          result = await extractByQueries(QUERY_LANG_SPECS[file.language], file.path, file.content);
-        } else {
-          continue;
-        }
+        const result = await dispatchFileExtract(file);
+        if (!result) continue;
 
         // Compute startLine (1-based) from byte offset — cheap, done once at build time
         const lineOffsets = [0];
@@ -3996,8 +3999,25 @@ export class CallGraphBuilder {
           result.style.language = file.language;
           styleByFile.set(file.path, result.style);
         }
+        if (result.parseHealth) {
+          // Parse health is tallied in the extractor with a placeholder language; relabel to the
+          // real file language for the rollup (change: add-parse-health-boundary-disclosure).
+          result.parseHealth.language = file.language;
+          parseHealthByFile.set(file.path, result.parseHealth);
+        }
       } catch (error) {
-        // Skip files that fail to parse (syntax errors, encoding issues, etc.)
+        // A file that threw here contributed ZERO nodes/edges — the "swallowed parse failure" leak.
+        // Record it as a structured parse-health failure so downstream conclusions disclose it
+        // instead of treating the missing symbols as genuinely absent (change:
+        // add-parse-health-boundary-disclosure). Still fail-soft — the build proceeds.
+        parseHealthByFile.set(file.path, {
+          filePath: file.path,
+          language: file.language,
+          errorCount: 0,
+          missingCount: 0,
+          errorLines: [],
+          parseFailed: true,
+        });
         if (process.env.DEBUG) {
           console.debug(`[call-graph] Failed to parse ${file.path}: ${(error as Error).message}`);
         }
@@ -4646,6 +4666,7 @@ export class CallGraphBuilder {
         avgFanOut: internalNodes.length > 0 ? totalFanOut / internalNodes.length : 0,
       },
       styleByFile: styleByFile.size > 0 ? styleByFile : undefined,
+      parseHealthByFile: parseHealthByFile.size > 0 ? parseHealthByFile : undefined,
     };
   }
 
@@ -4709,6 +4730,39 @@ function assignClassStableIds(classes: ClassNode[]): void {
   }
 }
 
+/** The per-file result of Pass-1 extraction (before cross-file resolution). */
+type FileExtractResult = {
+  nodes: FunctionNode[];
+  rawEdges: RawEdge[];
+  cfg?: Map<string, FunctionCfg>;
+  style?: FileStyleRaw;
+  parseHealth?: FileParseHealth;
+};
+
+/**
+ * Dispatch ONE file to its per-language extractor (Pass-1 only — nodes/edges/cfg/style/parseHealth,
+ * no cross-file resolution). The single source of truth for the language→extractor mapping, shared
+ * by the full build and the watcher's per-file refreshers so the dispatch is never duplicated.
+ * Returns `undefined` for a language with no extractor.
+ */
+async function dispatchFileExtract(
+  file: { path: string; content: string; language: string },
+): Promise<FileExtractResult | undefined> {
+  if (file.language === 'Python') return extractPyGraph(file.path, file.content);
+  if (file.language === 'TypeScript' || file.language === 'JavaScript') return extractTSGraph(file.path, file.content);
+  if (file.language === 'Go') return extractGoGraph(file.path, file.content);
+  if (file.language === 'Rust') return extractRustGraph(file.path, file.content);
+  if (file.language === 'Ruby') return extractRubyGraph(file.path, file.content);
+  if (file.language === 'Java') return extractJavaGraph(file.path, file.content);
+  if (file.language === 'C++') return extractCppGraph(file.path, file.content);
+  if (file.language === 'Swift') return extractSwiftGraph(file.path, file.content);
+  if (file.language === 'Elixir') return extractElixirGraph(file.path, file.content);
+  if (file.language === 'Dart') return extractDartGraph(file.path, file.content);
+  // spec-08 additional languages (C#, Kotlin, PHP, C, Scala, Lua, Bash).
+  if (QUERY_LANG_SPECS[file.language]) return extractByQueries(QUERY_LANG_SPECS[file.language], file.path, file.content);
+  return undefined;
+}
+
 /**
  * Tally ONE file's style fingerprint in isolation (change: add-codebase-style-fingerprint).
  * Reuses the same per-language extractor (and its single parse) the full build uses, returning
@@ -4729,6 +4783,23 @@ export async function extractFileStyle(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Record ONE file's parse health in isolation (change: add-parse-health-boundary-disclosure). Runs
+ * the same per-language dispatch the full build uses (so it covers every callGraph language, not
+ * just the style ones) over a single file — Pass 2 resolution over one file is trivial — and returns
+ * only its parse-health record, or `undefined` for a clean file. Used by the watcher to keep
+ * `parse-health.json` live for a changed file without a whole-graph rebuild. Fail-soft: a parse
+ * failure is itself a parse-health signal, surfaced as `parseFailed`.
+ */
+export async function extractFileParseHealth(
+  file: { path: string; content: string; language: string },
+): Promise<FileParseHealth | undefined> {
+  const result = await dispatchFileExtract(file);
+  const h = result?.parseHealth;
+  if (h) h.language = file.language;
+  return h;
 }
 
 export function serializeCallGraph(result: CallGraphResult): SerializedCallGraph {

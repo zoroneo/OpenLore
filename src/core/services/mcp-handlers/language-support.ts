@@ -20,6 +20,8 @@ import {
   type Capability,
 } from '../../analyzer/language-support.js';
 import type { SerializedCallGraph } from '../../analyzer/call-graph.js';
+import { compactParseHealthSummary } from '../../analyzer/parse-health.js';
+import { loadParseHealthReport } from './parse-health-boundary.js';
 
 export interface GetLanguageSupportInput {
   directory: string;
@@ -48,6 +50,12 @@ export interface GetLanguageSupportResult {
   languages: LanguageSupportView[];
   /** The closed capability set + what each means. */
   capabilities: Array<{ name: Capability; description: string }>;
+  /**
+   * Parse-health summary (change: add-parse-health-boundary-disclosure): the files where extraction
+   * silently under-produced (parse errors, grammar drift, lossy encoding), per language. Absent on
+   * a clean repo — a supported capability is not the same as a clean parse, and this says which.
+   */
+  parseHealth?: { totalDegradedFiles: number; byLanguage: string[] };
   summary: string;
   disclosure: string;
 }
@@ -120,7 +128,23 @@ export async function computeGetLanguageSupport(
     : `${detected.length} language(s) detected: ${fully} fully covered, ${partial} partially covered. ` +
       `A partially-covered language means some conclusions (e.g. dead-code, type-resolved calls) are weaker there.`;
 
-  return { mode: 'repo', detectedLanguages: detected, languages, capabilities: CAP_META, summary, disclosure: DISCLOSURE };
+  // Parse-health overlay (change: add-parse-health-boundary-disclosure): a supported capability is
+  // not the same as a clean parse. Absent on a clean repo (no artifact), so healthy repos are
+  // unchanged.
+  const phReport = await loadParseHealthReport(absDir);
+  const parseHealth = phReport
+    ? { totalDegradedFiles: phReport.totalDegradedFiles, byLanguage: compactParseHealthSummary(phReport) }
+    : undefined;
+
+  return {
+    mode: 'repo',
+    detectedLanguages: detected,
+    languages,
+    capabilities: CAP_META,
+    ...(parseHealth ? { parseHealth } : {}),
+    summary,
+    disclosure: DISCLOSURE,
+  };
 }
 
 /** MCP dispatch entry. */

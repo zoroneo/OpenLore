@@ -300,3 +300,26 @@ describe('language conformance — cross-service HTTP', () => {
     });
   }
 });
+
+// ── (7) Grammar-drift canary: fixtures must parse with ZERO error/missing nodes ──────────────────
+// A `tree-sitter-*` bump that renames a node type or breaks recovery silently deletes functions and
+// edges in the field. This canary makes that failure LOUD: every well-formed conformance fixture
+// must produce no parse-health record (no ERROR/MISSING). If a grammar upgrade starts erroring on
+// clean code, this fails here (on the fixture) instead of quietly in a user's repo
+// (change: add-parse-health-boundary-disclosure).
+//
+// NOTE: the WASM-loaded grammars (Lua, Dart) are structurally EXCLUDED from parse-health (their
+// shared WASM Language heap yields spurious ERROR nodes on parses after the first), so they always
+// produce no record here — this canary guards the 16 native-loader languages, not those two.
+describe('grammar-drift canary — every claimed callGraph language parses its fixture cleanly', () => {
+  for (const f of BASIC) {
+    it(`${f.language}: fixture parses with zero ERROR/MISSING nodes`, async () => {
+      const r = await build([{ path: f.path, language: f.language, content: f.content }]);
+      const health = r.parseHealthByFile?.get(f.path);
+      expect(
+        health,
+        `${f.language} fixture parsed with errors: ${JSON.stringify(health)}`,
+      ).toBeUndefined();
+    });
+  }
+});

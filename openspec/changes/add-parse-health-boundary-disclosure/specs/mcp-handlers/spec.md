@@ -5,14 +5,13 @@
 ### Requirement: ConclusionsDiscloseParseHealthBoundaries
 
 A conclusion tool whose result depends on extraction from a file with a degraded parse-health
-record (ERROR/MISSING regions, parse failure, encoding fallback, or size-cap exclusion) SHALL
-append a boundary disclosure identifying the file and the degradation, so a smaller-than-real
-result reads as a lower bound rather than verified absence. `get_language_support`, `orient`, and
-`doctor` SHALL surface a compact parse-health summary (counts, top offending files) for the
-analyzed scope. A repository with no degraded files SHALL incur no boundary output and no payload
-growth. Parse-health regressions SHALL be expressible as the registered governance finding
-`parse-health` (advisory by default; enforcement class owned by the operator's
-`enforcement.policy`).
+record (ERROR/MISSING regions, parse failure, or encoding fallback) SHALL append a boundary
+disclosure identifying the file and the degradation, so a smaller-than-real result reads as a lower
+bound rather than verified absence. `get_language_support`, `orient`, and `doctor` SHALL surface a
+compact parse-health summary (per-language counts / degraded-file lists) for the analyzed scope. A
+repository with no degraded files SHALL incur no boundary output and no payload growth. Parse-health
+regressions SHALL be expressible as the registered governance finding `parse-health` (advisory by
+default; enforcement class owned by the operator's `enforcement.policy`).
 
 #### Scenario: Dead-code over a degraded file carries a boundary
 

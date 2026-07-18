@@ -115,6 +115,7 @@ export interface LeanOrientResult {
   callPaths?: OrientCallPath[];
   suggestedTools?: string[];
   regionStyle?: RegionStyle;
+  parseHealth?: string;
 }
 
 /**
@@ -186,6 +187,13 @@ export function renderInjectionBlock(result: LeanOrientResult, cfg: ResolvedInje
 
   const files = clean(result.relevantFiles, 8);
   if (files.length > 0) optional.push(`Relevant files: ${files.join(', ')}`);
+
+  // Parse-health boundary — a disclosed lower-bound warning for the surfaced files, so the Pi
+  // surface never lets a degraded parse read as genuine absence (change:
+  // add-parse-health-boundary-disclosure).
+  if (typeof result.parseHealth === 'string' && result.parseHealth.length > 0) {
+    optional.push(`⚠ ${result.parseHealth}`);
+  }
 
   // House style for the area in scope — the payoff of the style fingerprint on the Pi surface, so
   // an agent matches the local idioms without a second tool call. One bounded, budget-gated line;

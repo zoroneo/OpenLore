@@ -21,8 +21,10 @@ import {
   ARTIFACT_UI_INVENTORY,
   ARTIFACT_CALL_GRAPH_DB,
   ARTIFACT_STYLE_FINGERPRINT,
+  ARTIFACT_PARSE_HEALTH,
 } from '../../constants.js';
 import { buildStyleFingerprint, type StyleFingerprint } from './style-fingerprint.js';
+import { buildParseHealthReport, isLossyUtf8, type ParseHealthReport, type FileParseHealth } from './parse-health.js';
 import type { ScoredFile, ProjectType } from '../../types/index.js';
 import type { RepositoryMap } from './repository-mapper.js';
 import type { DependencyGraphResult } from './dependency-graph.js';
@@ -180,6 +182,13 @@ export interface AnalysisArtifacts {
    * llm-context.json lean.
    */
   styleFingerprint?: StyleFingerprint;
+  /**
+   * Per-file parse health (change: add-parse-health-boundary-disclosure): the files where
+   * extraction silently under-produced (tree-sitter ERROR/MISSING regions, a swallowed parse
+   * failure, or a lossy encoding decode), rolled up per language. Absent on a clean repo (no
+   * artifact written), so a healthy repo pays zero. Persisted as its own `parse-health.json`.
+   */
+  parseHealth?: ParseHealthReport;
 }
 
 /**
@@ -262,6 +271,8 @@ export class AnalysisArtifactGenerator {
   private options: Required<ArtifactGeneratorOptions>;
   /** Style fingerprint computed during the last generateLLMContext (call-graph walk). */
   private _styleFingerprint?: StyleFingerprint;
+  /** Parse-health report computed during the last generateLLMContext (call-graph walk). */
+  private _parseHealth?: ParseHealthReport;
 
   constructor(options: ArtifactGeneratorOptions) {
     this.options = {
@@ -293,6 +304,7 @@ export class AnalysisArtifactGenerator {
       dependencyDiagram,
       llmContext,
       styleFingerprint: this._styleFingerprint,
+      parseHealth: this._parseHealth,
     };
   }
 
@@ -379,6 +391,18 @@ export class AnalysisArtifactGenerator {
         writeFile(
           join(this.options.outputDir, ARTIFACT_STYLE_FINGERPRINT),
           JSON.stringify(artifacts.styleFingerprint, null, 2)
+        ).catch(() => {})
+      );
+    }
+
+    // Parse health (change: add-parse-health-boundary-disclosure) — its own artifact, absent on a
+    // clean repo. Same fail-soft treatment as the style fingerprint: a disclosure side artifact must
+    // never abort analysis, so its write failure is swallowed.
+    if (artifacts.parseHealth) {
+      saves.push(
+        writeFile(
+          join(this.options.outputDir, ARTIFACT_PARSE_HEALTH),
+          JSON.stringify(artifacts.parseHealth, null, 2)
         ).catch(() => {})
       );
     }
@@ -1183,10 +1207,17 @@ export class AnalysisArtifactGenerator {
     };
     const signatures: import('./signature-extractor.js').FileSignatureMap[] = [];
     const callGraphFiles: Array<{ path: string; content: string; language: string }> = [];
+    // Files whose UTF-8 decode was lossy (contained U+FFFD) — a parse-health signal captured at the
+    // one central read, since the call-graph extractors never see the raw bytes (change:
+    // add-parse-health-boundary-disclosure).
+    const encodingFallback = new Map<string, string>(); // path → language
 
     for (const file of repoMap.allFiles) {
       try {
-        const content = await readFile(file.absolutePath, 'utf-8');
+        // Read raw bytes so an encoding fallback (invalid UTF-8) is detectable at the byte level —
+        // a decoded string alone can't distinguish a lossy decode from a legit U+FFFD in the source.
+        const bytes = await readFile(file.absolutePath);
+        const content = bytes.toString('utf-8');
         const isTest = isTestFile(file.path);
 
         // Signatures: exclude test files
@@ -1203,6 +1234,7 @@ export class AnalysisArtifactGenerator {
         // Test nodes/edges are filtered out again when writing the production edge store.
         const lang = resolveLang(file.path, content);
         if (CALL_GRAPH_LANGS.has(lang)) {
+          if (isLossyUtf8(bytes)) encodingFallback.set(file.path, lang);
           callGraphFiles.push({ path: file.path, content, language: lang });
         } else if (/\.html?$/i.test(file.path) && content.length <= MAX_HTML_INLINE_SCRIPT_CHARS) {
           // Inline <script> JS (decision 5b38bad2): blank everything outside the
@@ -1239,6 +1271,19 @@ export class AnalysisArtifactGenerator {
           })),
         )
       : undefined;
+
+    // Parse health (change: add-parse-health-boundary-disclosure): merge the per-file ERROR/MISSING
+    // + parse-failure records tallied in the call-graph walk with the encoding-fallback records
+    // captured at the central read, then roll up. `undefined` (no artifact) on a clean repo — every
+    // consumer reads "no artifact" as "nothing degraded", so a healthy repo pays zero. Stashed for
+    // generate()/generateAndSave() to persist as its own `parse-health.json`.
+    const parseHealthRecords = new Map<string, FileParseHealth>(callGraphResult.parseHealthByFile);
+    for (const [path, language] of encodingFallback) {
+      const existing = parseHealthRecords.get(path);
+      if (existing) existing.encodingFallback = true;
+      else parseHealthRecords.set(path, { filePath: path, language, errorCount: 0, missingCount: 0, errorLines: [], encodingFallback: true });
+    }
+    this._parseHealth = buildParseHealthReport([...parseHealthRecords.values()]);
 
     // Intra-procedural CFG/def-use overlay (spec: add-intraprocedural-cfg-dataflow-overlay).
     // Transient: persisted to SQLite by writeEdgesToSQLite, then stripped before

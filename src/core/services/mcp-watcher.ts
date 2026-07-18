@@ -24,15 +24,16 @@
  *     OPENLORE_WATCH_DEBUG).
  */
 
-import { readFile, writeFile, readdir, rename } from 'node:fs/promises';
+import { readFile, writeFile, readdir, rename, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, relative, posix } from 'node:path';
 import { spawn } from 'node:child_process';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { extractSignatures, detectLanguage } from '../analyzer/signature-extractor.js';
 import type { FunctionNode } from '../analyzer/call-graph.js';
-import { extractFileStyle } from '../analyzer/call-graph.js';
+import { extractFileStyle, extractFileParseHealth } from '../analyzer/call-graph.js';
 import { assembleFromRegions, type StyleFingerprint, type FileStyleRaw } from '../analyzer/style-fingerprint.js';
+import { buildParseHealthReport, type ParseHealthReport, type FileParseHealth } from '../analyzer/parse-health.js';
 import { isTestFile } from '../analyzer/test-file.js';
 import { EdgeStore } from './edge-store.js';
 import { refreshAttestationCounts } from '../analyzer/index-attestation.js';
@@ -43,6 +44,7 @@ import {
   ARTIFACT_LLM_CONTEXT,
   ARTIFACT_DEPENDENCY_GRAPH,
   ARTIFACT_STYLE_FINGERPRINT,
+  ARTIFACT_PARSE_HEALTH,
   WATCH_DEBOUNCE_MS,
   WATCH_MAX_BATCH_MS,
   WATCH_BULK_THRESHOLD,
@@ -681,6 +683,13 @@ export class McpWatcher {
     //      on the next full analyze). byLanguage and per-file profiles stay exact.
     await this.updateStyleFingerprint(changedFiles);
 
+    // 3.8. Parse health — keep parse-health.json's per-file degradation records live for the
+    //      changed files (change: add-parse-health-boundary-disclosure). Unlike the style
+    //      fingerprint, this artifact is ABSENT on a clean repo, so a newly-introduced parse error
+    //      must be able to create it, and a repaired file must be able to remove its entry (and the
+    //      artifact once empty).
+    await this.updateParseHealth(changedFiles);
+
     // 4. Vector update — decoupled from signature freshness (Step 4).
     const isBulk = consumedVcsBulk || changedFiles.length >= this.bulkThreshold;
     if (this.embed && !this.embedDegraded && context.callGraph) {
@@ -1117,6 +1126,65 @@ export class McpWatcher {
   }
 
   /**
+   * Keep parse-health.json live for the changed (and deleted) files (change:
+   * add-parse-health-boundary-disclosure). Unlike the style fingerprint (which every supported repo
+   * has), this artifact is ABSENT on a clean repo — so this lane must be able to CREATE it when a
+   * changed file newly degrades, and DELETE it when the last degraded file is repaired or removed.
+   * Re-tally each changed file with the same dispatch the full build uses; a changed file that is
+   * now clean drops its entry. Best-effort + atomic; never throws into the batch.
+   */
+  private async updateParseHealth(changedFiles: ChangedFile[], deletedRels: string[] = []): Promise<void> {
+    const phPath = join(this.outputPath, ARTIFACT_PARSE_HEALTH);
+    try {
+      // Start from the existing report if present, else an empty set (a clean repo has no artifact).
+      const raw = await readFile(phPath, 'utf-8').catch(() => null);
+      const existing = raw ? (JSON.parse(raw) as ParseHealthReport) : null;
+      const byPath = new Map<string, FileParseHealth>(
+        Array.isArray(existing?.files) ? existing!.files.map(f => [f.filePath, f]) : [],
+      );
+      const before = byPath.size;
+      let touched = false;
+
+      for (const rel of deletedRels) {
+        if (byPath.delete(rel)) touched = true;
+      }
+      for (const f of changedFiles) {
+        const language = detectLanguage(f.rel);
+        let health: FileParseHealth | undefined;
+        try {
+          // The watcher sees already-decoded content, so it maintains the tree-derived signals
+          // (ERROR/MISSING, parse failure); the byte-level encoding-fallback signal is recomputed at
+          // the next full analyze. A prior encoding-fallback flag on this file is preserved.
+          health = await extractFileParseHealth({ path: f.rel, content: f.content, language });
+        } catch {
+          health = { filePath: f.rel, language, errorCount: 0, missingCount: 0, errorLines: [], parseFailed: true };
+        }
+        const priorEncoding = byPath.get(f.rel)?.encodingFallback;
+        if (health && priorEncoding) health.encodingFallback = true;
+        if (health) { health.language = language; byPath.set(f.rel, health); touched = true; }
+        else if (priorEncoding) { byPath.set(f.rel, { filePath: f.rel, language, errorCount: 0, missingCount: 0, errorLines: [], encodingFallback: true }); touched = true; }
+        else if (byPath.delete(f.rel)) touched = true;
+      }
+      if (!touched) return;
+
+      const report = buildParseHealthReport([...byPath.values()]);
+      if (!report) {
+        // The repo is now clean — remove the stale artifact rather than leaving an empty one.
+        if (before > 0) await unlink(phPath).catch(() => {});
+        return;
+      }
+      const tmp = `${phPath}.${process.pid}.tmp`;
+      await writeFile(tmp, JSON.stringify(report, null, 2));
+      await rename(tmp, phPath);
+      if (this.debug) {
+        process.stderr.write(`[mcp-watcher] parse health: refreshed ${changedFiles.length} changed / ${deletedRels.length} deleted\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`[mcp-watcher] parse-health error: ${(err as Error).message}\n`);
+    }
+  }
+
+  /**
    * Reconcile file DELETIONS across every lane so a removed file leaves no
    * phantom state: call-graph nodes/edges (incoming and outgoing), signatures,
    * text-line rows, vector rows, and dependency-graph node + edges. Best-effort;
@@ -1198,6 +1266,9 @@ export class McpWatcher {
 
     // 6. Style fingerprint — drop the deleted files' counters and re-roll-up.
     await this.updateStyleFingerprint([], rels);
+
+    // 7. Parse health — drop the deleted files' degradation records and re-roll-up.
+    await this.updateParseHealth([], rels);
 
     if (this.debug) {
       process.stderr.write(`[mcp-watcher] reconciled ${rels.length} deletion(s)\n`);
