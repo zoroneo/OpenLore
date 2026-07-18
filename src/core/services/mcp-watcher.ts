@@ -809,6 +809,15 @@ export class McpWatcher {
         process.stderr.write(
           `[mcp-watcher] embedding model changed — vector update deferred for ${changedFilePaths.size} file(s); run "openlore analyze --force" (or "openlore embed --local") to rebuild the semantic index\n`
         );
+      } else if (deferred === 'tokenizer-changed') {
+        // Honest signal: the keyword tokenizer changed, so the incremental patch
+        // was refused to avoid mixing token sets. Search still serves correct
+        // results (the corpus is re-tokenized from raw text each process), but the
+        // on-disk index is not re-stamped until a full rebuild. Surfaced without
+        // --debug because it needs user action.
+        process.stderr.write(
+          `[mcp-watcher] keyword tokenizer changed — index update deferred for ${changedFilePaths.size} file(s); run "openlore analyze --force" to rebuild the keyword index\n`
+        );
       } else if (this.debug) {
         process.stderr.write(
           hasEmbeddings
