@@ -17,6 +17,7 @@ const CALLER = `function caller() {\n  helper();\n}\n`;
 const GUARDED = `function guarded() {\n  try {\n    helper();\n  } catch (e) {\n    return;\n  }\n}\n`;
 const EXTCALLER = `function extCaller() {\n  fetch();\n}\n`;
 const GOFN = `func goFn() error {\n  return nil\n}\n`;
+const AMBIGCALLER = `function ambigCaller() {\n  run();\n}\n`;
 
 interface Node {
   id: string;
@@ -44,6 +45,7 @@ beforeEach(() => {
   writeFileSync(join(dir, 'guarded.ts'), GUARDED, 'utf-8');
   writeFileSync(join(dir, 'extcaller.ts'), EXTCALLER, 'utf-8');
   writeFileSync(join(dir, 'gofn.go'), GOFN, 'utf-8');
+  writeFileSync(join(dir, 'ambigcaller.ts'), AMBIGCALLER, 'utf-8');
 
   const nodes: Node[] = [
     node('helper', 'helper', 'helper.ts', HELPER),
@@ -51,6 +53,7 @@ beforeEach(() => {
     node('guarded', 'guarded', 'guarded.ts', GUARDED),
     node('extCaller', 'extCaller', 'extcaller.ts', EXTCALLER),
     node('goFn', 'goFn', 'gofn.go', GOFN, 'Go'),
+    node('ambigCaller', 'ambigCaller', 'ambigcaller.ts', AMBIGCALLER),
     { id: 'fetchExt', name: 'fetch', filePath: 'lib.ts', startIndex: 0, endIndex: 0, startLine: 0, endLine: 0, language: 'TypeScript', isExternal: true },
   ];
   const edges = [
@@ -58,10 +61,15 @@ beforeEach(() => {
     { callerId: 'guarded', calleeId: 'helper', calleeName: 'helper', line: 3, confidence: 'import' },
     { callerId: 'extCaller', calleeId: 'fetchExt', calleeName: 'fetch', line: 2, confidence: 'external' },
   ];
+  // An unresolved-ambiguous call site at ambigCaller (change: harden-call-resolution-ambiguity):
+  // `run()` matched two definitions, so no edge was bound.
+  const ambiguousSites = [
+    { callerId: 'ambigCaller', calleeName: 'run', line: 2, strategy: 'name_only', candidateIds: ['a.ts::run', 'b.ts::run'], candidateCount: 2 },
+  ];
 
   const analysisDir = join(dir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
   mkdirSync(analysisDir, { recursive: true });
-  writeFileSync(join(analysisDir, ARTIFACT_LLM_CONTEXT), JSON.stringify({ callGraph: { nodes, edges } }), 'utf-8');
+  writeFileSync(join(analysisDir, ARTIFACT_LLM_CONTEXT), JSON.stringify({ callGraph: { nodes, edges, ambiguousSites } }), 'utf-8');
 });
 
 afterEach(() => {
@@ -73,12 +81,13 @@ interface Result {
   unsupported?: boolean;
   error?: string;
   candidates?: string[];
-  summary: { escapes: number; direct: number; propagated: number; handledInternally: number; unresolvedSelfCalls: number };
+  summary: { escapes: number; direct: number; propagated: number; handledInternally: number; unresolvedSelfCalls: number; ambiguousCallSites: number };
   escapes: Array<{ type: string; kind: string; originFunction: string; path: string[] }>;
   handledInternally: Array<{ type: string; caughtIn: string; fromCallee: string }>;
   boundaries: string[];
   externalCalleesNotAnalyzed?: { count: number; sample: string[] };
   unresolvedSelfCalls?: { count: number; sample: string[] };
+  ambiguousCallSites?: { count: number; sample: string[] };
 }
 
 describe('handleAnalyzeErrorPropagation', () => {
@@ -125,6 +134,16 @@ describe('handleAnalyzeErrorPropagation', () => {
     const res = (await handleAnalyzeErrorPropagation({ directory: dir, symbol: 'help' })) as Result;
     expect(res.error).toMatch(/No indexed function/);
     expect(res.candidates).toContain('helper');
+  });
+
+  it('discloses an unresolved-ambiguous call site as a boundary, never assumed exception-free', async () => {
+    const res = (await handleAnalyzeErrorPropagation({ directory: dir, symbol: 'ambigCaller' })) as Result;
+    // The ambiguous call `run()` was not bound, so no escape is claimed — but the
+    // uncertainty is disclosed, not silently treated as exception-free.
+    expect(res.summary.ambiguousCallSites).toBe(1);
+    expect(res.ambiguousCallSites?.count).toBe(1);
+    expect(res.ambiguousCallSites?.sample.some(s => /run/.test(s))).toBe(true);
+    expect(res.boundaries.some(b => /unresolved-ambiguous call site/.test(b))).toBe(true);
   });
 
   it('errors cleanly when no analysis exists', async () => {

@@ -817,6 +817,37 @@ describe('handleAnalyzeImpact — edgeStore fast path', () => {
     expect(['low', 'medium', 'high', 'critical']).toContain(result.riskLevel);
   });
 
+  // Ambiguity disclosure (change: harden-call-resolution-ambiguity): a site whose caller is
+  // in the impact set means downstream is under-counted; the blast radius is a lower bound.
+  it('surfaces unresolved-ambiguous call sites touching the impact set', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({
+      edgeStore: store,
+      callGraph: {
+        ambiguousSites: [
+          { callerId: 'src/a.ts::entry', calleeName: 'run', line: 3, strategy: 'name_only', candidateIds: ['x.ts::run', 'y.ts::run'], candidateCount: 2 },
+        ],
+      },
+    } as never);
+    const result = await handleAnalyzeImpact(dir, 'entry', 2) as {
+      ambiguousCallSites?: { count: number; sample: Array<{ caller: string; callee: string; strategy: string; candidates: number }> };
+    };
+    expect(result.ambiguousCallSites?.count).toBe(1);
+    expect(result.ambiguousCallSites?.sample[0]).toMatchObject({ caller: 'entry', callee: 'run', strategy: 'name_only', candidates: 2 });
+  });
+
+  it('omits the ambiguous block when no ambiguous site touches the impact set', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({
+      edgeStore: store,
+      callGraph: {
+        ambiguousSites: [
+          { callerId: 'unrelated.ts::other', calleeName: 'run', line: 3, strategy: 'name_only', candidateIds: ['x.ts::run', 'y.ts::run'], candidateCount: 2 },
+        ],
+      },
+    } as never);
+    const result = await handleAnalyzeImpact(dir, 'entry', 2) as { ambiguousCallSites?: unknown };
+    expect(result.ambiguousCallSites).toBeUndefined();
+  });
+
   // Regression: `symbol` is required by the MCP inputSchema, but dispatchTool enforces
   // nothing — a non-conformant caller reaching the handler with an undefined/blank
   // symbol must get a clean error, not an uncaught `undefined.toLowerCase()` crash.

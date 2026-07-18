@@ -5,15 +5,25 @@
 ### Requirement: NoFirstMatchBindingOnAmbiguity
 
 The call-resolution ladder SHALL never bind a call edge by arbitrary first-match when more than one
-candidate definition is viable. Every resolution strategy — bare-name (`name_only`), Python
-`self.`/`cls.` method dispatch, capitalized-receiver (`type_name`), and overloaded names — SHALL
-either single out a unique candidate via a defined affinity ladder (own-file containment →
-import/package binding → single remaining candidate → arity match where the language exposes
-parameter counts) or record the call site as **unresolved-ambiguous**, carrying a bounded candidate
-list, instead of emitting an edge. A unique candidate MAY still bind at the strategy's declared
-confidence. Conclusion tools whose soundness depends on edge precision (`find_dead_code`,
+candidate definition is viable. Every resolution strategy that resolves against a multi-candidate
+symbol set — bare-name (`name_only`), Python `self.`/`cls.` method dispatch, and capitalized-receiver
+(`type_name`) — SHALL either single out a unique candidate via a defined affinity ladder (own-file
+containment → the file the caller imports the qualifier from → a single remaining candidate) or
+record the call site as **unresolved-ambiguous**, carrying a bounded candidate list, instead of
+emitting an edge. A unique candidate MAY still bind at the strategy's declared confidence.
+Conclusion tools whose soundness depends on edge precision (`find_dead_code`,
 `analyze_error_propagation`, `analyze_impact`, `select_tests`) SHALL disclose relevant
 unresolved-ambiguous sites as boundaries rather than silently treating them as resolved or absent.
+
+> **Overloaded names are out of scope for this requirement and tracked separately.** Same-name,
+> different-arity overloads (Java/C#/Scala/C++) do not reach the resolution ladder as a multi-candidate
+> set: they collapse earlier, at *node identity* — two overloads share the id `file::Class.method`, so
+> only one survives in the graph and the resolution ladder sees a single candidate. Making overloads
+> distinct nodes (arity-qualified identity) and resolving them by call-site argument count is a
+> node-identity change with a different, larger blast radius (stable ids, the CFG side-table, symbol
+> continuity, every node-count consumer) and is deferred to a dedicated follow-up. This requirement
+> therefore governs the three resolution-ladder strategies that genuinely bound by first-match; the
+> overload collapse is a disclosed known limitation, not a first-match guess this change introduces.
 
 #### Scenario: An ambiguous bare cross-file call is not bound arbitrarily
 
@@ -36,14 +46,6 @@ unresolved-ambiguous sites as boundaries rather than silently treating them as r
 - **WHEN** `self.process()` is resolved inside one of them
 - **THEN** the edge binds to the method in the caller's own file, not to whichever candidate sorts
   first
-
-#### Scenario: Overloaded names do not collapse onto one node
-
-- **GIVEN** a language with arity-distinguishable overloads (e.g. Java `f(int)` and `f(int, int)`)
-- **WHEN** a call `f(1, 2)` is resolved
-- **THEN** the edge binds to the arity-matching overload
-- **AND** an arity-ambiguous call falls into the unresolved-ambiguous disposition rather than
-  binding to the first overload
 
 #### Scenario: Dead-code confidence respects ambiguity
 
@@ -73,10 +75,11 @@ leaving them implicit. For every capability with a closed claimed-language set, 
 if that set grows without a corresponding fixture, so no capability can silently over-claim.
 
 The suite SHALL further verify **cross-file resolution for every claimed callGraph language** (not a
-sample), and SHALL include **adversarial name-collision fixtures** for each resolution strategy
-(bare cross-file call, `self`/`cls` dispatch, capitalized-receiver, overload pair) asserting that an
-ambiguous candidate set yields the unresolved-ambiguous disposition, never an arbitrary first-match
-edge.
+sample), and SHALL include **adversarial name-collision fixtures** for each first-match-prone
+resolution strategy (bare cross-file call, `self`/`cls` dispatch, capitalized-receiver) asserting
+that an ambiguous candidate set yields the unresolved-ambiguous disposition, never an arbitrary
+first-match edge. (Overload-arity disambiguation is a node-identity concern tracked by a separate
+change and is not required here.)
 
 #### Scenario: A claimed callGraph language is proven on real code
 

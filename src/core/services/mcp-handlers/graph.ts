@@ -39,7 +39,7 @@ import {
   TRACE_PATH_DEFAULT_MAX_DEPTH,
   TRACE_PATH_MAX_PATHS,
 } from '../../../constants.js';
-import type { SerializedCallGraph, FunctionNode } from '../../analyzer/call-graph.js';
+import type { SerializedCallGraph, FunctionNode, AmbiguousCallSite } from '../../analyzer/call-graph.js';
 import { callDistance } from '../../analyzer/call-graph.js';
 import type { DecisionNode } from '../../decisions/project.js';
 import { isIacLanguage } from '../../analyzer/iac/types.js';
@@ -707,6 +707,32 @@ export async function handleAnalyzeImpact(
   }
   const confidenceBoundary = assembleBoundary({ basis: edgeBasis(impactEdges), staleness: await computeStaleness(absDir), integrity: ctx?.integrity, repair: repairDisclosure(absDir) });
 
+  // Unresolved-ambiguous call sites touching the impact set (change:
+  // harden-call-resolution-ambiguity). A site whose CALLER is in-scope is an outbound
+  // call the resolver refused to bind (downstream is under-counted); a site listing a
+  // SEED among its candidates is a potential hidden upstream caller (upstream is
+  // under-counted). Disclosed so the blast radius reads as a sound lower bound.
+  const ambiguousInScope = (ctx.callGraph?.ambiguousSites ?? []).filter(
+    (s: AmbiguousCallSite) => involvedIds.has(s.callerId) || s.candidateIds.some(id => seedIds.includes(id)),
+  );
+  const ambiguousBlock = ambiguousInScope.length > 0
+    ? {
+        ambiguousCallSites: {
+          count: ambiguousInScope.length,
+          note:
+            'Call sites the resolver refused to bind because >1 candidate was viable. A caller ' +
+            'in-scope means downstream is under-counted; a seed among the candidates means a ' +
+            'potential hidden upstream caller. The blast radius is a lower bound here.',
+          sample: ambiguousInScope.slice(0, 10).map((s: AmbiguousCallSite) => ({
+            caller: ctx.edgeStore!.getNode(s.callerId)?.name ?? s.callerId,
+            callee: s.calleeObject ? `${s.calleeObject}.${s.calleeName}` : s.calleeName,
+            strategy: s.strategy,
+            candidates: s.candidateCount,
+          })),
+        },
+      }
+    : {};
+
   const results = seeds.map(seed => {
     const isHub     = hubIds.has(seed.id);
     const riskScore = computeRiskScore(seed, blastRadius, isHub);
@@ -775,9 +801,9 @@ export async function handleAnalyzeImpact(
   const fedOut = federationBlock ? { federation: federationBlock } : {};
 
   if (seeds.length === 1) {
-    return { ...results[0], confidenceBoundary, ...fedOut };
+    return { ...results[0], confidenceBoundary, ...ambiguousBlock, ...fedOut };
   }
-  return { matches: results, confidenceBoundary, ...fedOut };
+  return { matches: results, confidenceBoundary, ...ambiguousBlock, ...fedOut };
 }
 
 /**

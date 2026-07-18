@@ -323,3 +323,153 @@ describe('grammar-drift canary — every claimed callGraph language parses its f
     });
   }
 });
+
+// ── (9) Cross-file resolution for EVERY claimed callGraph language + precision ─────────────────────
+// The resolver's discipline is only proven where it is exercised. Section (3) sampled 3 languages;
+// this sweep drives a caller→callee split across two files for every claimed callGraph language and
+// asserts the edge resolves AND its provenance is the confidence expected for that language — so a
+// cross-language precision difference (import-precise TS/JS, capitalized-receiver Java, name-only for
+// the rest) is asserted, never hidden (change: harden-call-resolution-ambiguity).
+//
+// Documented exclusions (proven cross-file elsewhere or a disclosed extractor limitation, NOT a
+// resolver guess):
+//  - Bash: a bare command call (`helper`) is lexically indistinguishable from an external command
+//    across files, so the extractor deliberately does not bind it cross-file. Asserted explicitly below.
+//  - Lua, Dart: WASM-loaded grammars whose shared WASM Language heap yields spurious ERROR nodes on
+//    parses AFTER the first in a process (the same limitation the grammar-drift canary excludes them
+//    for). Their callGraph support — including cross-file name resolution on a first parse — is proven
+//    by the standalone build in section (1); a second in-process build (this sweep) is unreliable, so
+//    they are excluded here rather than asserted flakily.
+const CROSS_FILE_EXCLUDED = new Set(['Bash', 'Lua', 'Dart']);
+interface CrossFile { language: string; a: { path: string; content: string }; b: { path: string; content: string }; caller: string; callee: string; confidence: string }
+const CROSS_FILE: CrossFile[] = [
+  { language: 'TypeScript', confidence: 'import',    caller: 'main', callee: 'helper', a: { path: 'a.ts', content: `import { helper } from './b';\nexport function main(){ helper(); }` }, b: { path: 'b.ts', content: `export function helper(){ return 1; }` } },
+  { language: 'JavaScript', confidence: 'import',    caller: 'main', callee: 'helper', a: { path: 'a.js', content: `import { helper } from './b';\nexport function main(){ helper(); }` }, b: { path: 'b.js', content: `export function helper(){ return 1; }` } },
+  { language: 'Python',     confidence: 'name_only', caller: 'main', callee: 'helper', a: { path: 'a.py', content: `from b import helper\n\ndef main():\n    helper()\n` }, b: { path: 'b.py', content: `def helper():\n    return 1\n` } },
+  { language: 'Go',         confidence: 'name_only', caller: 'Main', callee: 'Helper', a: { path: 'a.go', content: `package m\nfunc Main(){ Helper() }\n` }, b: { path: 'b.go', content: `package m\nfunc Helper() int { return 1 }\n` } },
+  { language: 'Rust',       confidence: 'name_only', caller: 'main', callee: 'helper', a: { path: 'a.rs', content: `fn main(){ helper(); }\n` }, b: { path: 'b.rs', content: `fn helper() -> i32 { 1 }\n` } },
+  { language: 'Ruby',       confidence: 'name_only', caller: 'main', callee: 'helper', a: { path: 'a.rb', content: `def main\n  helper\nend\n` }, b: { path: 'b.rb', content: `def helper\n  1\nend\n` } },
+  { language: 'Java',       confidence: 'type_name', caller: 'main', callee: 'helper', a: { path: 'A.java', content: `class A {\n  void main() { B.helper(); }\n}` }, b: { path: 'B.java', content: `class B {\n  static void helper() {}\n}` } },
+  { language: 'Kotlin',     confidence: 'name_only', caller: 'main', callee: 'helper', a: { path: 'a.kt', content: `fun main() { helper() }\n` }, b: { path: 'b.kt', content: `fun helper(): Int { return 1 }\n` } },
+  { language: 'PHP',        confidence: 'name_only', caller: 'main', callee: 'helper', a: { path: 'a.php', content: `<?php\nfunction main() { helper(); }\n` }, b: { path: 'b.php', content: `<?php\nfunction helper() { return 1; }\n` } },
+  { language: 'C#',         confidence: 'name_only', caller: 'Main', callee: 'Helper', a: { path: 'A.cs', content: `class A {\n  void Main() { B.Helper(); }\n}` }, b: { path: 'B.cs', content: `class B {\n  public static void Helper() {}\n}` } },
+  { language: 'C++',        confidence: 'name_only', caller: 'mainFn', callee: 'helper', a: { path: 'a.cpp', content: `void mainFn() { helper(); }\n` }, b: { path: 'b.cpp', content: `void helper() {}\n` } },
+  { language: 'C',          confidence: 'name_only', caller: 'mainFn', callee: 'helper', a: { path: 'a.c', content: `void mainFn() { helper(); }\n` }, b: { path: 'b.c', content: `void helper() {}\n` } },
+  { language: 'Swift',      confidence: 'name_only', caller: 'mainFn', callee: 'helper', a: { path: 'a.swift', content: `func mainFn() { helper() }\n` }, b: { path: 'b.swift', content: `func helper() -> Int { return 1 }\n` } },
+  { language: 'Scala',      confidence: 'name_only', caller: 'main', callee: 'helper', a: { path: 'A.scala', content: `object A {\n  def main(): Unit = { B.helper() }\n}` }, b: { path: 'B.scala', content: `object B {\n  def helper(): Int = 1\n}` } },
+  { language: 'Elixir',     confidence: 'name_only', caller: 'main', callee: 'helper', a: { path: 'a.ex', content: `defmodule A do\n  def main(), do: B.helper()\nend\n` }, b: { path: 'b.ex', content: `defmodule B do\n  def helper(), do: 1\nend\n` } },
+];
+
+describe('language conformance — cross-file resolution for EVERY claimed callGraph language', () => {
+  it('covers every claimed callGraph language (except the documented Bash exclusion)', () => {
+    const claimed = [...CALLGRAPH_LANGUAGES].filter((l) => !CROSS_FILE_EXCLUDED.has(l));
+    const covered = new Set(CROSS_FILE.map((f) => f.language));
+    const uncovered = claimed.filter((l) => !covered.has(l));
+    expect(uncovered, `callGraph languages with no cross-file fixture: ${uncovered.join(', ')}`).toEqual([]);
+  });
+
+  for (const f of CROSS_FILE) {
+    it(`${f.language}: resolves a cross-file ${f.caller}→${f.callee} at ${f.confidence} confidence`, async () => {
+      const r = await build([
+        { path: f.a.path, language: f.language, content: f.a.content },
+        { path: f.b.path, language: f.language, content: f.b.content },
+      ]);
+      const e = hasEdge(r, f.caller, f.callee);
+      expect(e, `${f.language} cross-file edge`).toBeTruthy();
+      // The callee must live in the OTHER file (a genuine cross-file bind, not a same-file homonym).
+      expect(r.nodes.get(e!.calleeId)?.filePath, `${f.language} callee file`).toBe(f.b.path);
+      expect(e!.confidence, `${f.language} cross-file provenance`).toBe(f.confidence);
+    });
+  }
+
+  it('Bash cross-file is a documented limitation: a bare command call is not bound across files', async () => {
+    const r = await build([
+      { path: 'a.sh', language: 'Bash', content: `main() { helper; }\n` },
+      { path: 'b.sh', language: 'Bash', content: `helper() { echo hi; }\n` },
+    ]);
+    const e = hasEdge(r, 'main', 'helper');
+    expect(e, 'Bash bare command calls are indistinguishable from external commands across files').toBeFalsy();
+  });
+});
+
+// ── (10) Adversarial name-collision fixtures — the resolver refuses to guess ───────────────────────
+// For each first-match-prone strategy, an ambiguous candidate set must yield the unresolved-ambiguous
+// disposition (recorded on `result.ambiguousSites`), never an arbitrary first-match edge. A UNIQUE
+// candidate still binds at the strategy's declared confidence. Overload-arity disambiguation is a
+// node-identity concern tracked by a separate change and is intentionally not covered here.
+// (change: harden-call-resolution-ambiguity; analyzer: NoFirstMatchBindingOnAmbiguity)
+describe('language conformance — resolver refuses to guess on ambiguity', () => {
+  const boundEdgesFrom = (r: Awaited<ReturnType<typeof build>>, caller: string) =>
+    r.edges.filter((e) => r.nodes.get(e.callerId)?.name === caller && !r.nodes.get(e.calleeId)?.isExternal);
+
+  it('name_only: a bare cross-file call matching two definitions is not bound arbitrarily', async () => {
+    const r = await build([
+      { path: 'caller.py', language: 'Python', content: `def main():\n    run()\n` },
+      { path: 'a.py', language: 'Python', content: `def run():\n    return 1\n` },
+      { path: 'b.py', language: 'Python', content: `def run():\n    return 2\n` },
+    ]);
+    // No name_only edge to either candidate.
+    expect(boundEdgesFrom(r, 'main').some((e) => e.confidence === 'name_only')).toBe(false);
+    const site = (r.ambiguousSites ?? []).find((s) => s.calleeName === 'run' && s.strategy === 'name_only');
+    expect(site, 'ambiguous site recorded').toBeTruthy();
+    expect(site!.candidateCount).toBe(2);
+    expect(site!.candidateIds.sort()).toEqual(['a.py::run', 'b.py::run']);
+  });
+
+  it('name_only: a UNIQUE cross-file candidate still binds', async () => {
+    const r = await build([
+      { path: 'caller.py', language: 'Python', content: `def main():\n    run()\n` },
+      { path: 'a.py', language: 'Python', content: `def run():\n    return 1\n` },
+    ]);
+    const edge = boundEdgesFrom(r, 'main').find((e) => e.confidence === 'name_only');
+    expect(edge, 'unique cross-file name_only edge').toBeTruthy();
+    expect(r.ambiguousSites, 'no ambiguity for a unique candidate').toBeUndefined();
+  });
+
+  it('self/cls: dispatch resolves to the caller\'s OWN class, not whichever sorts first', async () => {
+    // Both files declare `Handler` with `process`; the caller is in a1.py.
+    const r = await build([
+      { path: 'a1.py', language: 'Python', content: `class Handler:\n    def run(self):\n        self.process()\n    def process(self):\n        return 1\n` },
+      { path: 'a2.py', language: 'Python', content: `class Handler:\n    def process(self):\n        return 2\n` },
+    ]);
+    const edge = boundEdgesFrom(r, 'run').find((e) => e.confidence === 'self_cls');
+    expect(edge, 'self_cls edge to own class').toBeTruthy();
+    expect(r.nodes.get(edge!.calleeId)?.filePath).toBe('a1.py');
+    expect(r.ambiguousSites, 'own-file affinity resolves it, no ambiguity').toBeUndefined();
+  });
+
+  it('self/cls: a self-call whose method lives only in two OTHER same-named classes is ambiguous', async () => {
+    const r = await build([
+      { path: 'a1.py', language: 'Python', content: `class Handler:\n    def run(self):\n        self.process()\n` },
+      { path: 'a2.py', language: 'Python', content: `class Handler:\n    def process(self):\n        return 2\n` },
+      { path: 'a3.py', language: 'Python', content: `class Handler:\n    def process(self):\n        return 3\n` },
+    ]);
+    expect(boundEdgesFrom(r, 'run').some((e) => e.confidence === 'self_cls')).toBe(false);
+    const site = (r.ambiguousSites ?? []).find((s) => s.calleeName === 'process' && s.strategy === 'self_cls');
+    expect(site, 'ambiguous self_cls site recorded').toBeTruthy();
+    expect(site!.candidateCount).toBe(2);
+  });
+
+  it('type_name: two same-named types with no affinity yield an ambiguous site, not a type_name edge', async () => {
+    const r = await build([
+      { path: 'A.java', language: 'Java', content: `class A {\n  void use() { Money.of(1); }\n}` },
+      { path: 'Money1.java', language: 'Java', content: `class Money {\n  static int of(int x) { return x; }\n}` },
+      { path: 'Money2.java', language: 'Java', content: `class Money {\n  static int of(int x) { return x + 1; }\n}` },
+    ]);
+    // No confident type_name edge (a synthesized over-approximation to both is a separate,
+    // provenance-labeled mechanism — never a confident first-match).
+    expect(boundEdgesFrom(r, 'use').some((e) => e.confidence === 'type_name')).toBe(false);
+    const site = (r.ambiguousSites ?? []).find((s) => s.calleeName === 'of' && s.strategy === 'type_name');
+    expect(site, 'ambiguous type_name site recorded').toBeTruthy();
+    expect(site!.candidateCount).toBe(2);
+  });
+
+  it('type_name: a UNIQUE type match still binds', async () => {
+    const r = await build([
+      { path: 'A.java', language: 'Java', content: `class A {\n  void use() { Money.of(1); }\n}` },
+      { path: 'Money.java', language: 'Java', content: `class Money {\n  static int of(int x) { return x; }\n}` },
+    ]);
+    const edge = boundEdgesFrom(r, 'use').find((e) => e.confidence === 'type_name');
+    expect(edge, 'unique type_name edge').toBeTruthy();
+  });
+});

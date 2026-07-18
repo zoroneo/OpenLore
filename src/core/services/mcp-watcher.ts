@@ -541,13 +541,13 @@ export class McpWatcher {
           let sub = await buildGraphSubset(f.rel, f.content, recompute, this.rootPath, resolutionNodes);
 
           // Class-P closure: a symbol this edit ADDED can newly bind a previously-
-          // `external` call site, or flip the lowest-id `name_only` winner, in a
-          // file that is NOT a caller of this one (getCallerFiles misses it).
-          // Discovery runs even when direct callers already filled the budget —
-          // these consumers must never be left silently divergent: re-resolve
-          // within the remaining budget, mark the rest stale. Re-resolving runs
-          // them alongside the changed file so the new edge resolves internally —
-          // exactly as `analyze --force` would.
+          // `external` call site, or turn a previously-UNIQUE `name_only` bind into
+          // an ambiguous (unbound) one, in a file that is NOT a caller of this one
+          // (getCallerFiles misses it). Discovery runs even when direct callers
+          // already filled the budget — these consumers must never be left silently
+          // divergent: re-resolve within the remaining budget, mark the rest stale.
+          // Re-resolving runs them alongside the changed file so the new edge (or the
+          // new ambiguity) resolves exactly as `analyze --force` would.
           const addedIdByName = new Map<string, string>(); // added name → lowest new id
           for (const n of sub.nodes) {
             if (oldNames.has(n.name)) continue;
@@ -561,14 +561,16 @@ export class McpWatcher {
               for (const cf of store.getExternalConsumerFiles(name)) {
                 if (cf !== f.rel && cf !== 'external' && !recompute.includes(cf)) extra.add(cf);
               }
-              // `name_only` consumers already resolve the name to another file by
-              // lowest candidate id; the added symbol only flips that pick when its
-              // id sorts BEFORE the consumer's current target. Re-resolving the rest
-              // is a verified no-op (and a needless stale flag), so prune them — this
-              // is what keeps a common-name add (`get`/`run`) from re-parsing and
-              // stale-flagging dozens of unaffected files.
+              // `name_only` consumers currently resolve the name to a UNIQUE cross-file
+              // definition. Adding a SECOND definition of that name makes the bare call
+              // ambiguous — the resolver refuses to guess, so the edge disappears —
+              // REGARDLESS of id sort order (change: harden-call-resolution-ambiguity).
+              // Every such consumer therefore diverges from a full rebuild and must be
+              // re-resolved (the pre-ambiguity `addedId < calleeId` prune, which assumed
+              // only a lower-id add flipped the pick, would now leave higher-id adds
+              // silently holding a stale unique edge). `!==` guards the same-node no-op.
               for (const { file: cf, calleeId } of store.getNameOnlyConsumers(name)) {
-                if (cf !== f.rel && cf !== 'external' && !recompute.includes(cf) && addedId < calleeId) extra.add(cf);
+                if (cf !== f.rel && cf !== 'external' && !recompute.includes(cf) && addedId !== calleeId) extra.add(cf);
               }
             }
             if (extra.size > 0) {

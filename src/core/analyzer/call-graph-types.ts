@@ -100,6 +100,47 @@ export interface FunctionNode {
 /** Broad category of an external (unresolved) call */
 export type ExternalKind = 'http' | 'database' | 'filesystem' | 'stdlib' | 'unknown';
 
+/**
+ * Maximum number of candidate ids retained on an {@link AmbiguousCallSite}. An
+ * ambiguous name can in pathological cases match many definitions; the list is
+ * bounded so the persisted graph and tool payloads stay small. When the true
+ * candidate count exceeds the cap, `candidateCount` records the full total while
+ * `candidateIds` holds the first {@link AMBIGUOUS_CANDIDATE_CAP} (id-sorted, so the
+ * truncation is deterministic).
+ */
+export const AMBIGUOUS_CANDIDATE_CAP = 8;
+
+/** Which resolution strategy refused to bind because the candidate set was ambiguous. */
+export type AmbiguousStrategy = 'name_only' | 'self_cls' | 'type_name' | 'overload';
+
+/**
+ * A call site the resolution ladder refused to bind because more than one candidate
+ * definition was viable and no affinity/arity signal singled one out (change:
+ * harden-call-resolution-ambiguity; analyzer: NoFirstMatchBindingOnAmbiguity).
+ *
+ * Recorded INSTEAD of emitting an arbitrary first-match edge, so precision-sensitive
+ * consumers (find_dead_code, analyze_error_propagation, analyze_impact, select_tests)
+ * can disclose the ambiguity as a boundary rather than trusting a guess or assuming
+ * absence. A UNIQUE candidate still binds at the strategy's declared confidence — an
+ * ambiguous site is only recorded when the ladder would otherwise have guessed.
+ */
+export interface AmbiguousCallSite {
+  /** Node id of the calling function. */
+  callerId: string;
+  /** Callee name as written at the call site. */
+  calleeName: string;
+  /** Receiver in `obj.method()` calls, if any. */
+  calleeObject?: string;
+  /** 1-based call-site line, when known. */
+  line?: number;
+  /** Which strategy hit the ambiguity. */
+  strategy: AmbiguousStrategy;
+  /** Candidate node ids (id-sorted, bounded to {@link AMBIGUOUS_CANDIDATE_CAP}). */
+  candidateIds: string[];
+  /** Total viable candidates before capping (equals candidateIds.length when not truncated). */
+  candidateCount: number;
+}
+
 export interface CallEdge {
   callerId: string;
   /** Resolved callee ID */
@@ -319,6 +360,14 @@ export interface CallGraphResult {
    * {@link SerializedCallGraph}.
    */
   parseHealthByFile?: Map<string, FileParseHealth>;
+  /**
+   * Call sites the resolution ladder refused to bind because the candidate set was
+   * ambiguous (change: harden-call-resolution-ambiguity). NOT edges — these are the
+   * disclosed alternative to an arbitrary first-match guess. Carried through
+   * serialization so serve-time consumers can surface them as boundaries. Absent
+   * (undefined) when the graph has no ambiguous sites.
+   */
+  ambiguousSites?: AmbiguousCallSite[];
 }
 
 /** Serializable version (Maps replaced by arrays) for JSON storage */
@@ -331,4 +380,6 @@ export interface SerializedCallGraph {
   entryPoints: FunctionNode[];
   layerViolations: LayerViolation[];
   stats: CallGraphResult['stats'];
+  /** Unresolved-ambiguous call sites (change: harden-call-resolution-ambiguity). Omitted when empty. */
+  ambiguousSites?: AmbiguousCallSite[];
 }

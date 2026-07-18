@@ -224,6 +224,17 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
     }
   }
 
+  // Nodes named as a candidate by an unresolved-ambiguous call site (change:
+  // harden-call-resolution-ambiguity). Such a node has a *potential* caller the
+  // resolver refused to bind — it may well be live via that call. It is therefore
+  // never reported as high-confidence dead, mirroring the synthesized-edge downgrade.
+  // Applies in both strict and non-strict mode (ambiguity is a resolution gap, not a
+  // synthesized-edge artifact).
+  const ambiguousCandidateIds = new Set<string>();
+  for (const site of cg.ambiguousSites ?? []) {
+    for (const id of site.candidateIds) ambiguousCandidateIds.add(id);
+  }
+
   // ── Roots (liveness seeds) — conservative: prefer false-live over false-dead ──
   // tests (they invoke code) · symbols imported by another file · HTTP route
   // handlers · synthesized route handlers (framework-invoked entry points; omitted
@@ -316,6 +327,14 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
       if (synthRule) {
         confidence = 'low';
         reasons.push(`reachable via a synthesized ${synthRule} edge whose dispatcher is not itself reached — likely live through dynamic dispatch`);
+      }
+
+      // A node named by an unresolved-ambiguous call site has a potential caller the
+      // resolver refused to bind — never high-confidence dead (change:
+      // harden-call-resolution-ambiguity).
+      if (ambiguousCandidateIds.has(n.id)) {
+        confidence = 'low';
+        reasons.push('listed as a candidate by an unresolved-ambiguous call site — a potential caller was not bound, so it may be live');
       }
 
       return {

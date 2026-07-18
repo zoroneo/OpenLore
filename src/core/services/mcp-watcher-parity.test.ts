@@ -374,56 +374,56 @@ describe('adversarial regressions (PR #189 review findings)', () => {
     s.close();
   });
 
-  it('round2: adding a symbol that LOSES the name_only tiebreak does not needlessly stale-flag its consumers', async () => {
-    // zzz defines foo; 5 consumers resolve foo -> zzz (lowest id). Adding foo in
-    // zzzz (sorts AFTER zzz) cannot become the winner, so NONE of the 5 consumers
-    // change — they must not be re-resolved or marked stale, even under a tiny budget.
-    const v1: Files = { 'src/zzz.ts': 'export function foo() { return 9; }\n' };
-    for (let i = 0; i < 5; i++) v1[`src/w${i}.ts`] = `export function use${i}() { return foo(); }\n`;
-    await writeFiles(v1);
-    const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
-    seedStore(store, v1, await fullBuild(v1));
-    store.close();
+  // With the resolver's refuse-to-guess discipline (change: harden-call-resolution-ambiguity),
+  // adding a SECOND cross-file definition of a bare-called name makes every such call
+  // AMBIGUOUS — the edge disappears — regardless of the added symbol's id sort order.
+  // So the old "name_only tiebreak winner" model is gone: a higher-id add is no longer a
+  // no-op, and a lower-id add no longer produces a new winner. Both must converge every
+  // consumer to "no foo edge" within budget and flag the overflow stale.
+  for (const variant of [
+    { name: 'higher-id', file: 'src/zzzz.ts' }, // sorts AFTER zzz (was the "LOSES" no-op case)
+    { name: 'lower-id', file: 'src/aaa.ts' },   // sorts BEFORE zzz (was the "WINS" case)
+  ]) {
+    it(`round2: adding a ${variant.name} second definition makes bare callers ambiguous, converging within budget and flagging the overflow stale`, async () => {
+      const v1: Files = { 'src/zzz.ts': 'export function foo() { return 9; }\n' };
+      for (let i = 0; i < 5; i++) v1[`src/w${i}.ts`] = `export function use${i}() { return foo(); }\n`;
+      await writeFiles(v1);
+      const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
+      seedStore(store, v1, await fullBuild(v1));
+      // Seeded state: each consumer resolves foo -> zzz uniquely (name_only).
+      for (let i = 0; i < 5; i++) {
+        expect(outgoingSig(store, `src/w${i}.ts`).join('\n')).toContain('src/zzz.ts::foo');
+      }
+      store.close();
 
-    await writeFiles({ 'src/zzzz.ts': 'export function foo() { return 1; }\n' });
-    const { McpWatcher } = await import('./mcp-watcher.js');
-    await new McpWatcher({ rootPath: root, outputPath, embed: false, closureBudget: 2 })
-      .handleChange(join(root, 'src/zzzz.ts'));
+      await writeFiles({ [variant.file]: 'export function foo() { return 1; }\n' });
+      const { McpWatcher } = await import('./mcp-watcher.js');
+      await new McpWatcher({ rootPath: root, outputPath, embed: false, closureBudget: 2 })
+        .handleChange(join(root, variant.file));
 
-    const s = EdgeStore.open(EdgeStore.dbPath(outputPath));
-    // The prune: zero needless stale flags (without it, 5 consumers − budget 2 = 3 stale).
-    expect(s.getStaleFiles().filter((f) => f.startsWith('src/w'))).toHaveLength(0);
-    // And every consumer still correctly resolves to zzz (matches analyze --force).
-    for (let i = 0; i < 5; i++) {
-      expect(outgoingSig(s, `src/w${i}.ts`).join('\n')).toContain('src/zzz.ts::foo');
-    }
-    s.close();
-  });
+      const s = EdgeStore.open(EdgeStore.dbPath(outputPath));
+      const stale = s.getStaleFiles().filter((f) => f.startsWith('src/w'));
+      // 5 consumers all diverge (unique -> ambiguous); budget 2 recomputes 2, flags 3 stale.
+      expect(stale).toHaveLength(3);
+      // The 2 recomputed consumers converged to NO foo edge (ambiguous), matching a full
+      // rebuild — never a guessed edge to either candidate.
+      for (let i = 0; i < 5; i++) {
+        const rel = `src/w${i}.ts`;
+        if (!stale.includes(rel)) {
+          const sig = outgoingSig(s, rel).join('\n');
+          expect(sig).not.toContain('::foo');
+        }
+      }
+      s.close();
 
-  it('round2: adding a symbol that WINS the tiebreak converges consumers within budget and flags the overflow stale', async () => {
-    const v1: Files = { 'src/zzz.ts': 'export function foo() { return 9; }\n' };
-    for (let i = 0; i < 5; i++) v1[`src/w${i}.ts`] = `export function use${i}() { return foo(); }\n`;
-    await writeFiles(v1);
-    const store = EdgeStore.open(EdgeStore.dbPath(outputPath));
-    seedStore(store, v1, await fullBuild(v1));
-    store.close();
-
-    // aaa sorts BEFORE zzz → becomes the new winner for every consumer.
-    await writeFiles({ 'src/aaa.ts': 'export function foo() { return 1; }\n' });
-    const { McpWatcher } = await import('./mcp-watcher.js');
-    await new McpWatcher({ rootPath: root, outputPath, embed: false, closureBudget: 2 })
-      .handleChange(join(root, 'src/aaa.ts'));
-
-    const s = EdgeStore.open(EdgeStore.dbPath(outputPath));
-    const stale = s.getStaleFiles().filter((f) => f.startsWith('src/w'));
-    expect(stale).toHaveLength(3); // 5 consumers − budget 2 = 3 over budget → stale
-    // The 2 recomputed consumers converged to aaa (the new winner).
-    for (let i = 0; i < 5; i++) {
-      const rel = `src/w${i}.ts`;
-      if (!stale.includes(rel)) expect(outgoingSig(s, rel).join('\n')).toContain('src/aaa.ts::foo');
-    }
-    s.close();
-  });
+      // Oracle: a full rebuild resolves NO consumer's foo (two candidates = ambiguous).
+      const v2: Files = { ...v1, [variant.file]: 'export function foo() { return 1; }\n' };
+      const oracle = await fullBuild(v2);
+      for (let i = 0; i < 5; i++) {
+        expect(oracleOutgoingSig(oracle.edges, `src/w${i}.ts`).join('\n')).not.toContain('::foo');
+      }
+    });
+  }
 
   it('round2: a present-but-unreadable consumer file is marked stale (not silently emptied + asserted fresh)', async () => {
     const v1: Files = {

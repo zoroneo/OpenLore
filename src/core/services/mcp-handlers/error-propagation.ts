@@ -31,7 +31,7 @@ import {
   DYNAMIC_TYPE,
   type FunctionExceptionFacts,
 } from '../../analyzer/exception-flow.js';
-import type { SerializedCallGraph, FunctionNode, CallEdge } from '../../analyzer/call-graph.js';
+import type { SerializedCallGraph, FunctionNode, CallEdge, AmbiguousCallSite } from '../../analyzer/call-graph.js';
 
 export interface AnalyzeErrorPropagationInput {
   directory: string;
@@ -152,6 +152,16 @@ export async function handleAnalyzeErrorPropagation(
     if (arr) arr.push(e);
     else calleesByCaller.set(e.callerId, [e]);
   }
+  // Unresolved-ambiguous call sites indexed by caller (change:
+  // harden-call-resolution-ambiguity) — a call the resolver refused to bind because
+  // >1 candidate was viable. Like an unresolved self-call, its callees' exceptions are
+  // out of scope: disclosed as a boundary, never assumed none.
+  const ambiguousByCaller = new Map<string, AmbiguousCallSite[]>();
+  for (const site of cg.ambiguousSites ?? []) {
+    const arr = ambiguousByCaller.get(site.callerId);
+    if (arr) arr.push(site);
+    else ambiguousByCaller.set(site.callerId, [site]);
+  }
 
   const depthBound = Number.isFinite(input.maxDepth as number)
     ? Math.max(MIN_DEPTH, Math.min(input.maxDepth as number, MAX_DEPTH))
@@ -170,6 +180,10 @@ export async function handleAnalyzeErrorPropagation(
   // resolved nor an `external::` edge, so without this it would be silently
   // assumed exception-free. Disclosed, never dropped. Keyed by caller+line+name.
   const unresolvedSelfCalls = new Map<string, string>();
+  // Unresolved-ambiguous call sites reached during the traversal (change:
+  // harden-call-resolution-ambiguity). Keyed by caller+line+name so a site is
+  // disclosed once regardless of how often the node is revisited.
+  const ambiguousCallSites = new Map<string, string>();
   let parsedCount = 0;
   let capHit = false;
   // Set true by factsFor ONLY when it returned null because the parse cap was hit
@@ -281,6 +295,18 @@ export async function handleAnalyzeErrorPropagation(
       unresolvedSelfCalls.set(`${n.id}@${cs.line}@${cs.calleeName}`, `${selfLabel}:${cs.line} (${cs.calleeName})`);
     }
 
+    // Disclose unresolved-ambiguous call sites at this node: a call the resolver
+    // refused to bind because >1 candidate was viable with no affinity. Its callees'
+    // exceptions are out of scope — a clean escape set does not clear these paths
+    // (change: harden-call-resolution-ambiguity).
+    for (const site of ambiguousByCaller.get(n.id) ?? []) {
+      const recv = site.calleeObject ? `${site.calleeObject}.` : '';
+      ambiguousCallSites.set(
+        `${n.id}@${site.line ?? -1}@${site.calleeName}`,
+        `${selfLabel}:${site.line ?? '?'} (${recv}${site.calleeName} → ${site.candidateCount} candidates)`,
+      );
+    }
+
     // Direct throws that escape this function.
     for (const ts of facts.throwSites) {
       if (ts.locallyHandled) continue;
@@ -379,6 +405,15 @@ export async function handleAnalyzeErrorPropagation(
         'scope, NEVER assumed none. A clean escape set does not clear these paths.',
     );
   }
+  const ambiguousSample = [...ambiguousCallSites.values()].sort();
+  if (ambiguousCallSites.size > 0) {
+    boundaries.add(
+      `${ambiguousCallSites.size} unresolved-ambiguous call site(s) (a bare/self/type-name call whose ` +
+        'name matched more than one candidate with no affinity) were NOT bound to an edge — their ' +
+        "callees' exceptions are out of scope, NEVER assumed none. A clean escape set does not clear " +
+        'these paths.',
+    );
+  }
 
   const directCount = escapeList.filter(e => e.kind === 'direct').length;
   const dynamicCount = escapeList.filter(e => e.type === DYNAMIC_TYPE).length;
@@ -394,6 +429,7 @@ export async function handleAnalyzeErrorPropagation(
       functionsAnalyzed: parsedCount,
       externalCalleesNotAnalyzed: externalCallees.size,
       unresolvedSelfCalls: unresolvedSelfCalls.size,
+      ambiguousCallSites: ambiguousCallSites.size,
     },
     escapes: escapeList,
     handledInternally: handledList,
@@ -403,6 +439,9 @@ export async function handleAnalyzeErrorPropagation(
       : {}),
     ...(unresolvedSelfCalls.size > 0
       ? { unresolvedSelfCalls: { count: unresolvedSelfCalls.size, sample: unresolvedSelfSample.slice(0, 15) } }
+      : {}),
+    ...(ambiguousCallSites.size > 0
+      ? { ambiguousCallSites: { count: ambiguousCallSites.size, sample: ambiguousSample.slice(0, 15) } }
       : {}),
     note:
       'escapes = exception types that can propagate OUT of this function to its callers (each with ' +
