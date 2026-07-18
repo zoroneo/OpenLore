@@ -32,6 +32,7 @@ import {
   type LanguageProfile,
 } from '../../analyzer/style-fingerprint.js';
 import { scanViolations } from '../../architecture/check.js';
+import { loadParseHealthReport, parseHealthBoundary } from './parse-health-boundary.js';
 import {
   classifyRole,
   deriveStrategy,
@@ -845,11 +846,17 @@ export async function handleOrient(
   // retry after the rebuild. Absent when no repair is running (a fresh index).
   const indexRepair = repairStatusFor(absDir);
 
+  // Parse-health boundary (change: add-parse-health-boundary-disclosure): if any file this orient
+  // surfaced parsed with errors, disclose that its symbols/edges are a lower bound rather than
+  // letting the agent read the missing symbols as genuinely absent. Absent on a clean repo.
+  const parseHealthNote = parseHealthBoundary(await loadParseHealthReport(absDir), relevantFiles);
+
   // Minimal-sufficient navigation core — always returned (Spec 27).
   const core = {
     task,
     searchMode,
     retrievalMode,
+    ...(parseHealthNote ? { parseHealth: parseHealthNote } : {}),
     ...(retrievalMode === 'keyword'
       ? { note: 'Keyword (BM25) search — the zero-config default. For semantic ranking, run "openlore embed --local" (on-device, no API key) or set EMBED_* for a remote endpoint.' }
       : {}),

@@ -107,6 +107,12 @@ export const FINDING_CODE_REGISTRY: Record<string, FindingCodeSpec> = {
     source: 'impact-certificate',
     description: 'The change opens a new path into a declared covering surface marked `critical`.',
   },
+  // ── parse-health (add-parse-health-boundary-disclosure) ──
+  'parse-health': {
+    defaultClass: 'advisory',
+    source: 'parse-health',
+    description: 'One or more indexed files parsed with errors (tree-sitter ERROR/MISSING regions, a swallowed parse failure, or a lossy encoding decode) — the graph there is a lower bound. An operator can gate on a regression (e.g. a grammar bump that suddenly errors many files).',
+  },
   // ── stale-decision-reference (add-finding-enforcement-policy) ──
   'stale-decision-reference': {
     defaultClass: 'advisory',

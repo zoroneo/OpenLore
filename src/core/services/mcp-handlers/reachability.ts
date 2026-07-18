@@ -35,6 +35,7 @@ import { validateDirectory, readCachedContext } from './utils.js';
 import { resolveFederationScope, findCrossRepoConsumersBatch } from '../../federation/resolver.js';
 import { buildAdjacency } from './graph.js';
 import { assembleBoundary, computeStaleness, edgeBasisWithinSet } from './confidence-boundary.js';
+import { loadParseHealthReport, parseHealthBoundary } from './parse-health-boundary.js';
 import { isIacLanguage } from '../../analyzer/iac/types.js';
 import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, ARTIFACT_DEPENDENCY_GRAPH } from '../../../constants.js';
 import type { SerializedCallGraph, FunctionNode } from '../../analyzer/call-graph.js';
@@ -372,6 +373,14 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
     low: finalRanked.filter(r => r.confidence === 'low').length,
   };
 
+  // Parse-health boundary (change: add-parse-health-boundary-disclosure): a candidate whose file
+  // parsed with errors may be FALSELY dead — a swallowed parse error can drop the very caller that
+  // keeps it live. Disclose it so the candidate is not trusted as absent. Absent on a clean repo.
+  const parseHealthNote = parseHealthBoundary(
+    await loadParseHealthReport(absDir),
+    finalRanked.map(r => r.file),
+  );
+
   return {
     stats: {
       analyzed: codeNodes.filter(n => !n.isTest).length,
@@ -390,6 +399,7 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
     coverage: { languages, exportSignal },
     ...(federationBlock ? { federation: federationBlock } : {}),
     soundness: deadCodeSoundness(exportSignal, languages),
+    ...(parseHealthNote ? { parseHealthBoundary: parseHealthNote } : {}),
     confidenceBoundary,
   };
 }

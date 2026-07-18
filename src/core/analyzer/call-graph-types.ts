@@ -11,6 +11,7 @@
 
 import type { FunctionCfg } from './cfg.js';
 import type { FileStyleRaw } from './style-fingerprint.js';
+import type { FileParseHealth } from './parse-health.js';
 
 export type EdgeConfidence =
   | 'self_cls'       // intra-class call via self/cls
@@ -309,6 +310,15 @@ export interface CallGraphResult {
    * generator, not carried into {@link SerializedCallGraph}.
    */
   styleByFile?: Map<string, FileStyleRaw>;
+  /**
+   * Per-file parse health (change: add-parse-health-boundary-disclosure), keyed by file path.
+   * Tallied in the same per-file AST walk that extracts nodes/edges — no second parse. Present
+   * ONLY for a file that carried a parse error or full parse failure (a clean file has no entry,
+   * so a healthy repo leaves this undefined). Transient build-time data: rolled up into the
+   * persisted `parse-health.json` by the artifact generator, not carried into
+   * {@link SerializedCallGraph}.
+   */
+  parseHealthByFile?: Map<string, FileParseHealth>;
 }
 
 /** Serializable version (Maps replaced by arrays) for JSON storage */
