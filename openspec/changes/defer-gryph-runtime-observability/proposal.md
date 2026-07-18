@@ -1,5 +1,14 @@
 # Gryph runtime observability (deferred follow-up from PR #83)
 
+> **STATUS (2026-07-18): BUILT — SHIPPED AND KEPT, no removal.** Reviewed in the 2026-07-18 scope
+> audit and confirmed in scope: Gryph is a *fail-open guardrail signal source*, not a violation of
+> OpenLore's identity. It stays as implemented. It honors the north star — it puts **no LLM in the
+> hot path**, is a no-op when the `safedep/gryph` binary is absent, and its optional runtime signals
+> only *enrich the deterministic guardrail/panic surface* that OpenLore serves to the coding agent
+> (the customer). The shipped code (`src/cli/commands/gryph-watch.ts`,
+> `mcp-handlers/gryph-bridge.ts`, the `panic-*` enrichment, `OPENLORE_GRYPH_*` env) is retained
+> as-is. See [[project_openlore_vs_openspec_boundary]] for the sibling product-boundary record.
+
 > **UPDATE (2026-06-21): BUILT in PR #175** — Gryph re-attached fail-open (no-op when the `gryph`
 > binary is absent; `gryph-watch` exits silently on mode:'off'). The DEFERRED notes below are kept
 > for design history.
