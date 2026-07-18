@@ -3,9 +3,11 @@
 > Status: PROPOSED (2026-07-03, e2e audit). The committed spec corpus is bimodal: a 2026-Q1
 > auto-generated layer describing a product OpenLore is not (JWT auth, task/project/membership
 > APIs, an "OpenSpec CLI") sits under the genuinely-current hand-written and decision-synced
-> layer, and the two have never been reconciled. This change is the one-time repair; its sibling
-> `add-change-archive-automation` is the machinery that keeps it repaired. OpenLore *sells*
-> spec/code drift detection — its own spec corpus must survive its own tools.
+> layer, and the two have never been reconciled. This change is the one-time repair; the ongoing
+> discipline that keeps it repaired is running OpenSpec's own `openspec archive` at ship time (a
+> distinct product — OpenLore does not reimplement it), with the decision-syncer scoping fix in the
+> sibling `delegate-lifecycle-scope-decision-sync`. OpenLore *sells* spec/code drift detection — its own
+> spec corpus must survive its own tools.
 
 ## The gap
 
@@ -51,7 +53,7 @@ One-time corpus repair, reviewed domain by domain:
 4. **Dedupe synced decisions to their owning domain**: each cross-domain duplicate keeps one
    canonical copy (the domain whose subject it governs) and the copies elsewhere are replaced by a
    one-line pointer. (The syncer behavior fix — scoping future appends — lives in
-   `add-change-archive-automation`.)
+   `delegate-lifecycle-scope-decision-sync`.)
 5. **Verification gate for the repair itself:** after the purge, `openlore audit` /
    `audit_spec_coverage` runs clean (no requirement without code, no dead domain links), and a new
    CI check asserts no spec file contains the vacuous-scenario template or a dead domain link.

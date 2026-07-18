@@ -3,7 +3,7 @@
 > Status: PROPOSED (2026-07-03, e2e audit pass 4). Four fidelity defects in the shared
 > `OpenSpecWriter` (driven by both the CLI and the API generate paths). They share a theme:
 > the writer loses or misreports user content while reporting success. Distinct from
-> `restore-spec-corpus-integrity` (one-time content repair) and `add-change-archive-automation`
+> `restore-spec-corpus-integrity` (one-time content repair) and `delegate-lifecycle-scope-decision-sync`
 > (archive-time delta merge).
 
 ## The gap

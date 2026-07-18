@@ -183,6 +183,57 @@ describe('syncApprovedDecisions — filesystem writes', () => {
     expect((content.match(/### Use Redis for caching/g) ?? []).length).toBe(1);
   });
 
+  it('scopes a multi-domain decision to one owning domain, pointers elsewhere', async () => {
+    // Requirement: DecisionSyncWritesOneOwningDomain. The full requirement +
+    // Decisions entry lands in the FIRST affected domain; every other affected
+    // domain carries a one-line pointer only — never the verbatim block.
+    const { writeFile } = await import('node:fs/promises');
+    const paths: Record<string, string> = {};
+    for (const domain of ['services', 'drift', 'cli']) {
+      const specDir = join(tmpDir, 'openspec', 'specs', domain);
+      await mkdir(specDir, { recursive: true });
+      const p = join(specDir, 'spec.md');
+      await writeFile(p, MINIMAL_SPEC, 'utf-8');
+      paths[domain] = p;
+    }
+
+    const byDomain = new Map<string, { specPath: string; sourcePaths: string[] }>([
+      ['services', { specPath: 'openspec/specs/services/spec.md', sourcePaths: [] }],
+      ['drift', { specPath: 'openspec/specs/drift/spec.md', sourcePaths: [] }],
+      ['cli', { specPath: 'openspec/specs/cli/spec.md', sourcePaths: [] }],
+    ]);
+    const specMap = { byDomain, byFile: new Map() } as unknown as SpecMap;
+    const opts = { rootPath: tmpDir, openspecPath: join(tmpDir, 'openspec'), specMap };
+    const decision = makeDecision({ affectedDomains: ['services', 'drift', 'cli'] });
+
+    const { result } = await syncApprovedDecisions(makeStore([decision]), opts);
+
+    // Every affected spec is reported modified (owner write + two pointer writes).
+    expect(result.modifiedSpecs).toContain('openspec/specs/services/spec.md');
+    expect(result.modifiedSpecs).toContain('openspec/specs/drift/spec.md');
+    expect(result.modifiedSpecs).toContain('openspec/specs/cli/spec.md');
+
+    // Owner (first affected domain) holds the full block.
+    const owner = await readFile(paths.services, 'utf-8');
+    expect(owner).toContain('### Requirement: UseRedisForCaching');
+    expect(owner).toContain('**ID:** aaaabbbb');
+    expect(owner).not.toContain('> Decision pointer:');
+
+    // Non-owning domains hold ONLY a one-line pointer — no duplicated block.
+    for (const domain of ['drift', 'cli']) {
+      const other = await readFile(paths[domain], 'utf-8');
+      expect(other).toContain('> Decision pointer: aaaabbbb');
+      expect(other).toContain('openspec/specs/services/spec.md');
+      expect(other).not.toContain('### Requirement: UseRedisForCaching');
+      expect(other).not.toContain('**ID:** aaaabbbb');
+    }
+
+    // Re-syncing does not fan out duplicate pointers.
+    await syncApprovedDecisions(makeStore([makeDecision({ affectedDomains: ['services', 'drift', 'cli'] })]), opts);
+    const driftAgain = await readFile(paths.drift, 'utf-8');
+    expect((driftAgain.match(/> Decision pointer: aaaabbbb/g) ?? []).length).toBe(1);
+  });
+
   it('adds new source files to > Source files: header', async () => {
     const specDir = join(tmpDir, 'openspec', 'specs', 'services');
     await mkdir(specDir, { recursive: true });
