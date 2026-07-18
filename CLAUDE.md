@@ -43,7 +43,7 @@
 For all other cases (reading a file, grepping, listing files) use native tools directly.
 
 > **The default MCP surface is the `substrate` preset (change `refine-happy-path-and-defaults`):** a bare
-> `openlore mcp` / `openlore install` wires the 13-tool `substrate` preset — both faces of the substrate
+> `openlore mcp` / `openlore install` wires the 13-tool `substrate` preset — the navigation core plus governance reads
 > (the `navigation` core + `recall` + `verify_claim` + `blast_radius`) — not all 72 tools. It cleared the
 > DefaultSurfaceRevealsAllFaces benchmark (no task-completion or selection regression across two models /
 > both tiers; decision c79ec7ca / ADR-0023, superseding ADR-0022). Narrower/wider is opt-in: the lean
@@ -61,7 +61,7 @@ For all other cases (reading a file, grepping, listing files) use native tools d
 > list. Adjacent tools in one family are NOT merged when each returns a distinct conclusion; each names
 > its near-sibling instead (`NoRedundantConclusions`). `tool-contract.test.ts` fails CI if a new tool
 > forgets a family, or an adjacent tool fails to cross-reference its sibling. The active out-of-box
-> default is `substrate` (both faces) — flipped from `navigation` on benchmark evidence (ADR-0023,
+> default is `substrate` (navigation core + governance reads) — flipped from `navigation` on benchmark evidence (ADR-0023,
 > superseding ADR-0022); `--preset navigation` remains the lean navigate-only escape.
 
 > **Memory tools (`remember`/`recall`) are opt-in:** they ship in the `memory` preset

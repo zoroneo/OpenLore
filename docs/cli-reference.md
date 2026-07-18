@@ -106,8 +106,8 @@ openlore install [options]   # detect agents, wire surfaces, build the index
 
   --agent <name>         # Limit to one surface: claude-code, cursor, cline,
                          #   continue, agents-md
-  --preset <name>        # MCP tool preset to wire: substrate (default; both faces:
-                         #   nav + recall + verify_claim + blast_radius), navigation (lean escape),
+  --preset <name>        # MCP tool preset to wire: substrate (default; navigation core +
+                         #   governance reads: nav + recall + verify_claim + blast_radius), navigation (lean escape),
                          #   minimal, memory, verify, federation, coordination, or full
   --all-tools            # Wire the full 72-tool surface (alias of --preset full)
   --dry-run              # Print planned changes without writing any files
@@ -134,7 +134,7 @@ openlore connect remove [agent]      # disconnect that agent
 `connect` takes the agent as a positional argument (`openlore connect cursor`), not
 `--agent`, and disconnects via the `remove` subcommand rather than `--uninstall`.
 
-A bare `openlore install` wires the `substrate` surface (13 tools — both faces) and, for
+A bare `openlore install` wires the `substrate` surface (13 tools — navigation core + governance reads) and, for
 Claude Code, both a `SessionStart` primer hook and a `UserPromptSubmit` task-scoped
 injection hook. Use `--preset navigation` for the lean navigate-only core (10 tools), or
 `--preset full` for all 72 tools.
@@ -144,7 +144,7 @@ injection hook. Use `--preset navigation` for the lean navigate-only core (10 to
 ```bash
 openlore mcp [options]             # start the stdio MCP server
 
-  --preset <name>        # Expose a named preset (default: substrate, 13 tools — both faces)
+  --preset <name>        # Expose a named preset (default: substrate, 13 tools — nav core + governance reads)
   --minimal              # Expose only the core 6 governance tools
   --all-tools            # Expose the full surface — all 72 tools (alias --preset full)
   --list-tools           # Print the active surface grouped by capability family and exit
