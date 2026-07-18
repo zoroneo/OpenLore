@@ -165,6 +165,16 @@ export const ANALYSIS_STALE_THRESHOLD_MS = 60 * 60 * 1000;
 /** How old (ms) an analysis can be before being re-used in 'run' (1 hour) */
 export const ANALYSIS_REUSE_THRESHOLD_MS = 60 * 60 * 1000;
 
+/**
+ * Explicit-stale-region size that trips a read-path background repair
+ * (change: make-index-self-healing). At or above this many files marked stale by
+ * a budget-exceeded incremental update, the read path schedules the same
+ * at-most-once background rebuild instead of serving an ever-growing stale region.
+ * 1 = any explicit staleness heals; kept as a named constant so the threshold is
+ * tunable without touching the trigger logic.
+ */
+export const STALE_REGION_REPAIR_THRESHOLD = 1;
+
 /** Grace period after consolidation during which the gate skips the no_decisions_recorded check (1 hour) */
 export const CONSOLIDATION_GRACE_PERIOD_MS = 60 * 60 * 1000;
 

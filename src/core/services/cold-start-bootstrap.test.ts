@@ -3,8 +3,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bootstrapAnalysisInBackground } from './cold-start-bootstrap.js';
-import { OPENLORE_ANALYSIS_REL_PATH } from '../../constants.js';
+import {
+  bootstrapAnalysisInBackground,
+  repairInBackground,
+  repairStatusFor,
+  registerRepairBuilder,
+  _resetRepairServiceForTesting,
+} from './cold-start-bootstrap.js';
+import { OPENLORE_ANALYSIS_REL_PATH, OPENLORE_CONFIG_REL_PATH } from '../../constants.js';
 
 const dirs: string[] = [];
 function freshDir(withAnalysis = false): string {
@@ -96,5 +102,83 @@ describe('bootstrapAnalysisInBackground', () => {
     const src = readFileSync(fileURLToPath(new URL('./cold-start-bootstrap.ts', import.meta.url)), 'utf8');
     expect(src).not.toMatch(/api\/(analyze|init|run)/);
     expect(src).not.toMatch(/install\/index/);
+  });
+});
+
+describe('repairInBackground (make-index-self-healing)', () => {
+  afterEach(() => {
+    _resetRepairServiceForTesting();
+    delete process.env.OPENLORE_NO_AUTO_ANALYZE;
+  });
+
+  it('fires the injected builder for a staleness reason and records in-progress status', async () => {
+    const dir = freshDir(true);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let ran = 0;
+    const p = repairInBackground(dir, 'integrity-mismatched', {
+      analyze: async () => { ran++; await gate; },
+      log: () => {},
+    });
+    expect(p).not.toBeNull();
+    // While the build is gated, the repair is disclosed as in-progress with its reason.
+    expect(repairStatusFor(dir)).toEqual({ inProgress: true, reason: 'integrity-mismatched' });
+    release();
+    await p;
+    expect(ran).toBe(1);
+    // Completed → no longer in-progress (a later call serves fresh, no marker).
+    expect(repairStatusFor(dir)).toBeUndefined();
+  });
+
+  it('is at-most-once per process per repo — a persistent trigger never thrashes', async () => {
+    const dir = freshDir(true);
+    let calls = 0;
+    const opts = { analyze: async () => { calls++; }, log: () => {} };
+    await repairInBackground(dir, 'stale-region', opts);
+    // Same (or any) trigger still observed after a completed repair → disclose and stop.
+    expect(repairInBackground(dir, 'stale-region', opts)).toBeNull();
+    expect(repairInBackground(dir, 'analysis-age', opts)).toBeNull();
+    expect(calls).toBe(1);
+  });
+
+  it('clears its guard on failure so a genuine retry can run', async () => {
+    const dir = freshDir(true);
+    let calls = 0;
+    await repairInBackground(dir, 'schema-reset', {
+      analyze: async () => { calls++; throw new Error('boom'); },
+      log: () => {},
+    });
+    const p2 = repairInBackground(dir, 'schema-reset', { analyze: async () => { calls++; }, log: () => {} });
+    expect(p2).not.toBeNull();
+    await p2;
+    expect(calls).toBe(2);
+  });
+
+  it('uses the process-registered builder when none is injected', async () => {
+    const dir = freshDir(true);
+    let ran = 0;
+    registerRepairBuilder(async () => { ran++; });
+    const p = repairInBackground(dir, 'analysis-age', { log: () => {} });
+    expect(p).not.toBeNull();
+    await p;
+    expect(ran).toBe(1);
+  });
+
+  it('is a silent no-op when no builder is registered or injected (CLI/tests)', () => {
+    const dir = freshDir(true);
+    expect(repairInBackground(dir, 'analysis-age', { log: () => {} })).toBeNull();
+    expect(repairStatusFor(dir)).toBeUndefined();
+  });
+
+  it('respects the OPENLORE_NO_AUTO_ANALYZE opt-out', () => {
+    process.env.OPENLORE_NO_AUTO_ANALYZE = '1';
+    const dir = freshDir(true);
+    expect(repairInBackground(dir, 'stale-region', { analyze: async () => {}, log: () => {} })).toBeNull();
+  });
+
+  it('respects the .openlore/config.json autoInit:false opt-out', () => {
+    const dir = freshDir(true);
+    writeFileSync(join(dir, OPENLORE_CONFIG_REL_PATH), JSON.stringify({ autoInit: false }));
+    expect(repairInBackground(dir, 'stale-region', { analyze: async () => {}, log: () => {} })).toBeNull();
   });
 });

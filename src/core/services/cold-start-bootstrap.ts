@@ -1,69 +1,180 @@
 /**
- * Cold-start self-bootstrap (change: add-zero-interaction-onboarding).
+ * Background index repair service (changes: add-zero-interaction-onboarding →
+ * make-index-self-healing).
  *
- * If an agent wires the OpenLore MCP server but never ran `openlore install`
- * (or ran it with --no-analyze), the very first session has no structural index
- * and every tool returns "run analyze first." This warms that cold start
- * automatically: when the server begins watching a directory with no analysis,
- * it builds the index ONCE, in the BACKGROUND.
+ * Originally the cold-start self-bootstrap: if an agent wired the OpenLore MCP
+ * server but never ran `openlore install`, the very first session had no index
+ * and every tool returned "run analyze first." That warmed an ABSENT index once,
+ * in the background.
  *
- * Why background and not blocking: a synchronous full analyze on the first tool
- * call could take many seconds and would hang the agent's turn (and risk an MCP
- * client timeout). So the build runs detached from the call path; the first
- * call or two may still see the graceful "no analysis yet" guidance, and within
- * seconds the index is warm. This is strictly better than today, where the
- * server never self-builds.
+ * `make-index-self-healing` generalizes it: every read-path staleness signal that
+ * today only produces a warning (integrity `mismatched`, an over-threshold stale
+ * region, a schema reset, an aged analysis) now triggers the SAME at-most-once,
+ * non-blocking background rebuild — so detection finally closes the loop into
+ * repair instead of stopping at disclosure.
  *
- * Deterministic, no LLM, no new dependency. Guarded once-per-directory and
- * fail-soft: a build failure never propagates.
+ * Guarantees (unchanged from the bootstrap it grew out of):
+ *   - AT MOST ONCE per process per repo. A completed repair that still observes
+ *     its trigger discloses and stops — it never loops or thrashes. The guard is
+ *     cleared only on FAILURE, so a transient build error can retry.
+ *   - NEVER blocks the caller: the build runs detached from the call path; reads
+ *     during it are served from the stale index with an honest "refresh started"
+ *     disclosure, never held.
+ *   - NEVER throws: a build failure leaves the graceful guidance in place.
+ *   - Opt-out via `OPENLORE_NO_AUTO_ANALYZE` or `.openlore/config.json` `autoInit:false`.
+ *
+ * Deterministic, no LLM, no new dependency.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { OPENLORE_ANALYSIS_REL_PATH } from '../../constants.js';
+import {
+  OPENLORE_ANALYSIS_REL_PATH,
+  OPENLORE_DIR,
+  OPENLORE_CONFIG_FILENAME,
+} from '../../constants.js';
 
-/** Directories already bootstrapped (or in flight) this process — build at most once each. */
-const bootstrapped = new Set<string>();
+/**
+ * Why a background repair was started. `index-absent` is the original cold-start
+ * case (no artifact at all); the rest are the self-healing triggers layered on by
+ * make-index-self-healing.
+ */
+export type RepairReason =
+  | 'index-absent'
+  | 'integrity-mismatched'
+  | 'stale-region'
+  | 'schema-reset'
+  | 'analysis-age';
+
+/** Human-facing label for each reason, used in the "refresh started" disclosure. */
+export const REPAIR_REASON_DETAIL: Record<RepairReason, string> = {
+  'index-absent': 'no index found',
+  'integrity-mismatched': 'the index did not reconcile against its build attestation',
+  'stale-region': 'part of the index is explicitly stale',
+  'schema-reset': 'the index schema was reset by a version upgrade',
+  'analysis-age': 'the analysis is older than the freshness threshold',
+};
+
+/** Directories already repaired (or in flight) this process — build at most once each. */
+const attempted = new Set<string>();
+
+/** In-flight repairs, keyed by directory, so a read can disclose "refresh started". */
+const inFlight = new Map<string, { reason: RepairReason; startedAt: number }>();
+
+/**
+ * The default index builder, registered once by the MCP server at startup. Lets a
+ * read-path caller (mcp-handlers/utils.ts) — which deliberately never imports the
+ * analyzer or install layer — trigger a repair without threading a builder through
+ * every handler. When nothing is registered (CLI, tests, a non-server host), a
+ * read-path repair is a silent no-op: detection and disclosure are unchanged, only
+ * the automatic rebuild is skipped.
+ */
+let registeredBuilder: ((directory: string) => Promise<void>) | null = null;
+
+/** Register the process-wide repair builder (the MCP server injects install's forced buildIndex). */
+export function registerRepairBuilder(fn: (directory: string) => Promise<void>): void {
+  registeredBuilder = fn;
+}
 
 /** True once an `openlore analyze` artifact exists for the directory. */
 export function hasAnalysis(directory: string): boolean {
   return existsSync(join(directory, OPENLORE_ANALYSIS_REL_PATH, 'llm-context.json'));
 }
 
-export interface BootstrapOptions {
+/** True when `.openlore/config.json` explicitly sets `autoInit: false`. Fail-open. */
+function autoInitDisabled(directory: string): boolean {
+  try {
+    const raw = readFileSync(join(directory, OPENLORE_DIR, OPENLORE_CONFIG_FILENAME), 'utf-8');
+    return (JSON.parse(raw) as { autoInit?: unknown }).autoInit === false;
+  } catch {
+    return false; // no config / unreadable → auto-init not disabled
+  }
+}
+
+export interface RepairOptions {
   /**
-   * The index builder to run for a cold directory. REQUIRED and injected by the
-   * caller — this module deliberately stays dependency-light and never imports
-   * the analyzer or install layer itself, so it cannot pick a builder for you.
-   *
-   * Production passes install's `buildIndex` (init + structural analyze + the
-   * BM25 search corpus, no API key) so `orient` warms to FULL parity. A builder
-   * that skips the BM25/search index would leave keyword retrieval cold while
-   * the graph looks warm — a silent half-build. Making this required turns that
-   * footgun into a compile-time decision the caller must make explicitly, rather
-   * than a wrong-by-default fallback hidden in this module.
+   * The index builder to run. Optional: when omitted, the process-wide builder
+   * registered via {@link registerRepairBuilder} is used. Production registers
+   * install's forced buildIndex (init + structural analyze + BM25 search corpus,
+   * no API key) so `orient` heals to FULL parity, not just the structural graph.
    */
-  analyze: (directory: string) => Promise<void>;
+  analyze?: (directory: string) => Promise<void>;
   /** Opt out entirely (env OPENLORE_NO_AUTO_ANALYZE, or a caller flag). */
   disabled?: boolean;
   /** Status sink (defaults to process.stderr). Never stdout — that is protocol. */
   log?: (msg: string) => void;
-  /** Injected guard set (tests). */
+  /** Injected at-most-once guard set (tests). */
   seen?: Set<string>;
+  /** Injectable clock (tests). Defaults to Date.now. */
+  now?: () => number;
 }
 
 /**
- * Kick a one-time background index build for `directory` if none exists yet,
- * using the caller-supplied `opts.analyze` builder.
- * Returns the in-flight build promise (so tests can await it), or null when
- * nothing was started (already analyzed, already bootstrapped, or disabled).
- * NEVER throws and NEVER blocks the caller.
+ * Kick a one-time background repair for `directory` using the caller-supplied or
+ * process-registered builder. Returns the in-flight build promise (so tests can
+ * await it), or null when nothing was started (already repaired this process,
+ * disabled, no builder available, or empty directory). NEVER throws, NEVER blocks.
+ */
+export function repairInBackground(
+  directory: string,
+  reason: RepairReason,
+  opts: RepairOptions = {},
+): Promise<void> | null {
+  const seen = opts.seen ?? attempted;
+  if (opts.disabled || process.env.OPENLORE_NO_AUTO_ANALYZE) return null;
+  if (!directory) return null;
+  if (seen.has(directory)) return null; // at-most-once per process per repo
+  if (autoInitDisabled(directory)) return null;
+
+  const build = opts.analyze ?? registeredBuilder;
+  if (!build) return null; // no builder registered (CLI/tests) — detection unchanged, repair skipped
+
+  seen.add(directory);
+  const now = opts.now ?? Date.now;
+  inFlight.set(directory, { reason, startedAt: now() });
+  const log = opts.log ?? ((m: string) => process.stderr.write(m + '\n'));
+
+  const run = async (): Promise<void> => {
+    try {
+      log(`[openlore] Index repair (${reason}) — rebuilding in the background (non-blocking, no API key)…`);
+      await build(directory);
+      log('[openlore] Index rebuilt — the next tool call serves fresh results.');
+      // Guard stays set: a completed repair that still observes its trigger
+      // discloses and stops (at-most-once latch), never thrashes.
+    } catch (err) {
+      // Fail-soft: leave the graceful guidance in place; allow a later retry.
+      seen.delete(directory);
+      log(`[openlore] Background index repair skipped: ${(err as Error).message}`);
+    } finally {
+      inFlight.delete(directory);
+    }
+  };
+
+  return run();
+}
+
+/**
+ * The in-progress repair for `directory`, or undefined when none is running. The
+ * read path threads this into the response so a stale answer is served with an
+ * honest "background refresh started" marker — never presented as fresh.
+ */
+export function repairStatusFor(
+  directory: string,
+): { inProgress: true; reason: RepairReason } | undefined {
+  const rec = inFlight.get(directory);
+  return rec ? { inProgress: true, reason: rec.reason } : undefined;
+}
+
+/**
+ * Cold-start self-bootstrap for an ABSENT index — the original entry point, kept
+ * as a thin wrapper over {@link repairInBackground} so existing callers/tests are
+ * unchanged. Only fires when no analysis artifact exists yet.
  */
 export function bootstrapAnalysisInBackground(
   directory: string,
-  opts: BootstrapOptions,
+  opts: RepairOptions & { analyze: (directory: string) => Promise<void> },
 ): Promise<void> | null {
-  const seen = opts.seen ?? bootstrapped;
+  const seen = opts.seen ?? attempted;
   if (opts.disabled || process.env.OPENLORE_NO_AUTO_ANALYZE) return null;
   if (!directory) return null;
   if (seen.has(directory)) return null;
@@ -71,22 +182,12 @@ export function bootstrapAnalysisInBackground(
     seen.add(directory);
     return null;
   }
+  return repairInBackground(directory, 'index-absent', opts);
+}
 
-  seen.add(directory);
-  const log = opts.log ?? ((m: string) => process.stderr.write(m + '\n'));
-
-  const run = async (): Promise<void> => {
-    try {
-      log('[openlore] No index found — building it in the background (first run, no API key)…');
-      await opts.analyze(directory);
-      log('[openlore] Index built — orient() and the other tools are now warm.');
-    } catch (err) {
-      // Fail-soft: leave the graceful "run analyze" guidance in place; allow a
-      // later retry by clearing the guard.
-      seen.delete(directory);
-      log(`[openlore] Background index build skipped: ${(err as Error).message}`);
-    }
-  };
-
-  return run();
+/** Test-only: clear the process-wide repair guards and registered builder. */
+export function _resetRepairServiceForTesting(): void {
+  attempted.clear();
+  inFlight.clear();
+  registeredBuilder = null;
 }

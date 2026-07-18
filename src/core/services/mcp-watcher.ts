@@ -78,6 +78,13 @@ const DEFAULT_CLOSURE_BUDGET = INCREMENTAL_CLOSURE_BUDGET;
  */
 let backgroundRebuildTriggered = false;
 
+/**
+ * Debounce before firing a graph-stale rebuild (change: make-index-self-healing).
+ * Coalesces a burst of HEAD flips / stale-region marks into ONE rebuild. Longer
+ * than the signature debounce so a `git pull` that lands many refs settles first.
+ */
+const GRAPH_STALE_DEBOUNCE_MS = 1500;
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface McpWatcherOptions {
@@ -111,7 +118,29 @@ export interface McpWatcherOptions {
    * so this is the seam where continuous call-graph freshness is layered on.
    */
   onBatchFlushed?: (changedAbsPaths: string[]) => void;
+  /**
+   * Call-graph freshness without the commit hook (change: make-index-self-healing).
+   * Fired — debounced and coalesced — when the graph has fallen behind in a way an
+   * incremental patch cannot repair: a `.git` HEAD ref change (branch switch / pull)
+   * or a stale region that crossed the incremental work budget. A host that already
+   * owns a rebuild coordinator (the `serve` daemon) wires this to its coordinator so
+   * the two rebuild paths coalesce. When provided, the watcher delegates the rebuild
+   * to this callback and does NOT spawn one itself.
+   */
+  onGraphStale?: (reason: GraphStaleReason) => void;
+  /**
+   * When true AND no `onGraphStale` host handler is provided, the watcher itself
+   * spawns the debounced, coalesced background `analyze --force` on a graph-stale
+   * trigger (a repeatable singleflight, distinct from the once-per-process schema-
+   * reset heal). Set by the in-process MCP watcher, which — unlike `serve` — has no
+   * rebuild coordinator of its own, so its graph would otherwise age with every
+   * branch switch. Default false: the plain signatures-only watcher is unchanged.
+   */
+  selfRebuild?: boolean;
 }
+
+/** Why the call graph fell behind in a way only a full rebuild can repair. */
+export type GraphStaleReason = 'head-change' | 'stale-region';
 
 interface ChangedFile {
   rel: string;
@@ -196,9 +225,17 @@ export class McpWatcher {
   private readonly extraIgnore: string[];
   private readonly debug: boolean;
   private readonly onBatchFlushed?: (changedAbsPaths: string[]) => void;
+  private readonly onGraphStale?: (reason: GraphStaleReason) => void;
+  private readonly selfRebuild: boolean;
 
   private fsWatcher?: FSWatcher;
   private gitWatcher?: FSWatcher;
+
+  // ── Graph-rebuild trigger (make-index-self-healing) ────────────────────────
+  private graphStaleTimer?: ReturnType<typeof setTimeout>;
+  private graphStalePendingReason?: GraphStaleReason;
+  private graphRebuildRunning = false;   // singleflight for the self-spawned rebuild
+  private graphRebuildPending = false;   // a trigger arrived mid-rebuild → run once more
 
   // ── Coalescing queue (Step 1) ──────────────────────────────────────────────
   private pending = new Set<string>();              // absolute paths awaiting a flush
@@ -231,6 +268,8 @@ export class McpWatcher {
     this.extraIgnore = options.ignore ?? [];
     this.debug       = !!process.env.OPENLORE_WATCH_DEBUG;
     this.onBatchFlushed = options.onBatchFlushed;
+    this.onGraphStale = options.onGraphStale;
+    this.selfRebuild = options.selfRebuild ?? false;
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -299,7 +338,17 @@ export class McpWatcher {
         ignoreInitial: true,
         followSymlinks: false,
       });
-      this.gitWatcher.on('all', () => this.onVcsEvent());
+      this.gitWatcher.on('all', (_event: string, changedPath?: string) => {
+        this.onVcsEvent();
+        // Call-graph freshness without the commit hook (make-index-self-healing):
+        // a HEAD / MERGE_HEAD / ORIG_HEAD change is a branch switch / pull / merge —
+        // the graph must rebuild. A bare `index` change (git add) is staging churn
+        // that the per-file signature lane already handles, so it does NOT rebuild.
+        const base = changedPath ? posix.basename(changedPath.split(/[/\\]/).join('/')) : '';
+        if (base === 'HEAD' || base === 'MERGE_HEAD' || base === 'ORIG_HEAD') {
+          this.scheduleGraphRebuild('head-change');
+        }
+      });
     } catch {
       // no .git, or watch failed — VCS detection falls back to the batch-size
       // threshold in handleBatch, which is enough for G3.
@@ -315,7 +364,8 @@ export class McpWatcher {
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     if (this.maxBatchTimer) clearTimeout(this.maxBatchTimer);
     if (this.embedTimer) clearTimeout(this.embedTimer);
-    this.debounceTimer = this.maxBatchTimer = this.embedTimer = undefined;
+    if (this.graphStaleTimer) clearTimeout(this.graphStaleTimer);
+    this.debounceTimer = this.maxBatchTimer = this.embedTimer = this.graphStaleTimer = undefined;
     // Best-effort: drain anything still queued so a save/delete right before
     // shutdown is not lost. Deletions first, then changes (same order as flush).
     if (!this.running) {
@@ -558,7 +608,13 @@ export class McpWatcher {
             // marked stale (over-approximate, never silent).
             store.clearFilesStale([f.rel, ...recomputed]);
             const staleNow = skipped.length > 0 ? [...dropped, ...skipped] : dropped;
-            if (staleNow.length > 0) store.markFilesStale(staleNow);
+            if (staleNow.length > 0) {
+              store.markFilesStale(staleNow);
+              // The incremental closure hit its work budget and left files explicitly
+              // stale. Rather than let that region grow unbounded until a manual
+              // analyze, schedule the debounced full rebuild (make-index-self-healing).
+              this.scheduleGraphRebuild('stale-region');
+            }
           });
 
           changedFiles.push({ rel: f.rel, content: f.content });
@@ -678,6 +734,74 @@ export class McpWatcher {
       process.stderr.write('[mcp-watcher] background "openlore analyze --force" started; the graph will self-heal shortly.\n');
     } catch (err) {
       process.stderr.write(`[mcp-watcher] background rebuild could not be spawned (${(err as Error).message}) — run "openlore analyze".\n`);
+    }
+  }
+
+  /** Test-only: drive the graph-stale trigger without a real git/fs event. */
+  _triggerGraphStaleForTesting(reason: GraphStaleReason): void {
+    this.scheduleGraphRebuild(reason);
+  }
+
+  /**
+   * Schedule a debounced, coalesced full-graph rebuild after a trigger an
+   * incremental patch cannot repair (change: make-index-self-healing). Rapid
+   * successive triggers (a `git pull` touching many refs) collapse into one
+   * rebuild. No-op unless a host wired `onGraphStale` or `selfRebuild` is set, so
+   * the plain signatures-only watcher is byte-for-byte unchanged.
+   */
+  private scheduleGraphRebuild(reason: GraphStaleReason): void {
+    if (!this.onGraphStale && !this.selfRebuild) return;
+    // Keep the first reason of a coalesced burst — HEAD-change is the more
+    // salient cause when both fire together, and it arrives first on a switch.
+    if (this.graphStalePendingReason === undefined) this.graphStalePendingReason = reason;
+    if (this.graphStaleTimer) clearTimeout(this.graphStaleTimer);
+    this.graphStaleTimer = setTimeout(() => {
+      const r = this.graphStalePendingReason ?? reason;
+      this.graphStalePendingReason = undefined;
+      this.graphStaleTimer = undefined;
+      if (this.onGraphStale) {
+        try { this.onGraphStale(r); } catch { /* host lane is best-effort */ }
+      } else {
+        this.spawnGraphRebuild(r);
+      }
+    }, GRAPH_STALE_DEBOUNCE_MS);
+    this.graphStaleTimer.unref?.();
+  }
+
+  /**
+   * Repeatable singleflight full `analyze --force` (BM25-only, no network) for the
+   * in-process watcher, which has no host rebuild coordinator. Distinct from the
+   * once-per-process schema-reset heal: this must re-fire across a session (every
+   * branch switch), so it coalesces a trigger that arrives mid-rebuild into one
+   * follow-up run rather than latching forever. Never throws.
+   */
+  private spawnGraphRebuild(reason: GraphStaleReason): void {
+    if (this.graphRebuildRunning) { this.graphRebuildPending = true; return; }
+    const cli = process.argv[1];
+    if (!cli) {
+      process.stderr.write('[mcp-watcher] cannot locate the openlore CLI to auto-rebuild — run "openlore analyze".\n');
+      return;
+    }
+    this.graphRebuildRunning = true;
+    try {
+      const child = spawn(
+        process.execPath,
+        [cli, 'analyze', '--force', '--no-embed', '--output', this.outputPath],
+        { cwd: this.rootPath, stdio: 'ignore', detached: true }
+      );
+      child.on('error', (err) => {
+        this.graphRebuildRunning = false;
+        process.stderr.write(`[mcp-watcher] background graph rebuild failed to start (${err.message}) — run "openlore analyze".\n`);
+      });
+      child.on('exit', () => {
+        this.graphRebuildRunning = false;
+        if (this.graphRebuildPending) { this.graphRebuildPending = false; this.spawnGraphRebuild(reason); }
+      });
+      child.unref();
+      process.stderr.write(`[mcp-watcher] background "openlore analyze --force" started (${reason}); the graph will refresh shortly.\n`);
+    } catch (err) {
+      this.graphRebuildRunning = false;
+      process.stderr.write(`[mcp-watcher] background graph rebuild could not be spawned (${(err as Error).message}) — run "openlore analyze".\n`);
     }
   }
 

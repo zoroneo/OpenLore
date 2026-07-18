@@ -43,6 +43,7 @@ import {
 import { sanitizeMcpError, validateDirectory } from '../../core/services/mcp-handlers/utils.js';
 import { createTracker, updateTracker, updatePanic, resetPanicOnOrient, getFreshnessSignal, trackerToPanicState } from '../../core/services/mcp-handlers/epistemic-lease.js';
 import type { EpistemicTracker } from '../../core/services/mcp-handlers/epistemic-lease.js';
+import { registerRepairBuilder, repairStatusFor, REPAIR_REASON_DETAIL } from '../../core/services/cold-start-bootstrap.js';
 import type { PanicResponseMode } from '../../types/index.js';
 import { readPanicState, mutatePanicStateLocked, getPanicSignalText } from '../../core/services/mcp-handlers/panic-response.js';
 import { emit } from '../../core/services/telemetry.js';
@@ -2333,6 +2334,17 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
   console.warn = toStderr;
   console.debug = toStderr;
 
+  // Register the process-wide background index-repair builder (change:
+  // make-index-self-healing). Read-path staleness signals (in mcp-handlers/utils)
+  // trigger repairInBackground, which uses this builder — a forced full rebuild
+  // (init + structural analyze + BM25 corpus, no API key) so a self-heal restores
+  // FULL parity, not just the structural graph. Injected here so the dependency-
+  // light read path never imports the analyzer/install layer itself.
+  registerRepairBuilder(async (dir) => {
+    const { buildIndex } = await import('../install/index.js');
+    await buildIndex(dir, { force: true });
+  });
+
   const selectorOpts = { minimal: options.minimal, preset: options.preset, allTools: options.allTools };
   // A bad `--preset` must fail like a CLI usage error (clean message, exit 2),
   // not an uncaught throw that dumps a Node stack trace — mirroring how
@@ -2456,6 +2468,12 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
             rootPath: resolve(dir),
             debounceMs: isNaN(debounceMs) ? 400 : debounceMs,
             embed: !options.watchNoEmbed,
+            // selfRebuild (make-index-self-healing): the in-process watcher has no
+            // serve-style rebuild coordinator, so its call graph would age with every
+            // branch switch. Let it spawn its own debounced `analyze --force` on a
+            // HEAD change / budget-exceeded stale region — the graph stays fresh
+            // without a post-commit hook or a running daemon.
+            selfRebuild: true,
           });
           await autoWatcher.start();
           const cleanup = () => autoWatcher!.stop().then(() => process.exit(0));
@@ -2623,6 +2641,25 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
       if (signal?.prepend) content.push({ type: 'text', text: signal.text });
       content.push({ type: 'text', text });
       if (signal && !signal.prepend) content.push({ type: 'text', text: signal.text });
+
+      // Index self-healing disclosure (change: make-index-self-healing). When a
+      // read-path staleness signal has triggered a background repair for this repo,
+      // append one factual note — served now from the stale index, refresh started,
+      // never blocked, never presented as fresh. A separate content item so it never
+      // corrupts a structured result body. Distinct from the freshness (session-age)
+      // note above and from the absent-index "run analyze" not-ready result.
+      if (directory) {
+        const repair = repairStatusFor(directory);
+        if (repair) {
+          content.push({
+            type: 'text',
+            text:
+              `\n[openlore index] Served from a stale index (${REPAIR_REASON_DETAIL[repair.reason]}); ` +
+              `a background refresh has started and did not block this call. Re-run for fresh ` +
+              `results once it completes. Informational signal.\n`,
+          });
+        }
+      }
 
       if (tracker && (panicPolicy === 'advisory' || panicPolicy === 'experimental_blocking')) {
         const panicState = trackerToPanicState(tracker, agentName);

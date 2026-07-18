@@ -41,11 +41,23 @@ const execFileAsync = promisify(execFile);
 
 type CheckStatus = 'ok' | 'warn' | 'fail';
 
+/**
+ * A machine-readable remediation for a check `--fix` can execute (change:
+ * make-index-self-healing). Present ONLY on checks whose printed `fix:` hint maps
+ * to a safe, in-process action, so `--fix` runs exactly what a check surfaced and
+ * nothing more. Internal — stripped from `--json` so the read-only output contract
+ * is byte-compatible.
+ */
+type Remediation =
+  | { kind: 'analyze'; label: string }
+  | { kind: 'rewire-mcp'; label: string };
+
 interface CheckResult {
   name: string;
   status: CheckStatus;
   detail: string;
   fix?: string;
+  remediation?: Remediation;
 }
 
 // ============================================================================
@@ -135,6 +147,9 @@ async function checkAnalysis(rootPath: string): Promise<CheckResult> {
       status,
       detail: `repo-structure.json exists (${ageLabel})`,
       fix: status === 'warn' ? "Run 'openlore analyze' to refresh stale analysis" : undefined,
+      ...(status === 'warn'
+        ? { remediation: { kind: 'analyze', label: 'openlore analyze --force' } as const }
+        : {}),
     };
   } catch {
     return {
@@ -142,6 +157,7 @@ async function checkAnalysis(rootPath: string): Promise<CheckResult> {
       status: 'warn',
       detail: 'No analysis found — run openlore analyze first',
       fix: "Run 'openlore install' (one-command setup) or 'openlore analyze' to build the index",
+      remediation: { kind: 'analyze', label: 'openlore analyze --force' },
     };
   }
 }
@@ -201,6 +217,7 @@ async function checkMcpWiring(rootPath: string): Promise<CheckResult | null> {
       status: 'warn',
       detail: 'openlore MCP server is in .claude/settings.json, which Claude Code never reads for MCP',
       fix: "Run 'openlore install --agent claude-code --force' to move it to .mcp.json",
+      remediation: { kind: 'rewire-mcp', label: 'openlore install --agent claude-code --force' },
     };
   }
   if (inSettings && inMcp) {
@@ -209,6 +226,7 @@ async function checkMcpWiring(rootPath: string): Promise<CheckResult | null> {
       status: 'warn',
       detail: 'stale openlore entry still in .claude/settings.json (Claude Code reads .mcp.json)',
       fix: "Run 'openlore install --agent claude-code --force' to remove the stale entry",
+      remediation: { kind: 'rewire-mcp', label: 'openlore install --agent claude-code --force' },
     };
   }
   if (inMcp) {
@@ -454,8 +472,10 @@ export const doctorCommand = new Command('doctor')
     'after',
     `
 Examples:
-  $ openlore doctor           Run all checks
-  $ openlore doctor --json    Output results as JSON
+  $ openlore doctor            Run all checks (read-only)
+  $ openlore doctor --json     Output results as JSON
+  $ openlore doctor --fix      Apply the printed remediations (confirms each in a TTY)
+  $ openlore doctor --fix --yes  Apply every remediation non-interactively
 
 Checks performed:
   • Node.js version (>=${MIN_NODE_MAJOR_VERSION}.${MIN_NODE_MINOR_VERSION} required for node:sqlite)
@@ -470,7 +490,9 @@ Checks performed:
 `
   )
   .option('--json', 'Output results as JSON', false)
-  .action(async (options: { json: boolean }) => {
+  .option('--fix', 'Apply the remediations the checks printed (re-analyze, re-wire); TTY confirms each unless --yes', false)
+  .option('--yes', 'With --fix, run every remediation non-interactively (no confirmation prompt)', false)
+  .action(async (options: { json: boolean; fix: boolean; yes: boolean }) => {
     const rootPath = process.cwd();
     const useColor = process.stdout.isTTY && !options.json;
 
@@ -501,7 +523,9 @@ Checks performed:
     ];
 
     if (options.json) {
-      console.log(JSON.stringify(checks, null, 2));
+      // Strip the internal `remediation` field so the --json contract is
+      // byte-compatible with pre-`--fix` output (bare doctor stays read-only).
+      console.log(JSON.stringify(checks.map(({ remediation: _r, ...c }) => c), null, 2));
       return;
     }
 
@@ -524,4 +548,105 @@ Checks performed:
       logger.success('All checks passed!');
     }
     console.log('');
+
+    // --fix: execute exactly the remediations the read-only checks surfaced above,
+    // nothing a check did not print (change: make-index-self-healing). Bare doctor
+    // never reaches here, so its output is unchanged.
+    if (options.fix) {
+      await applyRemediations(rootPath, checks, options.yes);
+    }
   });
+
+/** Ask one yes/no question on a TTY. Resolves false when no TTY is attached. */
+async function confirmTty(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
+    return answer === 'y' || answer === 'yes';
+  } finally {
+    rl.close();
+  }
+}
+
+/** Run the single in-process action a remediation maps to. Returns a status line. */
+async function runRemediation(rootPath: string, r: Remediation): Promise<string> {
+  switch (r.kind) {
+    case 'analyze': {
+      const { openloreAnalyze } = await import('../../api/analyze.js');
+      await openloreAnalyze({ rootPath, force: true });
+      return 'analysis rebuilt';
+    }
+    case 'rewire-mcp': {
+      const { runInstall } = await import('../install/index.js');
+      // Re-wire only — do NOT also re-analyze here (that is the 'analyze'
+      // remediation's job, run separately if its own check surfaced it).
+      await runInstall({ agent: 'claude-code', force: true, analyze: false, cwd: rootPath });
+      return 'MCP wiring corrected (.mcp.json)';
+    }
+  }
+}
+
+/**
+ * The deduped set of remediations `--fix` will run: only non-ok checks that
+ * surfaced a machine-readable remediation, each action at most once (two checks
+ * may both print "re-analyze"). Pure and exported so the "fixes exactly what it
+ * printed, nothing else" contract is unit-testable without executing anything.
+ */
+export function planRemediations(
+  checks: CheckResult[],
+): Array<{ check: CheckResult; remediation: Remediation }> {
+  const seen = new Set<string>();
+  const queue: Array<{ check: CheckResult; remediation: Remediation }> = [];
+  for (const c of checks) {
+    if (c.status === 'ok' || !c.remediation) continue;
+    if (seen.has(c.remediation.label)) continue;
+    seen.add(c.remediation.label);
+    queue.push({ check: c, remediation: c.remediation });
+  }
+  return queue;
+}
+
+/**
+ * Execute the remediations attached to non-ok checks, one confirmation per mutating
+ * action in a TTY (or all of them with --yes). Deduplicates repeated actions (two
+ * checks may both print "re-analyze") so each runs at most once. Re-run bare doctor
+ * afterward to confirm.
+ */
+async function applyRemediations(rootPath: string, checks: CheckResult[], yes: boolean): Promise<void> {
+  const queue = planRemediations(checks);
+  if (queue.length === 0) {
+    logger.info('doctor --fix', 'Nothing to fix — no check surfaced an automatic remediation.');
+    return;
+  }
+
+  logger.section('openlore doctor --fix');
+  let applied = 0;
+  let skipped = 0;
+  for (const { check, remediation } of queue) {
+    const proceed = yes
+      ? true
+      : await confirmTty(`Fix "${check.name}" — run \`${remediation.label}\`?`);
+    if (!proceed) {
+      skipped++;
+      if (!process.stdin.isTTY && !yes) {
+        logger.warning(`Skipped "${check.name}" — re-run with --yes to apply non-interactively.`);
+      } else {
+        logger.info('Skipped', check.name);
+      }
+      continue;
+    }
+    try {
+      logger.discovery(`Applying: ${remediation.label}`);
+      const outcome = await runRemediation(rootPath, remediation);
+      logger.success(`Fixed "${check.name}" — ${outcome}.`);
+      applied++;
+    } catch (err) {
+      logger.error(`Could not fix "${check.name}": ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+    }
+  }
+  console.log('');
+  logger.info('doctor --fix', `${applied} applied, ${skipped} skipped. Re-run 'openlore doctor' to confirm.`);
+}

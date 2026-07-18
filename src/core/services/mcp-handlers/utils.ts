@@ -9,7 +9,8 @@ import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import type { LLMContext } from '../../analyzer/artifact-generator.js';
 import { EdgeStore } from '../edge-store.js';
 import { readAttestation, reconcile, type IndexIntegrity } from '../../analyzer/index-attestation.js';
-import { ANALYSIS_STALE_THRESHOLD_MS, ARTIFACT_FINGERPRINT, ARTIFACT_LLM_CONTEXT, MAX_QUERY_LENGTH, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DIR, OPENSPEC_DIR } from '../../../constants.js';
+import { ANALYSIS_AGE_WARNING_HOURS, ANALYSIS_STALE_THRESHOLD_MS, ARTIFACT_FINGERPRINT, ARTIFACT_LLM_CONTEXT, MAX_QUERY_LENGTH, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DIR, OPENSPEC_DIR, STALE_REGION_REPAIR_THRESHOLD } from '../../../constants.js';
+import { repairInBackground, type RepairReason } from '../cold-start-bootstrap.js';
 
 /**
  * LLMContext with optional SQLite edge store attached (present when call-graph.db
@@ -49,6 +50,52 @@ async function computeIndexIntegrity(es: EdgeStore, analysisDir: string): Promis
 import { logger } from '../../../utils/logger.js';
 import { emit } from '../telemetry.js';
 import { redactSecretString } from '../secret-redaction.js';
+
+const ANALYSIS_AGE_WARNING_MS = ANALYSIS_AGE_WARNING_HOURS * 60 * 60 * 1000;
+
+/**
+ * Which read-path staleness signal (if any) should heal — a pure, testable
+ * decision. Priority is worst-first: `mismatched` (materially wrong index) →
+ * schema reset → an explicit stale region → an aged analysis. `degraded` is
+ * deliberately NOT a trigger (it already gets a WAL-checkpoint retry and may be a
+ * transient WAL-lag artifact). Returns undefined when the index looks current.
+ */
+export function computeRepairReason(
+  integrityVerdict: string | undefined,
+  wasReset: boolean,
+  staleCount: number,
+  artifactMtimeMs: number,
+  now: number = Date.now(),
+): RepairReason | undefined {
+  if (integrityVerdict === 'mismatched') return 'integrity-mismatched';
+  if (wasReset) return 'schema-reset';
+  if (staleCount >= STALE_REGION_REPAIR_THRESHOLD) return 'stale-region';
+  if (now - artifactMtimeMs > ANALYSIS_AGE_WARNING_MS) return 'analysis-age';
+  return undefined;
+}
+
+/**
+ * Fire the shared at-most-once background repair for the strongest read-path
+ * staleness signal, if any. Fires only when a repair builder is registered (the
+ * MCP server); a no-op otherwise, so CLI/tests keep today's detection-only
+ * behavior. Never throws, never blocks the read.
+ */
+function maybeTriggerBackgroundRepair(
+  directory: string,
+  integrityVerdict: string | undefined,
+  wasReset: boolean,
+  staleCount: number,
+  artifactMtimeMs: number,
+): void {
+  const reason = computeRepairReason(integrityVerdict, wasReset, staleCount, artifactMtimeMs);
+  if (!reason) return;
+  try {
+    repairInBackground(directory, reason);
+  } catch {
+    // repairInBackground is fail-soft by contract; this guard is belt-and-braces
+    // so the read path can never be perturbed by the repair trigger.
+  }
+}
 
 /**
  * Resolve and validate a user-supplied directory path.
@@ -345,6 +392,11 @@ export async function readCachedContext(directory: string, timeout?: number): Pr
           ctx.callGraph = undefined;
         }
       }
+      // Read-path staleness signals captured while the store is open, so the
+      // background repair trigger below can fire even when the schema-bump guard
+      // closes the store (change: make-index-self-healing).
+      let wasReset = false;
+      let staleCount = 0;
       if (EdgeStore.exists(analysisDir)) {
         const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
         // Index integrity attestation (change: add-index-integrity-attestation).
@@ -365,6 +417,8 @@ export async function readCachedContext(directory: string, timeout?: number): Pr
         } catch {
           // Attestation reconciliation is additive; never block the load.
         }
+        wasReset = es.wasReset;
+        try { staleCount = es.countStaleFiles(); } catch { /* pre-migration store — no stale_files table */ }
         // Schema-bump guard: opening a DB whose SCHEMA_VERSION is stale wipes it
         // (rebuild-on-bump). If the DB is now empty but the JSON analysis still has
         // production nodes, the two are out of sync after an upgrade — do NOT serve
@@ -379,6 +433,12 @@ export async function readCachedContext(directory: string, timeout?: number): Pr
           ctx.edgeStore = es;
         }
       }
+      // Self-healing: any read-path staleness signal that today only produces a
+      // verdict also triggers the shared at-most-once background repair — detection
+      // finally closes the loop into repair (change: make-index-self-healing). The
+      // rebuild never blocks this read; the answer is served now and disclosed as
+      // stale-with-refresh-started (see repairStatusFor callers).
+      maybeTriggerBackgroundRepair(directory, ctx.integrity?.verdict, wasReset, staleCount, mtime);
       // Evict + close the previous entry's EdgeStore — otherwise each cache miss
       // (every `analyze` rewrites llm-context.json's mtime) leaks an open SQLite
       // connection + its WAL fd for the life of a long-lived daemon. The close is
