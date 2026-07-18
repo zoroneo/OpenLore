@@ -1,6 +1,6 @@
 # Tasks — add-substrate-status-surface
 
-> Status: IMPLEMENTED (2026-07-18). `openlore status` composes a read-only pane
+> Status: IMPLEMENTED (2026-07-18, PR #224). `openlore status` composes a read-only pane
 > from existing signals via the shared collector `src/core/services/status-report.ts`
 > and the thin CLI renderer `src/cli/commands/status.ts`. The index is opened with
 > SQLite `immutable=1` so a `status` run creates no `-wal`/`-shm` sidecars and
