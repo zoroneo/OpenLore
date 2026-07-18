@@ -1,0 +1,202 @@
+/**
+ * Tests for the shared local-HTTP request guard (local-http-guard.ts) — the one
+ * door both the `serve` daemon and the `view` graph server put in front of every
+ * API route. Covers the DNS-rebinding / cross-origin defense, the constant-time
+ * token gate's policy branches, and the connect middleware factory.
+ *
+ * Guards the `mcp-security` requirement AllLocalHttpSurfacesShareTheGuard.
+ */
+
+import { describe, it, expect, vi } from 'vitest';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import {
+  isLoopbackHost,
+  hostnameOf,
+  constantTimeEqual,
+  originDefenseError,
+  checkLocalHttpRequest,
+  createApiGuardMiddleware,
+  OPENLORE_TOKEN_HEADER,
+} from './local-http-guard.js';
+
+/** Minimal IncomingMessage stand-in — only headers/url are read by the guard. */
+function fakeReq(headers: Record<string, string | undefined>, url = '/'): IncomingMessage {
+  return { headers, url } as unknown as IncomingMessage;
+}
+
+describe('isLoopbackHost', () => {
+  it('accepts loopback names and literals', () => {
+    for (const h of ['localhost', '127.0.0.1', '127.5.6.7', '::1', '[::1]', 'LOCALHOST']) {
+      expect(isLoopbackHost(h)).toBe(true);
+    }
+  });
+  it('rejects non-loopback hosts', () => {
+    for (const h of ['0.0.0.0', 'attacker.example.com', '10.0.0.1', '192.168.1.5', '128.0.0.1']) {
+      expect(isLoopbackHost(h)).toBe(false);
+    }
+  });
+});
+
+describe('hostnameOf', () => {
+  it('strips ports, schemes, and IPv6 brackets', () => {
+    expect(hostnameOf('127.0.0.1:5173')).toBe('127.0.0.1');
+    expect(hostnameOf('http://localhost:8080')).toBe('localhost');
+    expect(hostnameOf('[::1]:5173')).toBe('::1');
+    expect(hostnameOf('https://evil.example.com')).toBe('evil.example.com');
+  });
+});
+
+describe('constantTimeEqual', () => {
+  it('is true only for identical strings', () => {
+    expect(constantTimeEqual('sekret', 'sekret')).toBe(true);
+    expect(constantTimeEqual('sekret', 'sekrey')).toBe(false);
+    expect(constantTimeEqual('sekret', 'sekre')).toBe(false); // length mismatch
+    expect(constantTimeEqual('', '')).toBe(true);
+  });
+});
+
+describe('originDefenseError', () => {
+  const bound = '127.0.0.1';
+  it('allows a loopback Host with no Origin', () => {
+    expect(originDefenseError(fakeReq({ host: '127.0.0.1:5173' }), bound)).toBeNull();
+  });
+  it('allows a same-origin loopback Host + Origin', () => {
+    expect(
+      originDefenseError(fakeReq({ host: 'localhost:5173', origin: 'http://localhost:5173' }), bound),
+    ).toBeNull();
+  });
+  it('rejects a foreign (rebinding) Host', () => {
+    const err = originDefenseError(fakeReq({ host: 'attacker.example.com' }), bound);
+    expect(err).toMatch(/DNS-rebinding/);
+  });
+  it('rejects a missing Host', () => {
+    expect(originDefenseError(fakeReq({}), bound)).toMatch(/DNS-rebinding/);
+  });
+  it('rejects a cross-site Origin even with a loopback Host', () => {
+    const err = originDefenseError(
+      fakeReq({ host: '127.0.0.1:5173', origin: 'https://evil.example.com' }),
+      bound,
+    );
+    expect(err).toMatch(/cross-site Origin/);
+  });
+  it('accepts the literal "null" Origin (opaque origin, e.g. file://)', () => {
+    expect(originDefenseError(fakeReq({ host: '127.0.0.1:5173', origin: 'null' }), bound)).toBeNull();
+  });
+});
+
+describe('checkLocalHttpRequest — token policy', () => {
+  const good = { host: '127.0.0.1:5173' };
+
+  it('403s a rebinding request before any token check', () => {
+    const r = checkLocalHttpRequest(fakeReq({ host: 'evil.example.com' }), {
+      boundHost: '127.0.0.1',
+      token: 'sekret',
+      requireToken: true,
+    });
+    expect(r?.status).toBe(403);
+  });
+
+  it('allows a loopback request with no token when none is required', () => {
+    const r = checkLocalHttpRequest(fakeReq(good), { boundHost: '127.0.0.1', token: 'sekret' });
+    expect(r).toBeNull();
+  });
+
+  it('401s a requireToken route on loopback without the token', () => {
+    const r = checkLocalHttpRequest(fakeReq(good), {
+      boundHost: '127.0.0.1',
+      token: 'sekret',
+      requireToken: true,
+    });
+    expect(r?.status).toBe(401);
+  });
+
+  it('allows a requireToken route on loopback WITH the token', () => {
+    const r = checkLocalHttpRequest(
+      fakeReq({ ...good, [OPENLORE_TOKEN_HEADER]: 'sekret' }),
+      { boundHost: '127.0.0.1', token: 'sekret', requireToken: true },
+    );
+    expect(r).toBeNull();
+  });
+
+  it('401s a wrong token', () => {
+    const r = checkLocalHttpRequest(
+      fakeReq({ ...good, [OPENLORE_TOKEN_HEADER]: 'nope' }),
+      { boundHost: '127.0.0.1', token: 'sekret', requireToken: true },
+    );
+    expect(r?.status).toBe(401);
+  });
+
+  it('requires the token on a non-loopback binding even for a non-requireToken route', () => {
+    // Host allowlist also names the bound host (0.0.0.0) so origin defense passes.
+    const r = checkLocalHttpRequest(fakeReq({ host: '0.0.0.0:5173' }), {
+      boundHost: '0.0.0.0',
+      token: 'sekret',
+      requireToken: false,
+    });
+    expect(r?.status).toBe(401);
+  });
+
+  it('never requires a token when none is configured', () => {
+    const r = checkLocalHttpRequest(fakeReq(good), { boundHost: '127.0.0.1', requireToken: true });
+    expect(r).toBeNull();
+  });
+});
+
+/** Record a middleware's effect: either it wrote a status+body or it called next(). */
+function runMiddleware(
+  mw: ReturnType<typeof createApiGuardMiddleware>,
+  req: IncomingMessage,
+): { status?: number; body?: string; nexted: boolean } {
+  const out: { status?: number; body?: string; nexted: boolean } = { nexted: false };
+  const res = {
+    statusCode: 200,
+    setHeader: vi.fn(),
+    end: vi.fn((b?: string) => {
+      out.body = b;
+    }),
+  } as unknown as ServerResponse;
+  mw(req, res, () => {
+    out.nexted = true;
+  });
+  if (!out.nexted) out.status = (res as unknown as { statusCode: number }).statusCode;
+  return out;
+}
+
+describe('createApiGuardMiddleware', () => {
+  const mw = createApiGuardMiddleware({
+    boundHost: '127.0.0.1',
+    token: 'sekret',
+    requireTokenFor: (rel) => rel === '/chat',
+  });
+
+  it('403s a rebinding request on any route', () => {
+    // req.url is relative to the /api mount: '/skeleton' => /api/skeleton.
+    const r = runMiddleware(mw, fakeReq({ host: 'evil.example.com' }, '/skeleton'));
+    expect(r.status).toBe(403);
+    expect(r.nexted).toBe(false);
+  });
+
+  it('passes a same-origin non-chat route with no token (loopback)', () => {
+    const r = runMiddleware(mw, fakeReq({ host: '127.0.0.1:5173' }, '/skeleton?file=x'));
+    expect(r.nexted).toBe(true);
+  });
+
+  it('401s /chat without the token even on loopback', () => {
+    const r = runMiddleware(mw, fakeReq({ host: '127.0.0.1:5173' }, '/chat'));
+    expect(r.status).toBe(401);
+    expect(r.nexted).toBe(false);
+  });
+
+  it('passes /chat with the token', () => {
+    const r = runMiddleware(
+      mw,
+      fakeReq({ host: '127.0.0.1:5173', [OPENLORE_TOKEN_HEADER]: 'sekret' }, '/chat'),
+    );
+    expect(r.nexted).toBe(true);
+  });
+
+  it('treats /chat/models like an ordinary route (no token needed on loopback)', () => {
+    const r = runMiddleware(mw, fakeReq({ host: '127.0.0.1:5173' }, '/chat/models'));
+    expect(r.nexted).toBe(true);
+  });
+});

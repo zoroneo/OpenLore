@@ -6,7 +6,8 @@
  */
 
 import { Command } from 'commander';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { fileExists } from '../../utils/command-helpers.js';
 import { join, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -17,6 +18,7 @@ import {
   MAX_CHAT_BODY_BYTES,
   DEFAULT_VIEWER_PORT,
   DEFAULT_VIEWER_HOST,
+  OPENLORE_DIR,
   OPENLORE_ANALYSIS_REL_PATH,
   OPENSPEC_DIR,
   OPENSPEC_SPECS_SUBDIR,
@@ -25,6 +27,7 @@ import {
   ARTIFACT_REFACTOR_PRIORITIES,
   ARTIFACT_MAPPING,
 } from '../../constants.js';
+import { createApiGuardMiddleware, OPENLORE_TOKEN_HEADER } from './local-http-guard.js';
 import { VectorIndex } from '../../core/analyzer/vector-index.js';
 import { resolveEmbedder } from '../../core/analyzer/embedder.js';
 import { getSkeletonContent } from '../../core/analyzer/code-shaper.js';
@@ -52,6 +55,29 @@ export function safePath(rootPath: string, userPath: string): string | null {
     return null;
   }
   return abs;
+}
+
+/**
+ * Build the inline script injected into the served UI so its same-origin `/api`
+ * requests authenticate. It publishes the instance token and wraps `fetch` to
+ * attach the `x-openlore-token` header to relative `/api/*` requests only. The
+ * token is a fresh random hex string embedded via `JSON.stringify` (no injection
+ * risk); the wrapper is defensively wrapped in try/catch so it can never break
+ * the app's own fetches.
+ */
+export function buildTokenInjectionScript(token: string): string {
+  // Escape `<` so the embedded token can never close the surrounding <script>
+  // tag (defense in depth; the real token is hex-only).
+  const embedded = JSON.stringify(token).replace(/</g, '\\u003c');
+  return (
+    `window.__OPENLORE_TOKEN__=${embedded};` +
+    `(function(){var t=window.__OPENLORE_TOKEN__;if(!t||!window.fetch)return;` +
+    `var o=window.fetch.bind(window);window.fetch=function(i,n){try{` +
+    `var u=typeof i==='string'?i:(i&&i.url)||'';` +
+    `if(typeof u==='string'&&u.indexOf('/api/')===0){` +
+    `n=n||{};var h=new Headers((n&&n.headers)||(typeof i!=='string'&&i&&i.headers)||undefined);` +
+    `h.set(${JSON.stringify(OPENLORE_TOKEN_HEADER)},t);n.headers=h;}}catch(e){}return o(i,n);};})();`
+  );
 }
 
 function openBrowser(url: string): void {
@@ -116,6 +142,11 @@ export const viewCommand = new Command('view')
       const port = isNaN(parsedPort) ? DEFAULT_VIEWER_PORT : parsedPort;
       const host = options.host || DEFAULT_VIEWER_HOST;
 
+      // Per-instance token. Injected into the served UI so its same-origin /api
+      // requests authenticate; required by the money/agent chat route (always)
+      // and by every route when bound to a non-loopback host. See local-http-guard.ts.
+      const token = randomBytes(24).toString('hex');
+
       logger.section('Starting Graph Viewer');
       logger.info('Analysis', analysisDir);
       logger.info('Graph', graphPath);
@@ -132,7 +163,32 @@ export const viewCommand = new Command('view')
           react(),
           {
             name: 'openlore-graph-api',
+            // Inject the instance token + fetch shim into the served page so the
+            // browser UI's same-origin /api requests carry x-openlore-token.
+            transformIndexHtml() {
+              return [
+                {
+                  tag: 'script',
+                  injectTo: 'head-prepend' as const,
+                  children: buildTokenInjectionScript(token),
+                },
+              ];
+            },
             configureServer(devServer) {
+              // SECURITY: one guard in front of every /api/* route. Mounted at the
+              // '/api' prefix and registered FIRST so no route below can be reached
+              // without passing it: DNS-rebinding / cross-origin requests are rejected
+              // (403), and the money/agent chat route requires the instance token even
+              // on loopback (401) — as does every route on a non-loopback binding.
+              devServer.middlewares.use(
+                '/api',
+                createApiGuardMiddleware({
+                  boundHost: host,
+                  token,
+                  requireTokenFor: (rel) => rel === '/chat',
+                }),
+              );
+
               devServer.middlewares.use('/api/dependency-graph', async (_req, res) => {
                 try {
                   // Friendly 404 (matching the sibling artifact endpoints) when the graph
@@ -636,6 +692,38 @@ export const viewCommand = new Command('view')
 
       const url = `http://${host}:${port}/`;
       logger.success(`Viewer running at ${url}`);
+
+      // Discovery + stale-instance detection (parity with the `serve` daemon):
+      // record where the viewer is listening so a later invocation / tool can
+      // detect a live or stale instance instead of a mystery port occupant.
+      const descriptorPath = join(rootPath, OPENLORE_DIR, 'view.json');
+      try {
+        await mkdir(join(rootPath, OPENLORE_DIR), { recursive: true });
+        await writeFile(
+          descriptorPath,
+          JSON.stringify(
+            { port, pid: process.pid, host, token, startedAt: new Date().toISOString() },
+            null,
+            2,
+          ) + '\n',
+          'utf-8',
+        );
+      } catch {
+        // Discovery is best-effort; a read-only .openlore must not stop the viewer.
+      }
+
+      // Graceful shutdown: close the server and drop the descriptor so a stale
+      // view.json never outlives the process (parity with `serve`).
+      let shuttingDown = false;
+      const shutdown = async (): Promise<void> => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        await unlink(descriptorPath).catch(() => {});
+        await server.close().catch(() => {});
+        process.exit(0);
+      };
+      process.on('SIGINT', () => void shutdown());
+      process.on('SIGTERM', () => void shutdown());
 
       if (options.open) {
         openBrowser(url);

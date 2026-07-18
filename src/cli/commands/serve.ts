@@ -32,7 +32,6 @@
 import { Command } from 'commander';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createRequire } from 'node:module';
-import { timingSafeEqual } from 'node:crypto';
 import { writeFile, readFile, unlink, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { logger } from '../../utils/logger.js';
@@ -45,6 +44,12 @@ import { McpWatcher } from '../../core/services/mcp-watcher.js';
 import { openloreAnalyze } from '../../api/analyze.js';
 import { TOOL_DEFINITIONS, TOOL_PRESETS, selectActiveTools } from './mcp.js';
 import { validateToolArgs } from '../../core/services/mcp-handlers/tool-guard.js';
+import {
+  isLoopbackHost,
+  constantTimeEqual,
+  originDefenseError,
+  OPENLORE_TOKEN_HEADER,
+} from './local-http-guard.js';
 
 /**
  * Debounce before a full call-graph re-analyze after edits settle. Longer than
@@ -124,77 +129,6 @@ export interface ServeHandle {
 
 const SERVE_FILE = 'serve.json';
 const MAX_BODY_BYTES = 1_000_000; // tool args are small; reject anything larger
-
-/** Hostnames that denote the loopback interface (no DNS resolution involved). */
-const LOOPBACK_HOSTNAMES = new Set([
-  'localhost',
-  '127.0.0.1',
-  '::1',
-  '0:0:0:0:0:0:0:1',
-  '0000:0000:0000:0000:0000:0000:0000:0001',
-]);
-
-/** True if `host` is a loopback literal/name (127.0.0.0/8, ::1, localhost). */
-function isLoopbackHost(host: string): boolean {
-  const h = host.trim().replace(/^\[|\]$/g, '').toLowerCase();
-  if (LOOPBACK_HOSTNAMES.has(h)) return true;
-  // Any 127.x.y.z address is loopback.
-  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
-}
-
-/** Extract the hostname (sans port, sans brackets) from a Host/Origin authority. */
-function hostnameOf(authority: string): string {
-  let a = authority.trim();
-  // Strip scheme if this came from an Origin (e.g. http://host:port).
-  const scheme = a.indexOf('://');
-  if (scheme !== -1) a = a.slice(scheme + 3);
-  // Bracketed IPv6: [::1]:port
-  if (a.startsWith('[')) {
-    const close = a.indexOf(']');
-    if (close !== -1) return a.slice(1, close).toLowerCase();
-  }
-  // host:port → host (IPv4 / name only; bare IPv6 has no port form here)
-  const colon = a.indexOf(':');
-  if (colon !== -1 && a.indexOf(':') === a.lastIndexOf(':')) a = a.slice(0, colon);
-  return a.toLowerCase();
-}
-
-/**
- * Constant-time string equality. Returns false for length mismatch, but still
- * runs a same-length compare first so timing does not leak the secret's length.
- */
-function constantTimeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a, 'utf-8');
-  const bb = Buffer.from(b, 'utf-8');
-  if (ab.length !== bb.length) {
-    // Compare ab to itself to burn comparable time, then fail.
-    timingSafeEqual(ab, ab);
-    return false;
-  }
-  return timingSafeEqual(ab, bb);
-}
-
-/**
- * DNS-rebinding / cross-origin defense for the loopback daemon. A browser tricked
- * into resolving an attacker domain to 127.0.0.1 still sends the attacker's name in
- * the `Host` header (and an attacker page sends a cross-site `Origin`). We accept a
- * request only when both the Host and any Origin name the loopback interface or the
- * exact bound host. Returns an error string to reject with, or null to allow.
- */
-function originDefenseError(req: IncomingMessage, boundHost: string): string | null {
-  const boundName = hostnameOf(boundHost);
-  const allowed = (name: string): boolean => isLoopbackHost(name) || name === boundName;
-
-  const hostHeader = req.headers.host;
-  if (hostHeader === undefined || !allowed(hostnameOf(hostHeader))) {
-    return `Host header "${hostHeader ?? ''}" is not an allowed loopback name (DNS-rebinding guard)`;
-  }
-  const origin = req.headers.origin;
-  if (origin !== undefined && origin !== 'null' && !allowed(hostnameOf(origin))) {
-    return `cross-site Origin "${origin}" is not permitted`;
-  }
-  return null;
-}
 
 function serveFilePath(root: string): string {
   return join(root, OPENLORE_DIR, SERVE_FILE);
@@ -460,9 +394,9 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
     // Token gate (skips /health so liveness checks need no secret). Compared in
     // constant time so a timing oracle can't recover the token byte-by-byte.
     if (token && url.pathname !== '/health') {
-      const presented = req.headers['x-openlore-token'];
+      const presented = req.headers[OPENLORE_TOKEN_HEADER];
       if (typeof presented !== 'string' || !constantTimeEqual(presented, token)) {
-        sendJson(res, 401, { error: 'invalid or missing x-openlore-token' });
+        sendJson(res, 401, { error: `invalid or missing ${OPENLORE_TOKEN_HEADER}` });
         return;
       }
     }
