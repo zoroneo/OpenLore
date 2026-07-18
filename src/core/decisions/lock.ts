@@ -65,6 +65,24 @@ export async function acquireDecisionsLock(rootPath: string): Promise<() => Prom
   }
 }
 
+/**
+ * Non-blocking check: is a consolidation run currently in flight?
+ *
+ * True iff the lock file exists and is not stale (a stale lock is a crashed
+ * holder, treated as not-in-flight so a fresh run can proceed). Never acquires,
+ * steals, or waits on the lock — a pure read used to coalesce redundant
+ * `record_decision` spawns against the run already underway.
+ */
+export async function isDecisionsLockHeld(rootPath: string): Promise<boolean> {
+  const lockPath = join(decisionsDir(rootPath), LOCK_FILE);
+  try {
+    const s = await stat(lockPath);
+    return Date.now() - s.mtimeMs <= STALE_MS;
+  } catch {
+    return false; // no lock file → not held
+  }
+}
+
 /** Run `fn` while holding the consolidation lock; always releases. */
 export async function withDecisionsLock<T>(rootPath: string, fn: () => Promise<T>): Promise<T> {
   const release = await acquireDecisionsLock(rootPath);

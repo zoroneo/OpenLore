@@ -19,34 +19,73 @@ import {
   makeDecisionId,
 } from '../../decisions/store.js';
 import { syncApprovedDecisions } from '../../decisions/syncer.js';
+import { isDecisionsLockHeld } from '../../decisions/lock.js';
 import { buildSpecMap, matchFileToDomains } from '../../../core/drift/spec-mapper.js';
 import { AnchorContext } from '../../decisions/anchor-adapter.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { join } from 'node:path';
 import type { PendingDecision, DecisionScope } from '../../../types/index.js';
 
-function spawnConsolidateBackground(rootPath: string): void {
+type ConsolidateSpawnOutcome =
+  | { outcome: 'started' }
+  | { outcome: 'coalesced' }
+  | { outcome: 'failed'; detail: string };
+
+/**
+ * Fire the detached `decisions --consolidate` that keeps the commit-time gate
+ * instant. Hardened so a routine environment gap can never crash the long-lived
+ * MCP server (harden-decision-consolidation):
+ *   - if a consolidation run is already in flight, coalesce onto it (no second
+ *     process, no new locking mechanism — the existing consolidation lock is the
+ *     in-flight sentinel);
+ *   - register `child.on('error')` so a pre-exec failure (ENOENT/EACCES) is a
+ *     contained rejection, not an uncaught exception on the host process;
+ *   - resolve the earlier of `spawn`/`error` (bounded — one event tick, not run
+ *     completion, since the child is detached + unref'd) and return the outcome
+ *     so the caller can report it honestly.
+ */
+async function spawnConsolidateBackground(rootPath: string): Promise<ConsolidateSpawnOutcome> {
+  // Coalesce: a run already underway will pick up this freshly-recorded draft.
+  if (await isDecisionsLockHeld(rootPath)) {
+    return { outcome: 'coalesced' };
+  }
+
   // Resolve binary: prefer local build over global install (same order as pre-commit hook)
   const localDist = join(rootPath, 'dist', 'cli', 'index.js');
   const localBin = join(rootPath, 'node_modules', '.bin', 'openlore');
+  const { existsSync } = await import('node:fs');
+  let cmd: string;
+  let args: string[];
+  if (existsSync(localBin)) {
+    cmd = localBin; args = ['decisions', '--consolidate'];
+  } else if (existsSync(localDist)) {
+    cmd = process.execPath; args = [localDist, 'decisions', '--consolidate'];
+  } else {
+    cmd = 'openlore'; args = ['decisions', '--consolidate'];
+  }
 
-  import('node:fs').then(({ existsSync }) => {
-    let cmd: string;
-    let args: string[];
-    if (existsSync(localBin)) {
-      cmd = localBin; args = ['decisions', '--consolidate'];
-    } else if (existsSync(localDist)) {
-      cmd = process.execPath; args = [localDist, 'decisions', '--consolidate'];
-    } else {
-      cmd = 'openlore'; args = ['decisions', '--consolidate'];
+  return await new Promise<ConsolidateSpawnOutcome>((resolve) => {
+    let settled = false;
+    const settle = (o: ConsolidateSpawnOutcome) => {
+      if (!settled) { settled = true; resolve(o); }
+    };
+    let child;
+    try {
+      child = spawn(cmd, args, { cwd: rootPath, detached: true, stdio: 'ignore' });
+    } catch (err) {
+      // Synchronous throw (rare — e.g. invalid args) is contained, never rethrown.
+      settle({ outcome: 'failed', detail: (err as Error).message });
+      return;
     }
-    const child = spawn(cmd, args, {
-      cwd: rootPath,
-      detached: true,
-      stdio: 'ignore',
+    // Node emits exactly one of 'spawn' / 'error' for a spawn attempt; the error
+    // listener is the fix for defect 1 — without it an ENOENT is an uncaught
+    // exception in the MCP server process.
+    child.on('error', (err: Error) => settle({ outcome: 'failed', detail: err.message }));
+    child.on('spawn', () => {
+      child!.unref();
+      settle({ outcome: 'started' });
     });
-    child.unref();
-  }).catch(() => { /* ignore */ });
+  });
 }
 
 // ============================================================================
@@ -165,12 +204,21 @@ export async function handleRecordDecision(
       return upsertDecisions(s, [{ ...decision, id: recordedId, sessionId: s.sessionId }]);
     }, 'agent');
 
-    // Consolidate in background so commit-time gate is instant
-    spawnConsolidateBackground(rootPath);
+    // Consolidate in background so commit-time gate is instant. The decision is
+    // already committed (CAS upsert above), independent of the spawn's outcome —
+    // report that outcome honestly rather than an unconditional "running".
+    const spawnOutcome = await spawnConsolidateBackground(rootPath);
+    const message =
+      spawnOutcome.outcome === 'failed'
+        ? `Decision recorded: "${title}". Consolidation could NOT be started (${spawnOutcome.detail}) — run \`openlore decisions --consolidate\` to consolidate it now.`
+        : spawnOutcome.outcome === 'coalesced'
+          ? `Decision recorded: "${title}". Consolidation already running — this draft will be picked up by the in-flight run.`
+          : `Decision recorded: "${title}". Consolidation running in background.`;
 
     return {
       id: recordedId,
-      message: `Decision recorded: "${title}". Consolidation running in background.`,
+      consolidation: spawnOutcome.outcome,
+      message,
     };
   } catch (err) {
     return { error: sanitizeMcpError(err) };
@@ -308,11 +356,24 @@ export async function handleSyncDecisions(
 
     let store = await loadDecisionStore(rootPath);
 
-    // If a specific id is given, promote it to approved before syncing
+    // If a specific id is given, promote it to approved before syncing. Commit
+    // the promotion through the CAS store update (not a locally-loaded copy) and
+    // re-verify it landed — the same patch-then-verify discipline as
+    // approve_decision/reject_decision. This is what stops a draft recorded
+    // concurrently between the load above and the sync from being clobbered:
+    // the CAS re-applies the patch to the latest store, preserving that draft.
     if (id) {
       const decision = store.decisions.find((d) => d.id === id);
       if (!decision) return { error: `Decision ${id} not found.` };
-      store = patchDecision(store, id, { status: 'approved' });
+      store = await updateDecisionStore(
+        rootPath,
+        (s) => patchDecision(s, id, { status: 'approved' }),
+        'human',
+      );
+      const after = store.decisions.find((d) => d.id === id);
+      if (!after || (after.status !== 'approved' && after.status !== 'synced')) {
+        return { error: `Decision ${id} could not be promoted for sync — it was concurrently removed or changed.` };
+      }
     }
 
     const { result } = await syncApprovedDecisions(store, {

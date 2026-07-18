@@ -20,8 +20,23 @@ vi.mock('./utils.js', async (importOriginal) => {
   };
 });
 
+// The hardened spawnConsolidateBackground awaits the earlier of the child's
+// 'spawn'/'error' event, so a mock child MUST emit one or the handler hangs.
+// Default: emit 'spawn' on the next microtask (the happy path → outcome
+// 'started'). The ENOENT test overrides this with a child that emits 'error'.
 vi.mock('node:child_process', () => ({
-  spawn: vi.fn(() => ({ unref: vi.fn() })),
+  spawn: vi.fn(() => {
+    const listeners: Record<string, Array<(...a: unknown[]) => void>> = {};
+    const child = {
+      unref: vi.fn(),
+      on(event: string, cb: (...a: unknown[]) => void) {
+        (listeners[event] ??= []).push(cb);
+        return child;
+      },
+    };
+    queueMicrotask(() => (listeners['spawn'] ?? []).forEach((cb) => cb()));
+    return child;
+  }),
 }));
 
 vi.mock('../config-manager.js', () => ({
@@ -63,6 +78,7 @@ import { validateDirectory } from './utils.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { syncApprovedDecisions } from '../../decisions/syncer.js';
 import { updateDecisionStore } from '../../decisions/store.js';
+import { spawn } from 'node:child_process';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -222,6 +238,70 @@ describe('handleRecordDecision', () => {
     const store = await readStore(tmpDir);
     expect(store.decisions[0].scope).toBe('cross-domain');
     vi.mocked(matchFileToDomains).mockReturnValue([]);
+  });
+
+  // ── Background-consolidation robustness (harden-decision-consolidation) ──────
+
+  it('reports consolidation started on a successful spawn', async () => {
+    const result = await handleRecordDecision(tmpDir, 'A decision', 'Some rationale') as {
+      id: string; consolidation: string; message: string;
+    };
+    expect(result.consolidation).toBe('started');
+    expect(result.message).toMatch(/running in background/i);
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('survives a failed spawn (ENOENT) and reports it honestly with a recovery command', async () => {
+    // A missing binary makes Node emit 'error' on the child. Without the handler's
+    // error listener this would be an uncaught exception in the MCP server; here it
+    // must be contained and disclosed. (regression test for defect 1)
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      const listeners: Record<string, Array<(...a: unknown[]) => void>> = {};
+      const child = {
+        unref: vi.fn(),
+        on(event: string, cb: (...a: unknown[]) => void) {
+          (listeners[event] ??= []).push(cb);
+          return child;
+        },
+      };
+      const err = Object.assign(new Error('spawn openlore ENOENT'), { code: 'ENOENT' });
+      queueMicrotask(() => (listeners['error'] ?? []).forEach((cb) => cb(err)));
+      return child as never;
+    });
+
+    const result = await handleRecordDecision(tmpDir, 'A decision', 'Some rationale') as {
+      id: string; consolidation: string; message: string;
+    };
+
+    // The decision itself was still recorded (the CAS write committed independently).
+    expect(result.id).toBeTruthy();
+    const store = await readStore(tmpDir);
+    expect(store.decisions).toHaveLength(1);
+
+    // The outcome is disclosed as failed, never a false "running in background".
+    expect(result.consolidation).toBe('failed');
+    expect(result.message).not.toMatch(/running in background/i);
+    expect(result.message).toMatch(/could NOT be started/i);
+    expect(result.message).toMatch(/openlore decisions --consolidate/);
+  });
+
+  it('coalesces onto an in-flight run instead of spawning a second consolidator', async () => {
+    // Simulate a consolidation already underway by holding its lock (a fresh,
+    // non-stale lock file). The handler must not spawn a second process.
+    const decDir = join(tmpDir, OPENLORE_DIR, OPENLORE_DECISIONS_SUBDIR);
+    await mkdir(decDir, { recursive: true });
+    await writeFile(join(decDir, '.consolidate.lock'), `${process.pid} ${new Date().toISOString()}`, 'utf-8');
+
+    const result = await handleRecordDecision(tmpDir, 'A decision', 'Some rationale') as {
+      id: string; consolidation: string; message: string;
+    };
+
+    expect(result.consolidation).toBe('coalesced');
+    expect(result.message).toMatch(/already running/i);
+    expect(spawn).not.toHaveBeenCalled();
+    // The draft is still recorded so the in-flight run (or the next one) picks it up.
+    const store = await readStore(tmpDir);
+    expect(store.decisions).toHaveLength(1);
   });
 });
 
@@ -465,5 +545,24 @@ describe('handleSyncDecisions', () => {
 
     const result = await handleSyncDecisions(tmpDir, false, 'notfound') as { error: string };
     expect(result.error).toMatch(/notfound/);
+  });
+
+  it('promotes the id through CAS: the promotion is persisted and a co-resident draft survives (harden-decision-consolidation)', async () => {
+    vi.mocked(readOpenLoreConfig).mockResolvedValue({ openspecPath: 'openspec' } as never);
+    const promoted = makeDecision({ id: 'aaaa1111', status: 'draft', title: 'A' });
+    const other = makeDecision({ id: 'bbbb2222', status: 'draft', title: 'B' });
+    await writeStore(tmpDir, makeStore({ decisions: [promoted, other] }));
+
+    await handleSyncDecisions(tmpDir, false, 'aaaa1111');
+
+    // The promotion is committed to the store via updateDecisionStore (the old
+    // code patched only a locally-loaded copy and never persisted it) — and the
+    // CAS re-applies against the latest store, so the co-resident draft is never
+    // clobbered.
+    const store = await readStore(tmpDir);
+    const a = store.decisions.find((d) => d.id === 'aaaa1111');
+    const b = store.decisions.find((d) => d.id === 'bbbb2222');
+    expect(a?.status).toBe('approved');
+    expect(b?.status).toBe('draft');
   });
 });
