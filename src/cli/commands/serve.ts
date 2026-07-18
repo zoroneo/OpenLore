@@ -644,7 +644,15 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
   }
 
   if (options.watch !== false) {
-    watcher = new McpWatcher({ rootPath: root, onBatchFlushed: () => scheduleReanalyze() });
+    // onGraphStale (make-index-self-healing): a HEAD change (branch switch / pull)
+    // or a budget-exceeded stale region routes through the SAME rebuild coordinator
+    // as edits, so call-graph freshness no longer depends on the post-commit hook and
+    // the two rebuild paths coalesce into one.
+    watcher = new McpWatcher({
+      rootPath: root,
+      onBatchFlushed: () => scheduleReanalyze(),
+      onGraphStale: () => scheduleReanalyze(),
+    });
     try {
       await watcher.start();
       logger.discovery(`[serve] watching ${root} — signatures/vector live, call-graph re-analyze debounced`);

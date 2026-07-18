@@ -2468,6 +2468,12 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
             rootPath: resolve(dir),
             debounceMs: isNaN(debounceMs) ? 400 : debounceMs,
             embed: !options.watchNoEmbed,
+            // selfRebuild (make-index-self-healing): the in-process watcher has no
+            // serve-style rebuild coordinator, so its call graph would age with every
+            // branch switch. Let it spawn its own debounced `analyze --force` on a
+            // HEAD change / budget-exceeded stale region — the graph stays fresh
+            // without a post-commit hook or a running daemon.
+            selfRebuild: true,
           });
           await autoWatcher.start();
           const cleanup = () => autoWatcher!.stop().then(() => process.exit(0));
