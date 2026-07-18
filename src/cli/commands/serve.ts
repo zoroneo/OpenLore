@@ -8,7 +8,8 @@
  * It reuses the SAME tool dispatch as the stdio MCP server
  * ({@link dispatchTool}) so the two transports can't drift, and the SAME tool
  * presets ({@link selectActiveTools}) so a small-model client gets a focused
- * surface (default: `navigation`).
+ * surface. The default preset is the shared `LEAN_DEFAULT_PRESET` constant (so
+ * `serve` and `openlore mcp` never diverge on what "no --preset" means).
  *
  * Endpoints (all loopback):
  *   GET  /health           → { ok, version, root, preset, tools, uptimeMs }
@@ -35,7 +36,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { writeFile, readFile, unlink, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { logger } from '../../utils/logger.js';
-import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, FULL_PRESET, FULL_PRESET_ALIAS } from '../../constants.js';
+import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, FULL_PRESET, FULL_PRESET_ALIAS, LEAN_DEFAULT_PRESET } from '../../constants.js';
 import { dispatchTool, UnknownToolError } from '../../core/services/tool-dispatch.js';
 import { resolveCanonicalToolName } from '../../core/services/mcp-handlers/tool-contract.js';
 import { validateDirectory, waitForGraphRebuild } from '../../core/services/mcp-handlers/utils.js';
@@ -344,7 +345,7 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
     );
   }
 
-  const presetName = options.preset ?? 'navigation';
+  const presetName = options.preset ?? LEAN_DEFAULT_PRESET;
   // Full-surface selectors: serve historically used `all`; accept `full` too so
   // the selector vocabulary matches `openlore mcp` (change: default-to-lean-tool-
   // surface added `full`/`all` there). Both mean every tool.
@@ -485,7 +486,7 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
       // The preset is ADVISORY (reported by /health for clients that want a
       // curated list, e.g. the Pi extension). The daemon dispatches any known
       // tool so it can back multiple clients with different surfaces — notably
-      // the MCP server, which delegates all ~60 tools here. Unknown tools 404
+      // the MCP server, which delegates every registered tool here. Unknown tools 404
       // via UnknownToolError below.
       let body: Record<string, unknown>;
       try {
@@ -711,9 +712,9 @@ export const serveCommand = new Command('serve')
   .option('--host <host>', 'Host to bind', '127.0.0.1')
   .option(
     '--preset <name>',
-    'Advisory tool surface reported by /health (navigation, substrate, minimal, or all/full). The daemon still ' +
-      'dispatches any known tool; clients curate their own surface. Default: navigation',
-    'navigation',
+    `Advisory tool surface reported by /health (navigation, substrate, minimal, or all/full). The daemon still ` +
+      `dispatches any known tool; clients curate their own surface. Default: ${LEAN_DEFAULT_PRESET}`,
+    LEAN_DEFAULT_PRESET,
   )
   .option('--token <token>', 'Require this token as the x-openlore-token header (default: $OPENLORE_SERVE_TOKEN)')
   .option('--no-watch', 'Disable the freshness watcher + debounced call-graph re-analyze')
@@ -723,7 +724,7 @@ export const serveCommand = new Command('serve')
     'after',
     `
 Examples:
-  $ openlore serve                          Warm daemon, navigation preset, ephemeral port
+  $ openlore serve                          Warm daemon, substrate preset (default), ephemeral port
   $ openlore serve --preset all --port 7077 All tools on a fixed port
   $ openlore serve --stop                   Stop the daemon serving this directory
 

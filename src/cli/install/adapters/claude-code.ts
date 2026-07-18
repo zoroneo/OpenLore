@@ -28,10 +28,10 @@ const OPENLORE_PERMISSION = 'Bash(openlore:*)';
 
 /**
  * MCP server registration. Wires `openlore mcp --preset <name>`: the caller's
- * preset when given, else the lean default surface (the benchmark-winning
- * navigation core). The preset is always emitted explicitly so the wired surface
- * is visible in `.mcp.json` and never relies on the bare-command default
- * (change: default-to-lean-tool-surface).
+ * preset when given, else the lean default surface (`LEAN_DEFAULT_PRESET`, the
+ * benchmark-cleared substrate core — ADR-0023). The preset is always emitted
+ * explicitly so the wired surface is visible in `.mcp.json` and never relies on
+ * the bare-command default (change: default-to-lean-tool-surface).
  */
 function mcpEntry(preset?: string): { command: string; args: string[] } {
   return {

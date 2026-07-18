@@ -66,8 +66,9 @@ describe('openlore install (end-to-end)', () => {
     expect(code).toBe(0);
 
     // MCP server goes in .mcp.json — the file Claude Code actually reads.
-    // change: default-to-lean-tool-surface — a default install (no --preset) now
-    // wires the lean navigation surface explicitly, not the bare full surface.
+    // change: default-to-lean-tool-surface / ADR-0023 — a default install (no
+    // --preset) wires the lean default surface (substrate) explicitly, not the
+    // bare full surface, via LEAN_DEFAULT_PRESET.
     const mcp = JSON.parse(await readFile(join(dir, '.mcp.json'), 'utf8'));
     expect(mcp.mcpServers.openlore).toEqual({
       command: 'npx',
@@ -310,7 +311,7 @@ describe('openlore install (end-to-end)', () => {
     const code = await runInstall({ cwd: dir, agent: 'cursor', analyze: false });
     expect(code).toBe(0);
     const mcp = JSON.parse(await readFile(join(dir, '.cursor/mcp.json'), 'utf8'));
-    // change: default-to-lean-tool-surface — default wires the lean navigation surface.
+    // change: default-to-lean-tool-surface / ADR-0023 — default wires the lean default surface (substrate).
     expect(mcp.mcpServers.openlore).toEqual({
       command: 'npx',
       args: ['--yes', 'openlore', 'mcp', '--preset', 'substrate'],

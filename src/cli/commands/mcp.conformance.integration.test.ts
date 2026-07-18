@@ -143,7 +143,7 @@ describe('spec-12 MCP protocol conformance (via SDK Client over stdio)', () => {
 // surface does not. A separate short-lived client so the shared full-surface
 // client above is untouched.
 describe('spec — lean default surface + breadth pointer (via SDK Client over stdio)', () => {
-  it('a bare `openlore mcp` serves the navigation surface and advertises breadth once', async () => {
+  it('a bare `openlore mcp` serves the lean default surface (substrate) and advertises breadth once', async () => {
     if (!existsSync(MCP_BIN) || !existsSync(CACHE_FILE)) return;
     const t = new StdioClientTransport({ command: 'node', args: [MCP_BIN, 'mcp'], cwd: REPO_ROOT });
     const c = new Client({ name: 'lean-default-probe', version: '1.0.0' });

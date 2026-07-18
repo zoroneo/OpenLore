@@ -2200,10 +2200,11 @@ export const TOOL_PRESETS: Record<string, Set<string>> = {
   // code I'm touching), verify_claim (settle an assertion before it reaches a human),
   // blast_radius (weigh a diff). So an out-of-box agent gets the value of the WHOLE
   // substrate — navigate, recall, verify, weigh — not navigation alone. Holds governance
-  // READS only: no remember/record_decision write, no commit gate. The *active* default
-  // stays `navigation` until the agent benchmark shows `substrate` does not regress
-  // selection accuracy or token economy (ADR-0022 evidence-backed default); until then
-  // this ships as a selectable preset.
+  // READS only: no remember/record_decision write, no commit gate. This is the *active*
+  // out-of-box default (LEAN_DEFAULT_PRESET; decision c79ec7ca / ADR-0023, superseding
+  // ADR-0022): the agent benchmark showed the wider surface does not regress task-completion
+  // or selection accuracy and stays within the token-economy budget, across two models and
+  // both repo tiers. The lean navigate-only `navigation` preset remains a one-flag escape.
   substrate: new Set([
     'orient', 'search_code', 'get_subgraph', 'trace_execution_path',
     'analyze_impact', 'suggest_insertion_points', 'get_function_skeleton',
@@ -2216,9 +2217,9 @@ export const TOOL_PRESETS: Record<string, Set<string>> = {
  * Resolve a tool-selector option set to its canonical preset name (change:
  * default-to-lean-tool-surface). Precedence: `--all-tools`/`--preset full`/`all`
  * → `full`; `--preset <name>` → that name; legacy `--minimal` → `minimal`; no
- * selector → the lean default (`navigation`). Pure; the single source of truth
- * both `selectActiveTools` and `leanDefaultActive` resolve through, so the active
- * surface and the breadth-pointer decision can never disagree.
+ * selector → the lean default (`LEAN_DEFAULT_PRESET`). Pure; the single source of
+ * truth both `selectActiveTools` and `leanDefaultActive` resolve through, so the
+ * active surface and the breadth-pointer decision can never disagree.
  */
 export function resolvePresetName(opts: { minimal?: boolean; preset?: string; allTools?: boolean }): string {
   if (opts.allTools) return FULL_PRESET;
@@ -2231,8 +2232,8 @@ export function resolvePresetName(opts: { minimal?: boolean; preset?: string; al
  * Resolve which tools an MCP session exposes (Spec 14; change:
  * default-to-lean-tool-surface). `--all-tools`/`--preset full` → the full
  * registry; `--preset <name>` → that preset; legacy `--minimal` → the 'minimal'
- * preset; **no selector → the lean default surface** (the benchmark-winning
- * `navigation` preset), NOT the full registry. Breadth is opt-in because schemas
+ * preset; **no selector → the lean default surface** (the benchmark-cleared
+ * `LEAN_DEFAULT_PRESET`), NOT the full registry. Breadth is opt-in because schemas
  * for tools the agent never calls are pure per-request overhead (mcp-quality:
  * MinimizeToolSurface). An unknown preset throws so a typo fails loudly instead of
  * silently exposing all tools. Pure + exported for unit testing.
@@ -2287,14 +2288,16 @@ export const BREADTH_POINTER =
   '`openlore install --preset <name>`.';
 
 /**
- * True when the active surface IS the lean default (the `navigation` preset) —
- * whether reached by no selector at all OR by an explicit `--preset navigation`
- * (which is how `openlore install` wires the default). The server cannot tell the
- * two apart and shouldn't: an agent on the lean surface should learn breadth
- * exists regardless of how it got there. Any OTHER surface (`minimal`, `memory`,
- * `verify`, `federation`, or `full`) is a deliberate different choice, so the
- * pointer would be noise and is suppressed. Resolves through resolvePresetName so
- * it can never disagree with the active tool set. Exported + pure for unit testing.
+ * True when the active surface IS the lean default (the `LEAN_DEFAULT_PRESET`
+ * preset) — whether reached by no selector at all OR by an explicit
+ * `--preset ${LEAN_DEFAULT_PRESET}` (which is how `openlore install` wires the
+ * default). The server cannot tell the two apart and shouldn't: an agent on the
+ * default surface should learn breadth exists regardless of how it got there. Any
+ * OTHER surface — including the lean navigate-only `navigation` escape, and
+ * `minimal`, `memory`, `verify`, `federation`, or `full` — is a deliberate
+ * different choice, so the pointer would be noise and is suppressed. Resolves
+ * through resolvePresetName so it can never disagree with the active tool set.
+ * Exported + pure for unit testing.
  */
 export function leanDefaultActive(opts: { minimal?: boolean; preset?: string; allTools?: boolean }): boolean {
   return resolvePresetName(opts) === LEAN_DEFAULT_PRESET;
@@ -2358,8 +2361,8 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
     process.exit(2);
   }
   // Advertise breadth once via server instructions only when the active surface
-  // IS the lean default (navigation) — whether reached by no selector or an
-  // explicit `--preset navigation` (how install wires it). This adds no tool schemas.
+  // IS the lean default (LEAN_DEFAULT_PRESET) — whether reached by no selector or
+  // an explicit `--preset <that name>` (how install wires it). Adds no tool schemas.
   const instructions = leanDefaultActive(selectorOpts) ? BREADTH_POINTER : undefined;
 
   // Report the real package version in the MCP initialize handshake rather
@@ -2748,7 +2751,7 @@ export const mcpCommand = new Command('mcp')
   .option('--watch-debounce <ms>', 'Debounce delay in ms before re-indexing after a file change (default: 400)', '400')
   .option('--watch-no-embed', 'Watch signatures only — skip live vector re-embedding (embeddings refresh at commit). Large repos auto-degrade to this.')
   .option('--minimal', 'Expose only core 6 tools (orient, search_code, record_decision, detect_changes, check_spec_drift, get_health_map). Pair with alwaysLoad: true in Claude Code for always-visible core tools.')
-  .option('--preset <name>', `Expose a named tool preset. Default (no preset) is the lean "navigation" surface — the benchmark-winning graph-traversal core (orient, search_code, get_subgraph, trace_execution_path, analyze_impact, suggest_insertion_points, get_function_skeleton, get_landmarks, get_map, find_path) — NOT the full registry. "substrate" = the navigation core + recall + verify_claim + blast_radius (both faces of the substrate; the evidence-gated wider default); "minimal" = orient+search+governance; "memory" = orient+remember+recall; "verify" = orient+search+verify_claim; "federation" = orient + federation_status + spec_store_status + working_set_context + change_impact_certificate + map_in_flight_conflicts + the four cross-repo conclusion tools; "coordination" = orient + plan_parallel_work + map_in_flight_conflicts + analyze_impact + find_path; "full" = all ${TOOL_DEFINITIONS.length} tools (the prior default). Takes precedence over --minimal.`)
-  .option('--all-tools', `Expose the full surface — all ${TOOL_DEFINITIONS.length} tools (alias for --preset full). Opt-in breadth; the lean navigation default is recommended.`)
+  .option('--preset <name>', `Expose a named tool preset. Default (no preset) is the "${LEAN_DEFAULT_PRESET}" surface — both faces of the substrate: the graph-traversal core (orient, search_code, get_subgraph, trace_execution_path, analyze_impact, suggest_insertion_points, get_function_skeleton, get_landmarks, get_map, find_path) plus the governance reads recall + verify_claim + blast_radius (decision c79ec7ca / ADR-0023) — NOT the full registry. "navigation" = the lean navigate-only escape (the graph-traversal core alone, no governance reads); "minimal" = orient+search+governance; "memory" = orient+remember+recall; "verify" = orient+search+verify_claim; "federation" = orient + federation_status + spec_store_status + working_set_context + change_impact_certificate + map_in_flight_conflicts + the four cross-repo conclusion tools; "coordination" = orient + plan_parallel_work + map_in_flight_conflicts + analyze_impact + find_path; "full" = all ${TOOL_DEFINITIONS.length} tools (the prior default). Takes precedence over --minimal.`)
+  .option('--all-tools', `Expose the full surface — all ${TOOL_DEFINITIONS.length} tools (alias for --preset full). Opt-in breadth; the "${LEAN_DEFAULT_PRESET}" default is recommended.`)
   .option('--list-tools', 'Print the active tool surface grouped by capability family (navigate/change/remember/verify/coordinate/federate) and exit — does not start the server. Respects --preset / --all-tools.')
   .action((options: McpServerOptions) => startMcpServer(options));

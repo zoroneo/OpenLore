@@ -5,7 +5,26 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 ## [Unreleased]
 
-_Nothing yet — the next release accumulates here._
+### Changed
+
+- **`openlore serve` now defaults to the `substrate` preset (13 tools), matching `openlore mcp`**
+  (change `fix-default-preset-claims`). The ADR-0023 default flip moved `openlore mcp` to
+  `substrate` but left `openlore serve` hardcoded to the old `navigation` surface (10 tools), so the
+  two entry points reported different default surfaces on `/health`. Both now resolve the no-selector
+  default through the single `LEAN_DEFAULT_PRESET` constant. The daemon already dispatches any known
+  tool regardless of preset (the preset is advisory, reported by `/health` for clients that curate
+  their own surface), so the only observable change is that a bare `openlore serve` reports 13 tools
+  instead of 10. Pass `--preset navigation` for the prior surface.
+
+### Fixed
+
+- **Every surface now names the same default preset.** Help strings (`mcp`/`install`/`connect`
+  `--preset`, the top-level `mcp` blurb, `serve` examples), one install-adapter comment, several
+  docstrings, and two reference-doc entries still said or implemented the pre-ADR-0023 `navigation`
+  default. All now derive the default's name from `LEAN_DEFAULT_PRESET`, and a drift-guard test
+  (`default-preset-single-source.test.ts`, cli spec `DefaultPresetHasOneSource`) fails if any entry
+  point reintroduces a hardcoded preset-name fallback or if help text names a default other than the
+  constant's value. No behavior change beyond the `serve` default above.
 
 ## [2.1.5] - 2026-06-28
 
