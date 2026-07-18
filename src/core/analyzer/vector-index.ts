@@ -77,6 +77,13 @@ export interface VectorIndexMeta {
   model: string | null;
   builtAt: string;
   schemaVersion: number;
+  /**
+   * Version of the BM25 tokenizer that produced this index's corpus. A mismatch
+   * against the running `TOKENIZER_VERSION` means an incremental patch would mix
+   * token sets, so `updateFiles` defers (`deferred: 'tokenizer-changed'`) and a
+   * full rebuild re-stamps. A legacy meta without this field is treated as v1.
+   */
+  tokenizerVersion?: number;
 }
 
 // Module-level meta cache, keyed by dbPath. Invalidated by build().
@@ -139,9 +146,58 @@ export interface Bm25Corpus {
   N: number;
 }
 
+/**
+ * Version of the `tokenize` contract. Bump whenever the token set produced for a
+ * given text changes, so a persisted index built under an older tokenizer is
+ * rebuilt rather than incrementally patched against a query tokenized under the
+ * new one (see `VectorIndexMeta.tokenizerVersion` and the `tokenizer-changed`
+ * deferral in `updateFiles`, mirroring the embedding-model deferral discipline).
+ *   v1 — lowercase + split on non-alphanumeric only.
+ *   v2 — identifier-aware: also split camelCase/PascalCase and retain the compound.
+ */
+export const TOKENIZER_VERSION = 2;
+
+/**
+ * Split one alphanumeric chunk on camelCase / PascalCase boundaries, preserving
+ * digit-adjacent runs. Case is significant here, so callers lowercase the result.
+ *   `getUserById`      → [get, User, By, Id]
+ *   `parseHTMLResponse`→ [parse, HTML, Response]
+ * Returns the single chunk unchanged when there is no internal boundary.
+ */
+function splitCompound(chunk: string): string[] {
+  return chunk
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')      // lower/digit → Upper: getUser → get User
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')   // acronym run → Word: HTMLResponse → HTML Response
+    .split(' ')
+    .filter(Boolean);
+}
+
+/**
+ * Identifier-aware BM25 tokenizer. Splits compound identifiers (camelCase,
+ * PascalCase, snake_case, kebab-case) into their sub-tokens AND retains the
+ * original compound token, so a sub-word query (`user`) matches `getUserById`
+ * while the exact compound query still ranks the exact match. Applied identically
+ * at index and query time — there is one `tokenize`, shared by every BM25 corpus.
+ * The >1-char filter and lowercasing are unchanged; no new tuning constants.
+ */
 export function tokenize(text: string): string[] {
-  // Split on non-alphanumeric, keep tokens longer than 1 char
-  return text.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 1);
+  const out: string[] = [];
+  // snake_case / kebab-case / punctuation split first (non-alphanumeric boundaries).
+  for (const chunk of text.split(/[^A-Za-z0-9]+/)) {
+    if (!chunk) continue;
+    const compound = chunk.toLowerCase();
+    // Retain the whole compound token (exact-identifier queries still match/rank).
+    if (compound.length > 1) out.push(compound);
+    // Add camelCase/PascalCase sub-tokens; only when the chunk actually splits.
+    const subs = splitCompound(chunk);
+    if (subs.length > 1) {
+      for (const s of subs) {
+        const lowered = s.toLowerCase();
+        if (lowered.length > 1) out.push(lowered);
+      }
+    }
+  }
+  return out;
 }
 
 export function buildBm25Corpus(records: Array<{ id: string; text: string }>): Bm25Corpus {
@@ -419,6 +475,7 @@ export class VectorIndex {
         model: null,
         builtAt: new Date().toISOString(),
         schemaVersion: META_SCHEMA_VERSION,
+        tokenizerVersion: TOKENIZER_VERSION,
       });
       _tableCache.delete(dbPath);
       _bm25Cache.delete(dbPath);
@@ -514,6 +571,7 @@ export class VectorIndex {
       model: embedSvc.modelName,
       builtAt: new Date().toISOString(),
       schemaVersion: META_SCHEMA_VERSION,
+      tokenizerVersion: TOKENIZER_VERSION,
     });
 
     // Invalidate search caches — index was just rebuilt
@@ -552,13 +610,23 @@ export class VectorIndex {
     entryPointIds: Set<string>,
     embedSvc: Embedder | null | undefined,
     fileContents?: Map<string, string>,
-  ): Promise<{ embedded: number; reused: number; total: number; hasEmbeddings: boolean; deferred?: 'model-changed' }> {
+  ): Promise<{ embedded: number; reused: number; total: number; hasEmbeddings: boolean; deferred?: 'model-changed' | 'tokenizer-changed' }> {
     if (!VectorIndex.exists(outputDir)) {
       return { embedded: 0, reused: 0, total: 0, hasEmbeddings: false };
     }
     const dbPath = join(outputDir, DB_FOLDER);
     const existingMeta = readMeta(outputDir);
     const indexHasEmbeddings = existingMeta === null ? true : existingMeta.hasEmbeddings;
+
+    // A changed tokenizer means the on-disk corpus was tokenized under different
+    // rules; incrementally patching it in place would mix token sets. Refuse the
+    // incremental update (applies to BM25-only indexes too, unlike model-changed)
+    // and leave the index consistent until a full `analyze --force` rebuilds and
+    // re-stamps it. A legacy meta without the stamp is treated as v1. `deferred`
+    // lets the caller surface this honestly rather than logging a no-op.
+    if (existingMeta !== null && (existingMeta.tokenizerVersion ?? 1) !== TOKENIZER_VERSION) {
+      return { embedded: 0, reused: 0, total: 0, hasEmbeddings: indexHasEmbeddings, deferred: 'tokenizer-changed' };
+    }
 
     // A changed embedding model means the on-disk vectors are a different dimension;
     // a row-level add would create a mixed-dimension table. Refuse the incremental
@@ -805,31 +873,31 @@ export class VectorIndex {
     const rowById = new Map(allRows.map(r => [r.id as string, r]));
 
     // ── RRF merge ────────────────────────────────────────────────────────────
-    const rrfMap = new Map<string, { row: Record<string, unknown>; score: number }>();
+    // Candidate union: every dense hit plus every sparse hit with a non-zero BM25
+    // signal. Final scores are recomputed below from both rank maps, so the union
+    // only needs each candidate's row (dense row wins on collision, dense-first
+    // insertion order preserved) — no per-entry score accumulation.
+    const candidates = new Map<string, Record<string, unknown>>();
 
-    denseRows.forEach((row, rank) => {
+    for (const row of denseRows) {
       const id = row.id as string;
-      const entry = rrfMap.get(id) ?? { row, score: 0 };
-      entry.score += rrfScore(rank, Infinity); // sparse rank = Infinity if not in sparse list
-      rrfMap.set(id, entry);
-    });
+      if (!candidates.has(id)) candidates.set(id, row);
+    }
 
-    sparseScored.forEach(({ idx, score: bm25 }, rank) => {
-      if (bm25 === 0) return; // no BM25 signal — skip
+    for (const { idx, score: bm25 } of sparseScored) {
+      if (bm25 === 0) continue; // no BM25 signal — skip
       const id = corpus.docs[idx].id;
       const row = rowById.get(id);
-      if (!row) return;
-      const entry = rrfMap.get(id) ?? { row, score: 0 };
-      entry.score += 1 / (60 + rank + 1);
-      rrfMap.set(id, entry);
-    });
+      if (!row) continue;
+      if (!candidates.has(id)) candidates.set(id, row);
+    }
 
-    // Fix dense ranks now that we know the full picture
-    // Re-compute proper RRF scores with both ranks available
+    // Compute RRF scores with both ranks available (sparse rank = Infinity when a
+    // candidate never appeared in the sparse list, and vice versa).
     const denseRankById = new Map(denseRows.map((r, i) => [r.id as string, i]));
     const sparseRankById = new Map(sparseScored.map(({ idx }, i) => [corpus.docs[idx].id, i]));
 
-    const merged = [...rrfMap.values()].map(({ row }) => {
+    const merged = [...candidates.values()].map((row) => {
       const id = row.id as string;
       const dr = denseRankById.get(id) ?? Infinity;
       const sr = sparseRankById.get(id) ?? Infinity;
