@@ -16,7 +16,7 @@
  *   const results = await VectorIndex.search(outputDir, "authenticate user with JWT", embedSvc);
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FunctionNode } from './call-graph.js';
@@ -267,12 +267,113 @@ export function _resetVectorIndexCachesForTesting(): void {
  * the next search builds the corpus fresh from the table.
  */
 function patchBm25Cache(dbPath: string, changedFilePaths: Set<string>, newRows: Record<string, unknown>[]): void {
+  // The on-disk corpus sidecar no longer matches the mutated table; drop it so the
+  // next cold start rebuilds from raw text rather than hydrating a stale corpus.
+  // Re-serialising per patch is intentionally out of scope (owned by the serving
+  // hot-path optimisation). Done before the early return so invalidation happens
+  // even when there is no in-memory corpus to patch.
+  deleteCorpusSidecar(dbPath);
   const entry = _bm25Cache.get(dbPath);
   if (!entry) return;
   const kept = entry.rows.filter((r) => !changedFilePaths.has(r.filePath as string));
   for (const r of newRows) kept.push(r);
   const corpus = buildBm25Corpus(kept.map((r) => ({ id: r.id as string, text: r.text as string })));
   _bm25Cache.set(dbPath, { corpus, rowCount: kept.length, rows: kept });
+}
+
+// ── Persisted BM25 corpus sidecar ───────────────────────────────────────────
+// The keyword corpus is otherwise rebuilt in-memory from the raw `text` column on
+// the first query in every process. Persisting the tokenized corpus lets a cold
+// start hydrate it without re-tokenizing, and gives `TOKENIZER_VERSION` a real
+// serve-time guard: a sidecar stamped under a different tokenizer is ignored and
+// the corpus rebuilt, so a mixed-token corpus is never served.
+
+const CORPUS_FILE = 'bm25-corpus.json';
+/** Serialization-format version, independent of TOKENIZER_VERSION. */
+const CORPUS_SCHEMA_VERSION = 1;
+
+interface SerializedBm25Corpus {
+  schemaVersion: number;
+  tokenizerVersion: number;
+  avgLength: number;
+  N: number;
+  df: Array<[string, number]>;
+  docs: Array<{ id: string; length: number; tf: Array<[string, number]> }>;
+}
+
+function corpusFilePath(dbPath: string): string {
+  return join(dbPath, CORPUS_FILE);
+}
+
+function serializeBm25Corpus(corpus: Bm25Corpus): string {
+  const payload: SerializedBm25Corpus = {
+    schemaVersion: CORPUS_SCHEMA_VERSION,
+    tokenizerVersion: TOKENIZER_VERSION,
+    avgLength: corpus.avgLength,
+    N: corpus.N,
+    df: [...corpus.df],
+    docs: corpus.docs.map((d) => ({ id: d.id, length: d.length, tf: [...d.tfMap] })),
+  };
+  return JSON.stringify(payload);
+}
+
+/** Parse a sidecar back into a corpus, or null if absent/corrupt/version-skewed. */
+function deserializeBm25Corpus(json: string): Bm25Corpus | null {
+  try {
+    const p = JSON.parse(json) as SerializedBm25Corpus;
+    if (p.schemaVersion !== CORPUS_SCHEMA_VERSION) return null;
+    if (p.tokenizerVersion !== TOKENIZER_VERSION) return null;
+    if (!Array.isArray(p.docs) || !Array.isArray(p.df)) return null;
+    return {
+      docs: p.docs.map((d) => ({ id: d.id, length: d.length, tfMap: new Map(d.tf) })),
+      df: new Map(p.df),
+      avgLength: p.avgLength,
+      N: p.N,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort persist (the sidecar is an optional cache — a failure just means
+ * the next cold start rebuilds from raw text). */
+function persistCorpusSidecar(dbPath: string, corpus: Bm25Corpus): void {
+  try {
+    writeFileSync(corpusFilePath(dbPath), serializeBm25Corpus(corpus), 'utf-8');
+  } catch {
+    /* optional cache — ignore */
+  }
+}
+
+function deleteCorpusSidecar(dbPath: string): void {
+  try {
+    rmSync(corpusFilePath(dbPath), { force: true });
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Load the corpus from the stamped sidecar when it matches the current tokenizer
+ * and the table it is joined against; otherwise rebuild from raw text and
+ * re-persist. Never throws and never serves a tokenizer-skewed corpus — a
+ * missing, corrupt, or version-mismatched sidecar degrades to a rebuild.
+ * The `N === allRows.length` check is a defensive cross-check; the primary
+ * integrity contract is "sidecar present ⇒ valid" (build overwrites it, every
+ * incremental patch deletes it).
+ */
+function loadOrBuildBm25Corpus(dbPath: string, allRows: Record<string, unknown>[]): Bm25Corpus {
+  let loaded: Bm25Corpus | null = null;
+  try {
+    loaded = deserializeBm25Corpus(readFileSync(corpusFilePath(dbPath), 'utf-8'));
+  } catch {
+    loaded = null; // missing sidecar (legacy index) or unreadable — rebuild
+  }
+  if (loaded && loaded.N === allRows.length) return loaded;
+
+  const corpus = buildBm25Corpus(allRows.map((r) => ({ id: r.id as string, text: r.text as string })));
+  persistCorpusSidecar(dbPath, corpus);
+  return corpus;
 }
 
 /**
@@ -477,6 +578,11 @@ export class VectorIndex {
         schemaVersion: META_SCHEMA_VERSION,
         tokenizerVersion: TOKENIZER_VERSION,
       });
+      // Persist the tokenized corpus so a cold-start query hydrates it instead of
+      // re-tokenizing the whole `text` column.
+      persistCorpusSidecar(dbPath, buildBm25Corpus(
+        candidates.map((r) => ({ id: r.id, text: r.text }))
+      ));
       _tableCache.delete(dbPath);
       _bm25Cache.delete(dbPath);
       _metaCache.delete(dbPath);
@@ -573,6 +679,11 @@ export class VectorIndex {
       schemaVersion: META_SCHEMA_VERSION,
       tokenizerVersion: TOKENIZER_VERSION,
     });
+    // Persist the tokenized corpus for cold-start hydration (hybrid search still
+    // uses the BM25 sparse half, so the corpus is needed here too).
+    persistCorpusSidecar(dbPath, buildBm25Corpus(
+      fullRecords.map((r) => ({ id: r.id, text: r.text }))
+    ));
 
     // Invalidate search caches — index was just rebuilt
     _tableCache.delete(dbPath);
@@ -850,9 +961,7 @@ export class VectorIndex {
 
     if (!cachedEntry) {
       allRows = await table.query().toArray() as Record<string, unknown>[];
-      const corpus = buildBm25Corpus(
-        allRows.map(r => ({ id: r.id as string, text: r.text as string }))
-      );
+      const corpus = loadOrBuildBm25Corpus(dbPath, allRows);
       cachedEntry = { corpus, rowCount: allRows.length, rows: allRows };
       _bm25Cache.set(dbPath, cachedEntry);
     } else {
@@ -928,9 +1037,7 @@ export class VectorIndex {
 
     if (!cachedEntry) {
       allRows = await table.query().toArray() as Record<string, unknown>[];
-      const corpus = buildBm25Corpus(
-        allRows.map(r => ({ id: r.id as string, text: r.text as string }))
-      );
+      const corpus = loadOrBuildBm25Corpus(dbPath, allRows);
       cachedEntry = { corpus, rowCount: allRows.length, rows: allRows };
       _bm25Cache.set(dbPath, cachedEntry);
     } else {
