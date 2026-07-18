@@ -261,6 +261,21 @@ export async function collectFeatureInventory(rootPath: string): Promise<Feature
     docs: 'docs/ci-cd.md',
   });
 
+  // Decision autopilot (change: add-decision-autopilot).
+  const autopilotOn = config?.governance?.autopilot === true;
+  features.push({
+    id: 'decision-autopilot',
+    title: 'Decision autopilot (auto-accept + audit trail)',
+    group: 'Governance & guardrails',
+    state: autopilotOn ? 'active' : 'inactive',
+    optIn: true,
+    detail: autopilotOn
+      ? 'verified decisions auto-accept and sync; commits never block; trail via `openlore decisions log`'
+      : 'off — the commit gate blocks for human review of verified decisions',
+    activate: autopilotOn ? '' : 'set { "governance": { "autopilot": true } } in .openlore/config.json',
+    docs: 'docs/cli-reference.md',
+  });
+
   // Panic / agent behavioral governance.
   const panicMode = config?.panicResponse?.mode;
   const panicActive = Boolean(panicMode) && panicMode !== 'off';

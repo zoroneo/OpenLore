@@ -29,6 +29,8 @@ import {
   getDecisionsByStatus,
   INACTIVE_STATUSES,
 } from '../../core/decisions/store.js';
+import { readLedger } from '../../core/decisions/ledger.js';
+import { rewriteSyncedDecisionStatus } from '../../core/decisions/syncer.js';
 import { consolidateDrafts } from '../../core/decisions/consolidator.js';
 import { classifyGateState } from '../../core/decisions/gate-state.js';
 import { acquireDecisionsLock } from '../../core/decisions/lock.js';
@@ -368,16 +370,116 @@ export async function uninstallClaudeHook(rootPath: string): Promise<void> {
 }
 
 // ============================================================================
+// DECISION AUTOPILOT (change: add-decision-autopilot)
+// ============================================================================
+
+/**
+ * Autopilot gate resolution: auto-accept verified decisions (distinct
+ * `auto-approved` status, actor `autopilot` on the ledger), sync them (plus any
+ * human-approved ones) to specs, and NEVER block the commit — one advisory
+ * stderr line, exit 0. Infrastructure failure degrades to a caveat and exit 0
+ * (the impact-certificate advisory-safety discipline): a broken trail write or
+ * sync must never stop a commit the human is making.
+ *
+ * Legality: only decisions still in `verified` transition — a human-`rejected`
+ * decision is never resurrected by autopilot, and concurrent status changes
+ * win (the CAS mutate re-checks status on the freshest store).
+ */
+async function runAutopilotGate(
+  rootPath: string,
+  config: NonNullable<Awaited<ReturnType<typeof readOpenLoreConfig>>>,
+  jsonMode: boolean,
+): Promise<void> {
+  try {
+    let store = await loadDecisionStore(rootPath);
+    const verifiedIds = getDecisionsByStatus(store, 'verified').map((d) => d.id);
+
+    if (verifiedIds.length > 0) {
+      const now = new Date().toISOString();
+      store = await updateDecisionStore(rootPath, (s) =>
+        verifiedIds.reduce((acc, id) => {
+          const cur = acc.decisions.find((d) => d.id === id);
+          if (!cur || cur.status !== 'verified') return acc; // legality: verified-only
+          return patchDecision(acc, id, {
+            status: 'auto-approved',
+            approvedBy: 'autopilot',
+            reviewedAt: now,
+          });
+        }, s), 'autopilot');
+      for (const id of verifiedIds) {
+        const d = store.decisions.find((x) => x.id === id);
+        if (d?.status === 'auto-approved') {
+          emit(rootPath, 'decisions', { event: 'decision_auto_approved', id, title: d.title, transport: 'cli-gate' });
+        }
+      }
+    }
+
+    // Background-style sync in the same pass (deterministic, no LLM): approved
+    // (human) decisions sync as today; auto-approved sync with the unreviewed
+    // marker and stay in the store as the review queue.
+    const accepted = store.decisions.filter((d) => d.status === 'auto-approved' && d.syncedToSpecs.length === 0);
+    const approved = getDecisionsByStatus(store, 'approved');
+    let syncedCount = 0;
+    let syncErrors: Array<{ id: string; error: string }> = [];
+    if (accepted.length > 0 || approved.length > 0) {
+      const openspecPath = join(rootPath, config.openspecPath ?? OPENSPEC_DIR);
+      if (await fileExists(join(openspecPath, OPENSPEC_SPECS_SUBDIR))) {
+        const specMap = await buildSpecMap({ rootPath, openspecPath });
+        const { result } = await syncApprovedDecisions(store, {
+          rootPath, openspecPath, specMap, includeAutoApproved: true,
+        });
+        syncedCount = result.synced.length;
+        syncErrors = result.errors;
+      }
+    }
+
+    const fresh = await loadDecisionStore(rootPath);
+    const draftCount = getDecisionsByStatus(fresh, 'draft').length;
+    const unreviewedCount = fresh.decisions.filter((d) => d.status === 'auto-approved' && !d.humanReviewedAt).length;
+
+    const parts: string[] = [];
+    if (verifiedIds.length > 0) parts.push(`${verifiedIds.length} decision(s) auto-accepted`);
+    if (syncedCount > 0) parts.push(`${syncedCount} synced to specs`);
+    if (draftCount > 0) parts.push(`${draftCount} draft(s) pending background consolidation`);
+    if (syncErrors.length > 0) parts.push(`${syncErrors.length} sync error(s) — will retry next gate`);
+    if (parts.length > 0 || unreviewedCount > 0) {
+      console.error(
+        `openlore autopilot: ${parts.length ? parts.join(' · ') : 'nothing new'}`
+        + `${unreviewedCount > 0 ? ` · ${unreviewedCount} awaiting review (openlore decisions review)` : ''}`
+        + ` · trail: openlore decisions log`,
+      );
+    }
+    if (jsonMode) {
+      process.stdout.write(JSON.stringify({
+        gated: false,
+        autopilot: true,
+        autoAccepted: verifiedIds.length,
+        synced: syncedCount,
+        draftsPending: draftCount,
+        awaitingReview: unreviewedCount,
+        syncErrors,
+      }, null, 2) + '\n');
+    }
+    process.exitCode = 0;
+  } catch (err) {
+    // Advisory-safety: an autopilot fault never blocks the commit.
+    console.error(`openlore autopilot: skipped (${(err as Error).message}) — commit not blocked`);
+    process.exitCode = 0;
+  }
+}
+
+// ============================================================================
 // DISPLAY HELPERS
 // ============================================================================
 
 function displayDecision(d: PendingDecision, verbose = false): void {
   const icon =
-    d.status === 'verified' ? '✓' :
-    d.status === 'phantom'  ? '↗' :
-    d.status === 'approved' ? '●' :
-    d.status === 'synced'   ? '✔' :
-    d.status === 'rejected' ? '✗' : '○';
+    d.status === 'verified'      ? '✓' :
+    d.status === 'phantom'       ? '↗' :
+    d.status === 'approved'      ? '●' :
+    d.status === 'auto-approved' ? '◉' :
+    d.status === 'synced'        ? '✔' :
+    d.status === 'rejected'      ? '✗' : '○';
 
   const confidence =
     d.confidence === 'high'   ? '\x1b[32mhigh\x1b[0m' :
@@ -425,7 +527,7 @@ export const decisionsCommand = new Command('decisions')
   .option('--sync', 'Sync all approved decisions to spec.md files', false)
   .option('--dry-run', 'Preview sync without writing', false)
   .option('--list', 'List decisions (default action when no other flag given)', false)
-  .option('--status <status>', 'Filter list by status (draft|consolidated|verified|approved|rejected|synced)')
+  .option('--status <status>', 'Filter list by status (draft|consolidated|verified|approved|auto-approved|rejected|synced)')
   .option('--uninstall-hook', 'Remove pre-commit hook', false)
   .option('--verbose', 'Show detailed decision info', false)
   .option('--json', 'Output as JSON', false)
@@ -445,6 +547,12 @@ Examples:
   $ openlore decisions --approve a1b2c3d4          Approve decision a1b2c3d4
   $ openlore decisions --sync                      Sync approved decisions
   $ openlore decisions --status verified --json    Machine-readable output
+  $ openlore decisions log                         Transition ledger (audit trail)
+  $ openlore decisions review                      Auto-accepted decisions awaiting review
+
+Decision autopilot (opt-in: { "governance": { "autopilot": true } } in .openlore/config.json):
+the gate auto-accepts verified decisions, syncs them to specs marked "Auto-accepted
+(unreviewed)", and never blocks a commit. Every transition lands on the ledger.
 `
   )
   .action(async function (this: Command, options: {
@@ -498,11 +606,12 @@ Examples:
       }
       const approvePatch = {
         status: 'approved' as const,
+        approvedBy: 'human' as const,
         reviewedAt: new Date().toISOString(),
         reviewNote: options.note ?? options.reason,
       };
       // CAS so the write can't clobber a concurrent record/consolidate write.
-      const updated = await updateDecisionStore(rootPath, (s) => patchDecision(s, id, approvePatch));
+      const updated = await updateDecisionStore(rootPath, (s) => patchDecision(s, id, approvePatch), 'human');
       emit(rootPath, 'decisions', { event: 'decision_approved', id, title: decision.title, transport: 'cli' });
       logger.success(`Decision ${id} approved.`);
       if (!options.json) displayDecision({ ...decision, status: 'approved' }, true);
@@ -543,7 +652,7 @@ Examples:
         status: 'rejected',
         reviewedAt: new Date().toISOString(),
         reviewNote: options.note ?? options.reason,
-      }));
+      }), 'human');
       emit(rootPath, 'decisions', { event: 'decision_rejected', id, title: decision.title, transport: 'cli' });
       logger.success(`Decision ${id} rejected.`);
 
@@ -675,6 +784,13 @@ Examples:
         return { ...next, lastConsolidatedAt: new Date().toISOString() };
       });
 
+      // Decision autopilot: resolve the freshly-verified decisions without
+      // blocking — auto-accept, sync, advisory line, exit 0. (add-decision-autopilot)
+      if (options.gate && openloreConfig.governance?.autopilot === true) {
+        await runAutopilotGate(rootPath, openloreConfig, options.json);
+        return;
+      }
+
       if (options.json) {
         process.stdout.write(JSON.stringify({ verified, phantom, missing }, null, 2) + '\n');
         if (options.gate && missing.length > 0) process.exitCode = 1;
@@ -695,7 +811,11 @@ Examples:
           }
         }
         await updateDecisionStore(rootPath, (s) =>
-          tuiPatches.reduce((acc, p) => patchDecision(acc, p.id, { status: p.status, reviewedAt }), s));
+          tuiPatches.reduce((acc, p) => patchDecision(acc, p.id, {
+            status: p.status,
+            reviewedAt,
+            ...(p.status === 'approved' ? { approvedBy: 'human' as const } : {}),
+          }), s), 'human');
 
         const stillPending = verified.filter(
           (d) => !results.has(d.id) || results.get(d.id) === 'skipped',
@@ -780,6 +900,12 @@ Examples:
 
     // ── Gate only (no consolidation — consolidation happens on record_decision) ──
     if (options.gate && !options.consolidate) {
+      // Decision autopilot: accept + sync + trail, never block. (add-decision-autopilot)
+      const gateConfig = await readOpenLoreConfig(rootPath);
+      if (gateConfig?.governance?.autopilot === true) {
+        await runAutopilotGate(rootPath, gateConfig, options.json);
+        return;
+      }
       const approved = getDecisionsByStatus(store, 'approved');
       const verified = getDecisionsByStatus(store, 'verified');
       const drafts = getDecisionsByStatus(store, 'draft');
@@ -888,7 +1014,11 @@ Examples:
           }
         }
         await updateDecisionStore(rootPath, (s) =>
-          tuiPatches.reduce((acc, p) => patchDecision(acc, p.id, { status: p.status, reviewedAt }), s));
+          tuiPatches.reduce((acc, p) => patchDecision(acc, p.id, {
+            status: p.status,
+            reviewedAt,
+            ...(p.status === 'approved' ? { approvedBy: 'human' as const } : {}),
+          }), s), 'human');
         const stillPending = verified.filter(
           (d) => !results.has(d.id) || results.get(d.id) === 'skipped',
         );
@@ -983,7 +1113,7 @@ Examples:
     }
 
     // ── Default: list ────────────────────────────────────────────────────────
-    const VALID_STATUSES = new Set(['draft', 'consolidated', 'verified', 'phantom', 'approved', 'rejected', 'synced']);
+    const VALID_STATUSES = new Set(['draft', 'consolidated', 'verified', 'phantom', 'approved', 'auto-approved', 'rejected', 'synced']);
     if (options.status && !VALID_STATUSES.has(options.status)) {
       logger.error(`Invalid status "${options.status}". Valid values: ${[...VALID_STATUSES].join('|')}`);
       process.exitCode = 1;
@@ -1009,6 +1139,173 @@ Examples:
     } catch (err) {
       logger.error(`decisions command failed: ${(err as Error).message}`);
       if (process.env.DEBUG) console.error(err);
+      process.exitCode = 1;
+    } finally {
+      restoreStdout?.();
+    }
+  });
+
+// ============================================================================
+// SUBCOMMANDS: log · review (change: add-decision-autopilot)
+// ============================================================================
+
+/** Resolve a `--since` value to an epoch ms cutoff: ISO date, or a git ref's commit time. */
+async function resolveSinceCutoff(rootPath: string, since: string): Promise<number> {
+  const asDate = Date.parse(since);
+  if (!Number.isNaN(asDate)) return asDate;
+  const { stdout } = await execFileAsync('git', ['show', '-s', '--format=%cI', since], { cwd: rootPath });
+  const t = Date.parse(stdout.trim().split('\n').pop() ?? '');
+  if (Number.isNaN(t)) throw new Error(`--since "${since}" is neither an ISO date nor a resolvable git ref`);
+  return t;
+}
+
+decisionsCommand
+  .command('log')
+  .description('Show the append-only decision transition ledger (newest first)')
+  .option('--json', 'Output as JSON', false)
+  .option('--since <ref>', 'Only entries after this ISO date or git ref (commit time)')
+  .action(async (opts: { json: boolean; since?: string }, cmd: Command) => {
+    // The parent `decisions` command declares same-named options (--json) and,
+    // without positional-option mode, commander parses them greedily out of the
+    // subcommand argv — merge them back so `decisions log --json` works.
+    const parentOpts = (cmd.parent?.opts() ?? {}) as { json?: boolean };
+    const json = Boolean(opts.json || parentOpts.json);
+    const restoreStdout = json ? redirectConsoleToStderr() : null;
+    try {
+      const rootPath = process.cwd();
+      let entries = await readLedger(rootPath);
+      if (opts.since) {
+        const cutoff = await resolveSinceCutoff(rootPath, opts.since);
+        entries = entries.filter((e) => Date.parse(e.at) >= cutoff);
+      }
+      entries.reverse(); // newest first
+
+      if (json) {
+        process.stdout.write(JSON.stringify(entries, null, 2) + '\n');
+        return;
+      }
+      if (entries.length === 0) {
+        console.log('Decision ledger is empty — no transitions recorded yet.');
+        return;
+      }
+      logger.section('Decision Ledger (newest first)');
+      for (const e of entries) {
+        const when = e.at.replace('T', ' ').slice(0, 19);
+        const commit = e.commit ? ` @${e.commit}` : '';
+        console.log(`${when}  [${e.id}] ${e.from ?? '∅'} → ${e.to}  by ${e.actor}${commit}  ${e.title}`);
+      }
+      console.log(`\nTotal: ${entries.length} transition(s)`);
+    } catch (err) {
+      logger.error(`decisions log failed: ${(err as Error).message}`);
+      process.exitCode = 1;
+    } finally {
+      restoreStdout?.();
+    }
+  });
+
+/** Parse a `--promote/--reject` id list ("all" or comma-separated 8-char ids) against the queue. */
+function resolveReviewIds(raw: string, queue: PendingDecision[]): string[] {
+  if (raw.trim().toLowerCase() === 'all') return queue.map((d) => d.id);
+  const ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  const queueIds = new Set(queue.map((d) => d.id));
+  const unknown = ids.filter((id) => !queueIds.has(id));
+  if (unknown.length > 0) {
+    throw new Error(`not in the auto-accepted review queue: ${unknown.join(', ')} (see: openlore decisions review)`);
+  }
+  return ids;
+}
+
+decisionsCommand
+  .command('review')
+  .description('List auto-accepted (unreviewed) decisions; --promote or --reject them')
+  .option('--promote <ids>', 'Comma-separated ids, or "all": confirm as human-approved (drops the unreviewed marker)')
+  .option('--reject <ids>', 'Comma-separated ids, or "all": reject and retire from specs (kept queryable in history)')
+  .option('--note <text>', 'Review note to attach')
+  .option('--json', 'Output as JSON', false)
+  .action(async (opts: { promote?: string; reject?: string; note?: string; json: boolean }, cmd: Command) => {
+    // The parent `decisions` command declares same-named options (--reject,
+    // --note, --json) and, without positional-option mode, commander parses
+    // them greedily out of the subcommand argv — merge them back so
+    // `decisions review --reject <ids>` reaches this action.
+    const parentOpts = (cmd.parent?.opts() ?? {}) as { reject?: string; note?: string; json?: boolean };
+    const promoteRaw = opts.promote;
+    const rejectRaw = opts.reject ?? parentOpts.reject;
+    const note = opts.note ?? parentOpts.note;
+    const json = Boolean(opts.json || parentOpts.json);
+    const restoreStdout = json ? redirectConsoleToStderr() : null;
+    try {
+      const rootPath = process.cwd();
+      const store = await loadDecisionStore(rootPath);
+      const queue = store.decisions.filter((d) => d.status === 'auto-approved' && !d.humanReviewedAt);
+
+      if (promoteRaw && rejectRaw) {
+        // Same id in both would be ambiguous; require distinct sets.
+        const overlap = resolveReviewIds(promoteRaw, queue).filter((id) =>
+          resolveReviewIds(rejectRaw, queue).includes(id));
+        if (overlap.length > 0) {
+          logger.error(`ids in both --promote and --reject: ${overlap.join(', ')}`);
+          process.exitCode = 1;
+          return;
+        }
+      }
+
+      const now = new Date().toISOString();
+      const results: Array<{ id: string; title: string; disposition: 'promoted' | 'rejected'; specsUpdated: string[] }> = [];
+
+      for (const [raw, disposition] of [[promoteRaw, 'promoted'], [rejectRaw, 'rejected']] as const) {
+        if (!raw) continue;
+        const ids = resolveReviewIds(raw, queue);
+        for (const id of ids) {
+          const decision = queue.find((d) => d.id === id)!;
+          await updateDecisionStore(rootPath, (s) => {
+            const cur = s.decisions.find((d) => d.id === id);
+            // Legality: only a still-unreviewed auto-approved decision transitions.
+            if (!cur || cur.status !== 'auto-approved' || cur.humanReviewedAt) return s;
+            return patchDecision(s, id, {
+              status: disposition === 'promoted' ? 'synced' : 'rejected',
+              humanReviewedAt: now,
+              reviewedAt: now,
+              ...(note ? { reviewNote: note } : {}),
+            });
+          }, 'human');
+          const specsUpdated = await rewriteSyncedDecisionStatus(rootPath, decision, disposition);
+          emit(rootPath, 'decisions', {
+            event: disposition === 'promoted' ? 'decision_review_promoted' : 'decision_review_rejected',
+            id, title: decision.title, transport: 'cli-review',
+          });
+          results.push({ id, title: decision.title, disposition, specsUpdated });
+        }
+      }
+
+      const fresh = await loadDecisionStore(rootPath);
+      const remaining = fresh.decisions.filter((d) => d.status === 'auto-approved' && !d.humanReviewedAt);
+
+      if (json) {
+        process.stdout.write(JSON.stringify({
+          reviewed: results,
+          awaitingReview: remaining.map((d) => ({
+            id: d.id, title: d.title, rationale: d.rationale,
+            reviewedAt: d.reviewedAt, syncedToSpecs: d.syncedToSpecs,
+          })),
+        }, null, 2) + '\n');
+        return;
+      }
+
+      for (const r of results) {
+        const verb = r.disposition === 'promoted' ? 'promoted to Approved' : 'rejected (retired from specs)';
+        logger.success(`[${r.id}] ${verb} — ${r.title}`);
+        for (const p of r.specsUpdated) console.log(`   → ${p}`);
+      }
+      if (remaining.length === 0) {
+        console.log(results.length > 0 ? '\nReview queue is empty.' : 'No auto-accepted decisions await review.');
+        return;
+      }
+      logger.section('Auto-accepted decisions awaiting review');
+      for (const d of remaining) displayDecision(d, true);
+      console.log(`\nPromote: openlore decisions review --promote <id,id|all>`);
+      console.log(`Reject:  openlore decisions review --reject <id,id|all>`);
+    } catch (err) {
+      logger.error(`decisions review failed: ${(err as Error).message}`);
       process.exitCode = 1;
     } finally {
       restoreStdout?.();

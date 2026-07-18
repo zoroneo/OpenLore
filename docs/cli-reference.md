@@ -308,6 +308,16 @@ openlore decisions [options]
   --consolidate          # Manually trigger LLM consolidation + diff verification of drafts
   --json                 # Machine-readable output
   --uninstall-hook       # Remove decisions pre-commit hook (install via: openlore setup --tools claude)
+
+# Decision autopilot (opt-in: { "governance": { "autopilot": true } } in .openlore/config.json):
+# the gate auto-accepts verified decisions (distinct `auto-approved` status), syncs them to
+# specs with an "Auto-accepted (unreviewed)" marker, and never blocks a commit. Every status
+# transition — in every mode — lands on an append-only ledger.
+openlore decisions log [--json] [--since <ref|ISO date>]
+                         # Show the transition ledger, newest first
+openlore decisions review [--promote <ids|all>] [--reject <ids|all>] [--note <text>] [--json]
+                         # List auto-accepted decisions awaiting review; promote (drops the
+                         # unreviewed marker) or reject (retires from specs, kept in history)
 ```
 
 ### Verify Options

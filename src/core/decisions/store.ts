@@ -12,6 +12,7 @@ import {
 } from '../../constants.js';
 import { fileExists } from '../../utils/command-helpers.js';
 import { atomicWriteFile, casUpdate, quarantineCorrupt } from './atomic-store.js';
+import { appendLedgerEntries, currentHeadCommit, diffStoreTransitions, type LedgerActor } from './ledger.js';
 import type { PendingDecision, DecisionStore, DecisionStatus } from '../../types/index.js';
 
 export function decisionsDir(rootPath: string): string {
@@ -73,17 +74,38 @@ export async function saveDecisionStore(rootPath: string, store: DecisionStore):
  * {@link patchDecision}), and commits under compare-and-swap so two concurrent
  * writers never lose a decision — on a conflict the mutate is re-applied to the
  * newer store. (harden-memory-integrity-invariant)
+ *
+ * Every committed status transition (and creation) is trailed on the append-only
+ * decision ledger, attributed to `actor` (change: add-decision-autopilot). The
+ * diff is taken against the exact snapshot the winning mutate ran on, so a CAS
+ * retry never double-logs. Default actor 'sync' marks a system write; callers
+ * acting for a human, an agent, or the autopilot pass that explicitly.
  */
 export async function updateDecisionStore(
   rootPath: string,
   mutate: (store: DecisionStore) => DecisionStore,
+  actor: LedgerActor = 'sync',
 ): Promise<DecisionStore> {
-  return casUpdate<DecisionStore>({
+  // casUpdate re-invokes mutate on a conflict; the last invocation's input is
+  // the snapshot the committed result was derived from.
+  let winningBefore: DecisionStore | undefined;
+  const committed = await casUpdate<DecisionStore>({
     storePath: decisionsPath(rootPath),
     load: () => loadDecisionStore(rootPath),
-    mutate: (current) => ({ ...mutate(current), updatedAt: new Date().toISOString() }),
+    mutate: (current) => {
+      winningBefore = current;
+      return { ...mutate(current), updatedAt: new Date().toISOString() };
+    },
     serialize: (next) => JSON.stringify(next, null, 2) + '\n',
   });
+  if (winningBefore) {
+    const entries = diffStoreTransitions(
+      winningBefore, committed, actor, new Date().toISOString(),
+      await currentHeadCommit(rootPath),
+    );
+    await appendLedgerEntries(rootPath, entries);
+  }
+  return committed;
 }
 
 /**

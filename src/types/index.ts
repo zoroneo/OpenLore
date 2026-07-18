@@ -58,6 +58,16 @@ export interface OpenLoreConfig {
    */
   specStore?: SpecStoreConfig;
   /**
+   * Optional governance behavior (change: add-decision-autopilot). With
+   * `autopilot: true`, the decisions commit gate auto-accepts verified decisions
+   * (distinct `auto-approved` status, actor recorded on an append-only ledger),
+   * syncs them to specs, and never blocks a commit; blocking human review is the
+   * behavior when absent/false. Autopilot never touches a human-rejected decision.
+   */
+  governance?: {
+    autopilot?: boolean;
+  };
+  /**
    * Optional declared covering surfaces + advisory posture for the change-impact
    * certificate (change: add-change-impact-certificate). A covering surface is a
    * declared semantic/governance boundary (a set of symbols or files), not a
@@ -588,6 +598,7 @@ export type DecisionStatus =
   | 'verified'      // cross-checked against diff — has code evidence
   | 'phantom'       // recorded but no matching code change found
   | 'approved'      // human/agent approved for sync
+  | 'auto-approved' // accepted by decision autopilot: synced to specs, awaiting optional human review
   | 'rejected'      // human/agent rejected
   | 'synced';       // written to spec files
 
@@ -634,6 +645,16 @@ export interface PendingDecision {
   // Review
   reviewedAt?: string;
   reviewNote?: string;
+  /**
+   * Who accepted this decision: 'human' (explicit approve) or 'autopilot'
+   * (decision autopilot auto-accepted it). Absent on decisions accepted before
+   * this field existed — treated as 'human'. Provenance is never silently
+   * upgraded: a later human review sets humanReviewedAt, it does not rewrite
+   * approvedBy. (change: add-decision-autopilot)
+   */
+  approvedBy?: 'human' | 'autopilot';
+  /** Set when a human reviewed (promoted or rejected) an auto-accepted decision. */
+  humanReviewedAt?: string;
 
   // Sync tracking
   syncedAt?: string;
