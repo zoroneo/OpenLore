@@ -20,6 +20,7 @@ import type { SerializedCallGraph } from '../../analyzer/call-graph.js';
 import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain, readCachedContext, safeJoin, safeOpenspecDir, queryTooLongError, notReadyResult } from './utils.js';
 import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote } from './progressive.js';
 import { readOpenLoreConfig } from '../config-manager.js';
+import { repairStatusFor, REPAIR_REASON_DETAIL } from '../cold-start-bootstrap.js';
 import { isIacLanguage } from '../../analyzer/iac/types.js';
 import type { RagManifest } from '../../generator/rag-manifest-generator.js';
 import { ARTIFACT_RAG_MANIFEST, ARTIFACT_STYLE_FINGERPRINT } from '../../../constants.js';
@@ -837,6 +838,13 @@ export async function handleOrient(
     }
   }
 
+  // ReadyOrHonestFirstUse (change: make-index-self-healing): distinguish *repairing*
+  // from *absent* (the not-ready result above) and plain *stale*. readCachedContext,
+  // awaited above, fires the background repair for a stale/mismatched index; surface
+  // its in-progress marker so an agent can proceed on this disclosed-stale answer or
+  // retry after the rebuild. Absent when no repair is running (a fresh index).
+  const indexRepair = repairStatusFor(absDir);
+
   // Minimal-sufficient navigation core — always returned (Spec 27).
   const core = {
     task,
@@ -847,6 +855,13 @@ export async function handleOrient(
       : {}),
     ...(graphIndexStale
       ? { graphIndexNote: 'Graph index unavailable — call paths, provenance, decisions, and change-coupling are omitted. Run analyze_codebase to (re)build it (a version upgrade resets the graph index until the next analyze).' }
+      : {}),
+    ...(indexRepair
+      ? { indexRepair: {
+          inProgress: true as const,
+          reason: indexRepair.reason,
+          note: `Serving a stale index (${REPAIR_REASON_DETAIL[indexRepair.reason]}); a background refresh has started and did not block this call. Re-run orient once it completes for fresh results.`,
+        } }
       : {}),
     relevantFiles,
     relevantFunctions,

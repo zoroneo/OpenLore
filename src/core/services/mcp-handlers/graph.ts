@@ -51,6 +51,7 @@ import {
   computeStaleness,
   edgeBasis,
   edgeBasisForChains,
+  repairDisclosure,
   type BoundaryEdge,
 } from './confidence-boundary.js';
 
@@ -512,7 +513,7 @@ export async function handleGetSubgraph(
     confidence: e.synthesized ? 'synthesized' : undefined,
     synthesizedBy: e.synthesizedBy,
   })));
-  const confidenceBoundary = assembleBoundary({ basis: subBasis, staleness: await computeStaleness(absDir), integrity: ctx?.integrity });
+  const confidenceBoundary = assembleBoundary({ basis: subBasis, staleness: await computeStaleness(absDir), integrity: ctx?.integrity, repair: repairDisclosure(absDir) });
 
   return {
     query: { functionName, direction, maxDepth },
@@ -704,7 +705,7 @@ export async function handleAnalyzeImpact(
       if (e.calleeId && involvedIds.has(e.calleeId)) impactEdges.push({ confidence: e.confidence, synthesizedBy: e.synthesizedBy });
     }
   }
-  const confidenceBoundary = assembleBoundary({ basis: edgeBasis(impactEdges), staleness: await computeStaleness(absDir), integrity: ctx?.integrity });
+  const confidenceBoundary = assembleBoundary({ basis: edgeBasis(impactEdges), staleness: await computeStaleness(absDir), integrity: ctx?.integrity, repair: repairDisclosure(absDir) });
 
   const results = seeds.map(seed => {
     const isHub     = hubIds.has(seed.id);
@@ -1258,7 +1259,7 @@ export async function handleTraceExecutionPath(
       message: `No execution path found from "${entryFunction}" to "${targetFunction}" within depth ${maxDepth}.`,
       hint: 'Try increasing maxDepth, or check whether both functions are in the same connected component of the call graph.',
       ...(valueLevelInfo ? { valueLevel: valueLevelInfo } : {}),
-      confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains([], pairIndex), staleness: traceStaleness, integrity: ctx?.integrity }),
+      confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains([], pairIndex), staleness: traceStaleness, integrity: ctx?.integrity, repair: repairDisclosure(absDir) }),
     };
   }
 
@@ -1286,6 +1287,6 @@ export async function handleTraceExecutionPath(
     shortestPath: paths[0].chain,
     paths,
     ...(valueLevelInfo ? { valueLevel: valueLevelInfo } : {}),
-    confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains(allPaths, pairIndex), staleness: traceStaleness, integrity: ctx?.integrity }),
+    confidenceBoundary: assembleBoundary({ basis: edgeBasisForChains(allPaths, pairIndex), staleness: traceStaleness, integrity: ctx?.integrity, repair: repairDisclosure(absDir) }),
   };
 }

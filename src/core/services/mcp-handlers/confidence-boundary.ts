@@ -22,6 +22,7 @@ import { extname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { ARTIFACT_FINGERPRINT, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DIR } from '../../../constants.js';
 import type { IndexIntegrity } from '../../analyzer/index-attestation.js';
+import { repairStatusFor, REPAIR_REASON_DETAIL } from '../cold-start-bootstrap.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -88,6 +89,20 @@ export interface IndexIntegrityDisclosure {
   detail: string;
 }
 
+/**
+ * A background index repair is in flight for the queried repo (change:
+ * make-index-self-healing). The answer was served from the stale index without
+ * waiting; a later call after the rebuild completes serves fresh results. Absent
+ * when no repair is running. Distinguishes *repairing* from plain *stale* so an
+ * agent can choose to proceed on the disclosed answer or retry.
+ */
+export interface RepairInProgressMarker {
+  inProgress: true;
+  /** Why the repair started (integrity-mismatched, stale-region, schema-reset, …). */
+  reason: string;
+  detail: string;
+}
+
 export interface ConfidenceBoundary {
   /** How the traversal was grounded. Omitted for non-traversal answers (recall). */
   basis?: EdgeBasis;
@@ -97,6 +112,8 @@ export interface ConfidenceBoundary {
   staleness?: StalenessMarker;
   /** Index integrity verdict when the underlying index did not reconcile. Absent when healthy. */
   integrity?: IndexIntegrityDisclosure;
+  /** A background repair is healing this index right now. Absent when none is running. */
+  repair?: RepairInProgressMarker;
   /**
    * True iff the computation crossed no boundary: no synthesized-edge reliance, no
    * known-unknowable crossing, a current index, AND a reconciled (non-degraded,
@@ -114,6 +131,24 @@ export interface ConfidenceBoundary {
 export function integrityDisclosure(integrity?: IndexIntegrity): IndexIntegrityDisclosure | undefined {
   if (!integrity || integrity.verdict === 'healthy') return undefined;
   return { verdict: integrity.verdict, detail: integrity.detail };
+}
+
+/**
+ * The repair-in-progress marker for a directory, or undefined when no background
+ * repair is running. Handlers pass this into {@link assembleBoundary} so a stale
+ * answer served during a self-heal is disclosed as *repairing*, not silently stale
+ * (change: make-index-self-healing).
+ */
+export function repairDisclosure(directory: string): RepairInProgressMarker | undefined {
+  const status = repairStatusFor(directory);
+  if (!status) return undefined;
+  return {
+    inProgress: true,
+    reason: status.reason,
+    detail:
+      `A background index refresh has started (${REPAIR_REASON_DETAIL[status.reason]}); this answer ` +
+      `was served from the stale index without waiting. Re-run for fresh results once it completes.`,
+  };
 }
 
 /** Tally direct vs synthesized edges (by rule) from a set of traversed edges. */
@@ -282,6 +317,7 @@ export function assembleBoundary(parts: {
   extraCrossings?: KnownUnknowableCrossing[];
   staleness?: StalenessMarker;
   integrity?: IndexIntegrity;
+  repair?: RepairInProgressMarker;
 }): ConfidenceBoundary {
   const crossings = [
     ...(parts.basis ? crossingsFromBasis(parts.basis) : []),
@@ -289,12 +325,13 @@ export function assembleBoundary(parts: {
   ];
   const integrity = integrityDisclosure(parts.integrity);
   const boundary: ConfidenceBoundary = {
-    complete: crossings.length === 0 && !parts.staleness && !integrity,
+    complete: crossings.length === 0 && !parts.staleness && !integrity && !parts.repair,
   };
   if (parts.basis) boundary.basis = parts.basis;
   if (crossings.length > 0) boundary.knownUnknowable = crossings;
   if (parts.staleness) boundary.staleness = parts.staleness;
   if (integrity) boundary.integrity = integrity;
+  if (parts.repair) boundary.repair = parts.repair;
   return boundary;
 }
 
