@@ -46,10 +46,15 @@ lower-confidence edge or no edge — never an arbitrary first match.**
   duplicating it.
 - `type_name` resolution binds only a unique match; multiple same-named types → unresolved-ambiguous
   (same disposition as above).
-- Overloads: the trie gains an **arity** discriminator where the language exposes it (parameter
-  count is already in every signature). Exact-arity match binds; ambiguous arity falls into the same
-  ambiguity handling. No type-based overload resolution is attempted (that would need a type
-  checker — out of scope, disclosed).
+- Overloads: **deferred to a follow-up (disclosed).** The audit assumed overload siblings survive as
+  distinct nodes "orphaned at fan-in 0"; the measured behavior is different and more consequential —
+  same-name/different-arity overloads share the node id `file::Class.method`, so one is silently
+  DROPPED at node identity before the resolution ladder runs. The ladder therefore never sees a
+  multi-candidate overload set, and this change's ambiguity guards cannot reach it. Recovering
+  overloads requires arity-qualified node identity plus call-site argument-count capture across the
+  extractors — a node-identity change whose blast radius (stable ids, the CFG side-table, symbol
+  continuity, every node-count consumer) is different and larger than the resolution-ladder guesses
+  this change targets. It is carved into a dedicated follow-up rather than bundled here.
 - Conformance suite gains the missing adversarial fixtures: a cross-file **name-collision** fixture
   per resolution strategy (bare call, self/cls, type_name, overload pair), asserting the ambiguous
   case does NOT bind arbitrarily, plus cross-file happy-path fixtures for all 18 callGraph languages
@@ -72,8 +77,10 @@ substrate's authority. This change makes the ladder's documented discipline true
 
 ## Impact
 
-- `src/core/analyzer/call-graph.ts` (Strategy 1/1b/4 sites above), the symbol trie (arity
-  dimension), `call-graph-types.ts` (ambiguous disposition), conformance suite fixtures.
+- `src/core/analyzer/call-graph.ts` (Strategy 1/1a/1b/4 sites above), `call-graph-types.ts`
+  (ambiguous disposition), the resident-graph serializer + the three conclusion consumers
+  (`find_dead_code`, `analyze_error_propagation`, `analyze_impact`), conformance suite fixtures.
+  (The symbol-trie arity dimension moves to the deferred overload follow-up.)
 - Specs: `analyzer` — 1 ADDED requirement (NoFirstMatchBindingOnAmbiguity), 1 MODIFIED
   (CapabilityMatrixIsConformanceVerified gains the collision/cross-file-breadth scenarios).
 - Archive-order dependency: `CapabilityMatrixIsConformanceVerified` is ADDED by

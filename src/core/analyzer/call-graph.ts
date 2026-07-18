@@ -55,8 +55,10 @@ import type {
   InheritanceEdge,
   CallGraphResult,
   SerializedCallGraph,
+  AmbiguousCallSite,
+  AmbiguousStrategy,
 } from './call-graph-types.js';
-import { classifyLayerEdge } from './call-graph-types.js';
+import { classifyLayerEdge, AMBIGUOUS_CANDIDATE_CAP } from './call-graph-types.js';
 
 // Docstring/declaration extraction helpers — extracted to ./call-graph-extract.ts
 // (internal, not re-exported; see the banner at the original section site below).
@@ -91,8 +93,10 @@ export type {
   InheritanceEdge,
   CallGraphResult,
   SerializedCallGraph,
+  AmbiguousCallSite,
+  AmbiguousStrategy,
 } from './call-graph-types.js';
-export { CALL_DISTANCE_COSTS, callDistance, layerOf, classifyLayerEdge } from './call-graph-types.js';
+export { CALL_DISTANCE_COSTS, callDistance, layerOf, classifyLayerEdge, AMBIGUOUS_CANDIDATE_CAP } from './call-graph-types.js';
 // Re-export the extracted complexity estimator so it stays importable from call-graph.ts.
 export { computeCyclomaticComplexity } from './call-graph-complexity.js';
 
@@ -4073,31 +4077,53 @@ export class CallGraphBuilder {
      *  (the same-class / same-file family — the dominant case), then the file the
      *  caller imports the class from (cross-file parent); a single candidate is
      *  unambiguous; an ambiguous match with no affinity is SKIPPED, never guessed. */
+    /** Outcome of an affinity-based candidate pick: a unique target, a genuinely
+     *  ambiguous candidate set (≥2, no affinity signal — never guessed), or none.
+     *  (change: harden-call-resolution-ambiguity). */
+    type AffinityPick =
+      | { kind: 'unique'; node: FunctionNode }
+      | { kind: 'ambiguous'; candidates: FunctionNode[] }
+      | { kind: 'none' };
+
+    /** The one affinity ladder shared by self/cls, this/super and type-name
+     *  resolution: own-file containment → the file the caller imports the qualifier
+     *  from → a single remaining candidate. A candidate set that survives all three
+     *  with >1 member is ambiguous and is NEVER bound to an arbitrary first match. */
+    const pickByAffinity = (
+      cands: FunctionNode[],
+      callerFile: string,
+      qualifier: string,
+    ): AffinityPick => {
+      if (cands.length === 0) return { kind: 'none' };
+      const own = cands.find(c => c.filePath === callerFile);
+      if (own) return { kind: 'unique', node: own };
+      const importedFrom = callImportMap.get(callerFile)?.get(qualifier);
+      if (importedFrom) {
+        const m = cands.find(
+          c =>
+            c.filePath === importedFrom ||
+            c.filePath.startsWith(`${importedFrom}.`) ||
+            c.filePath.startsWith(`${importedFrom}/`),
+        );
+        if (m) return { kind: 'unique', node: m };
+      }
+      // Unambiguous single target → safe; ambiguous with no affinity → do not guess.
+      return cands.length === 1
+        ? { kind: 'unique', node: cands[0] }
+        : { kind: 'ambiguous', candidates: cands };
+    };
+
+    /** Resolve an intra-object method call by walking the enclosing class chain,
+     *  disambiguating each hop with {@link pickByAffinity}. Returns the resolved node,
+     *  or — when the first class with candidates was ambiguous with no affinity and no
+     *  ancestor resolved — the ambiguous candidate set so the caller can disclose it. */
     const resolveSelfMethod = (
       callerNode: FunctionNode,
       methodName: string,
       includeSelf: boolean,
-    ): FunctionNode | undefined => {
-      if (!callerNode.className) return undefined;
-      const pick = (cls: string): FunctionNode | undefined => {
-        const cands = trie.findByQualifiedName(cls, methodName);
-        if (cands.length === 0) return undefined;
-        const own = cands.find(c => c.filePath === callerNode.filePath);
-        if (own) return own;
-        const importedFrom = callImportMap.get(callerNode.filePath)?.get(cls);
-        if (importedFrom) {
-          const m = cands.find(
-            c =>
-              c.filePath === importedFrom ||
-              c.filePath.startsWith(`${importedFrom}.`) ||
-              c.filePath.startsWith(`${importedFrom}/`),
-          );
-          if (m) return m;
-        }
-        // Unambiguous single target → safe; ambiguous with no affinity → skip (the
-        // wrong-file guess was the source of false cross-file edges).
-        return cands.length === 1 ? cands[0] : undefined;
-      };
+    ): { node?: FunctionNode; ambiguous?: FunctionNode[] } => {
+      if (!callerNode.className) return {};
+      let firstAmbiguous: FunctionNode[] | undefined;
       const seen = new Set<string>();
       const queue: string[] = includeSelf
         ? [callerNode.className]
@@ -4106,17 +4132,40 @@ export class CallGraphBuilder {
         const cls = queue.shift()!;
         if (seen.has(cls)) continue;
         seen.add(cls);
-        const hit = pick(cls);
-        if (hit) return hit;
+        const picked = pickByAffinity(trie.findByQualifiedName(cls, methodName), callerNode.filePath, cls);
+        if (picked.kind === 'unique') return { node: picked.node };
+        if (picked.kind === 'ambiguous' && !firstAmbiguous) firstAmbiguous = picked.candidates;
         // Walk to this class's parents. The relationship map is keyed by file::Class;
         // probe the caller's file key (same-file class families — the common case).
         const rel = relationships.get(`${callerNode.filePath}::${cls}`);
         for (const p of rel?.parentClasses ?? []) if (!seen.has(p)) queue.push(p);
       }
-      return undefined;
+      return firstAmbiguous ? { ambiguous: firstAmbiguous } : {};
     };
 
     const edges: CallEdge[] = [];
+    // Call sites the ladder refused to bind because the candidate set was ambiguous
+    // (change: harden-call-resolution-ambiguity). Recorded instead of an arbitrary
+    // first-match edge so precision-sensitive consumers can disclose the ambiguity.
+    const ambiguousSites: AmbiguousCallSite[] = [];
+    const recordAmbiguous = (
+      r: RawEdge,
+      strategy: AmbiguousStrategy,
+      candidates: FunctionNode[],
+    ): void => {
+      const ids = candidates
+        .map(c => c.id)
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      ambiguousSites.push({
+        callerId: r.callerId,
+        calleeName: r.calleeName,
+        calleeObject: r.calleeObject,
+        line: r.line,
+        strategy,
+        candidateIds: ids.slice(0, AMBIGUOUS_CANDIDATE_CAP),
+        candidateCount: ids.length,
+      });
+    };
     for (const raw of allRawEdges) {
       const callerNode = allNodes.get(raw.callerId);
       if (!callerNode) continue;
@@ -4124,11 +4173,17 @@ export class CallGraphBuilder {
       let calleeNode: FunctionNode | undefined;
       let confidence: EdgeConfidence = 'name_only';
 
-      // Strategy 1 — self/cls intra-class (Python self.*, cls.* or same-class method)
+      // Strategy 1 — self/cls intra-class (Python self.*, cls.* or same-class method).
+      // Shares the this/super affinity ladder (own-file → imported-from → single
+      // candidate), walking ancestors so an inherited method still resolves. Two
+      // same-named classes in different files no longer bind by insertion order:
+      // the caller's own class wins, and a genuinely ambiguous set is disclosed, never
+      // guessed (change: harden-call-resolution-ambiguity).
       if (raw.calleeObject === 'self' || raw.calleeObject === 'cls') {
         if (callerNode.className) {
-          const candidates = trie.findByQualifiedName(callerNode.className, raw.calleeName);
-          if (candidates.length > 0) { calleeNode = candidates[0]; confidence = 'self_cls'; }
+          const res = resolveSelfMethod(callerNode, raw.calleeName, true);
+          if (res.node) { calleeNode = res.node; confidence = 'self_cls'; }
+          else if (res.ambiguous) { recordAmbiguous(raw, 'self_cls', res.ambiguous); continue; }
         }
       }
 
@@ -4139,8 +4194,9 @@ export class CallGraphBuilder {
       // resolved nor external — because the call query historically only captured an
       // `(identifier)` receiver. (change: add-this-super-method-resolution)
       if (!calleeNode && (raw.calleeObject === 'this' || raw.calleeObject === 'super')) {
-        const resolved = resolveSelfMethod(callerNode, raw.calleeName, raw.calleeObject === 'this');
-        if (resolved) { calleeNode = resolved; confidence = 'self_cls'; }
+        const res = resolveSelfMethod(callerNode, raw.calleeName, raw.calleeObject === 'this');
+        if (res.node) { calleeNode = res.node; confidence = 'self_cls'; }
+        else if (res.ambiguous) { recordAmbiguous(raw, 'self_cls', res.ambiguous); continue; }
       }
 
       // Strategy 1b — type-name resolution (capitalized receiver = type/class reference).
@@ -4150,6 +4206,9 @@ export class CallGraphBuilder {
       // don't cover. A capitalized receiver is a reliable signal for a class reference
       // in these languages (variables are conventionally lower-case), so resolve it to
       // the matching internal type member before falling back to import/external.
+      // A unique type match (or one singled out by file/import affinity) binds; two
+      // same-named types with no affinity are disclosed as ambiguous, never guessed
+      // (change: harden-call-resolution-ambiguity).
       if (
         !calleeNode && raw.calleeObject &&
         (callerNode.language === 'Swift' || callerNode.language === 'C++' || callerNode.language === 'Java')
@@ -4157,8 +4216,13 @@ export class CallGraphBuilder {
         const ch = raw.calleeObject.charCodeAt(0);
         const isCapitalized = ch >= 65 && ch <= 90; // A-Z
         if (isCapitalized) {
-          const candidates = trie.findByQualifiedName(raw.calleeObject, raw.calleeName);
-          if (candidates.length > 0) { calleeNode = candidates[0]; confidence = 'type_name'; }
+          const picked = pickByAffinity(
+            trie.findByQualifiedName(raw.calleeObject, raw.calleeName),
+            callerNode.filePath,
+            raw.calleeObject,
+          );
+          if (picked.kind === 'unique') { calleeNode = picked.node; confidence = 'type_name'; }
+          else if (picked.kind === 'ambiguous') { recordAmbiguous(raw, 'type_name', picked.candidates); continue; }
         }
       }
 
@@ -4249,7 +4313,16 @@ export class CallGraphBuilder {
           const recursive = sameFileCands.find(c => c === callerNode);
           const sameFile = nested[0] ?? recursive ?? sameFileCands[0];
           if (sameFile) { calleeNode = sameFile; confidence = 'same_file'; }
-          else { calleeNode = candidates[0]; confidence = 'name_only'; }
+          else if (candidates.length === 1) {
+            // A UNIQUE cross-file candidate still binds at name_only, exactly as before.
+            calleeNode = candidates[0]; confidence = 'name_only';
+          } else {
+            // >1 cross-file candidate and no same-file / import affinity (Strategy 3
+            // already ran): binding candidates[0] here was the highest-impact guess —
+            // an arbitrary sort-order match carrying the substrate's authority. Refuse
+            // it; disclose the ambiguity instead (change: harden-call-resolution-ambiguity).
+            recordAmbiguous(raw, 'name_only', candidates); continue;
+          }
         }
       }
 
@@ -4667,6 +4740,7 @@ export class CallGraphBuilder {
       },
       styleByFile: styleByFile.size > 0 ? styleByFile : undefined,
       parseHealthByFile: parseHealthByFile.size > 0 ? parseHealthByFile : undefined,
+      ambiguousSites: ambiguousSites.length > 0 ? ambiguousSites : undefined,
     };
   }
 
@@ -4812,5 +4886,11 @@ export function serializeCallGraph(result: CallGraphResult): SerializedCallGraph
     entryPoints: result.entryPoints,
     layerViolations: result.layerViolations,
     stats: result.stats,
+    // Unresolved-ambiguous call sites survive into llm-context.json so serve-time
+    // consumers (find_dead_code, analyze_error_propagation, analyze_impact) can
+    // disclose them (change: harden-call-resolution-ambiguity). Omitted when empty.
+    ...(result.ambiguousSites && result.ambiguousSites.length > 0
+      ? { ambiguousSites: result.ambiguousSites }
+      : {}),
   };
 }
