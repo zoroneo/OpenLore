@@ -1,11 +1,24 @@
 # Single-source language detection: one extension map, not two divergent ones
 
-> Status: PROPOSED (2026-07-03, e2e audit). Two independent `detectLanguage` implementations have
-> silently diverged — the incomplete one feeds AST-aware chunking, so ~12 supported languages
-> degrade to generic text chunking with no signal. One canonical extension→language map in the
-> language-support registry, both call sites import it, a conformance test guards it. Deterministic,
-> no LLM. Grounded in the north star (`overview/spec.md`, `c6d1ad07`) and the registry's own
-> derived-not-asserted discipline.
+> Status: IMPLEMENTED (2026-07-18). Two independent `detectLanguage` implementations had
+> silently diverged — the incomplete one fed AST-aware chunking, so the `.mts`/`.cts`/`.jsx`
+> extension variants (and ~12 languages) resolved to `unknown` on the chunking path. Now one
+> canonical detector, a completeness test, and a singularity guard that fails CI on a re-divergence.
+> Deterministic, no LLM. Grounded in the north star (`overview/spec.md`, `c6d1ad07`) and the
+> registry's own derived-not-asserted discipline.
+>
+> **Implementation note — the canonical function lives in a dependency-free `language-detection.ts`
+> leaf that `language-support.ts` re-exports, not inline in the registry.** The registry builds its
+> capability matrix eagerly at module load from `signature-extractor.ts`'s `SIGNATURE_LANGUAGES`, so
+> the extractor cannot import the registry back without an eager `LANGUAGE_SUPPORT`-vs-`SIGNATURE_LANGUAGES`
+> initialization cycle (reproduced: `undefined.has(...)` at load). The leaf breaks the cycle while
+> keeping the registry the public detection surface — every caller still resolves through one definition.
+>
+> **Honesty note — the AST chunker's coverage is parser-bounded.** Consolidation makes detection
+> correct for every supported language, but the chunker only carries 7 tree-sitter parsers
+> (ts/js/py/go/rust/ruby/java). The provable chunking win is therefore the `.mts`/`.cts`/`.jsx`
+> variants the incomplete map missed among parser-backed languages; Kotlin/PHP/Elixir now detect
+> correctly but still fall back honestly (extending the chunker's parser set is a separate follow-up).
 
 ## The gap
 

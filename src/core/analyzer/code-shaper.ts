@@ -128,33 +128,6 @@ export function getSkeletonContent(source: string, language: string): string {
 }
 
 // ============================================================================
-// LANGUAGE DETECTION
-// ============================================================================
-
-const EXT_TO_LANGUAGE: Record<string, string> = {
-  ts: 'TypeScript',
-  tsx: 'TypeScript',
-  js: 'JavaScript',
-  mjs: 'JavaScript',
-  cjs: 'JavaScript',
-  py: 'Python',
-  go: 'Go',
-  rs: 'Rust',
-  rb: 'Ruby',
-  java: 'Java',
-  cpp: 'C++',
-  cc: 'C++',
-  cxx: 'C++',
-  h: 'C++',
-  hpp: 'C++',
-};
-
-export function detectLanguage(filePath: string): string {
-  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
-  return EXT_TO_LANGUAGE[ext] ?? 'unknown';
-}
-
-// ============================================================================
 // REDUCTION RATIO
 // ============================================================================
 

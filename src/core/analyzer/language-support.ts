@@ -92,6 +92,14 @@ export const ALL_LANGUAGES: readonly string[] = [...CODE_LANGUAGES, ...IAC_TAG_L
   .slice()
   .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
+// The single canonical extension→language detector lives in the dependency-free
+// `language-detection.ts` leaf (change: fix-language-detection-single-source) so the
+// signature extractor and this registry can both import it without a module cycle — this
+// registry derives its capability matrix eagerly from the extractor's SIGNATURE_LANGUAGES,
+// so the extractor cannot import the registry back. The registry re-exports it as the
+// public detection surface; every consumer resolves through this one definition.
+export { detectLanguage, EXTENSION_TO_LANGUAGE } from './language-detection.js';
+
 /** One language's declarative support record: the capabilities it backs. */
 export interface LanguageSupportRecord {
   language: string;

@@ -27,7 +27,8 @@ import {
 } from '../../constants.js';
 import { VectorIndex } from '../../core/analyzer/vector-index.js';
 import { resolveEmbedder } from '../../core/analyzer/embedder.js';
-import { getSkeletonContent, detectLanguage } from '../../core/analyzer/code-shaper.js';
+import { getSkeletonContent } from '../../core/analyzer/code-shaper.js';
+import { detectLanguage } from '../../core/analyzer/language-detection.js';
 import { runChatAgent, resolveProviderConfig } from '../../core/services/chat-agent.js';
 
 /** Strip internal filesystem paths and API keys from error messages before sending to clients. */

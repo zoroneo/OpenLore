@@ -10,7 +10,7 @@
  */
 
 import type Parser from 'tree-sitter';
-import { detectLanguage } from './code-shaper.js';
+import { detectLanguage } from './language-detection.js';
 
 // ── Lazy parser singletons (one per language, created on first use) ─────────
 

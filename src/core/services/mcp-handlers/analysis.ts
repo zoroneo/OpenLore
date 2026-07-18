@@ -34,7 +34,8 @@ import {
 import { runAnalysis } from '../../../cli/commands/analyze.js';
 import { analyzeForRefactoring } from '../../analyzer/refactor-analyzer.js';
 import { formatSignatureMaps } from '../../analyzer/signature-extractor.js';
-import { getSkeletonContent, detectLanguage, isSkeletonWorthIncluding } from '../../analyzer/code-shaper.js';
+import { getSkeletonContent, isSkeletonWorthIncluding } from '../../analyzer/code-shaper.js';
+import { detectLanguage } from '../../analyzer/language-detection.js';
 import { buildArchitectureOverview } from '../../analyzer/architecture-writer.js';
 import {
   isGitRepository,

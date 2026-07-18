@@ -114,6 +114,20 @@ describe('astChunkContent', () => {
     }
   });
 
+  // Regression for change: fix-language-detection-single-source. The `.mts`/`.cts`/`.jsx`
+  // extension variants were absent from the (now-deleted) code-shaper detection map that fed
+  // this chunker, so they resolved to 'unknown' → generic blank-line fallback. With the single
+  // canonical detector they resolve to TypeScript/JavaScript and take the AST path — the tell
+  // is the import-block header prepended to non-first chunks (generic chunking never does that).
+  it.each([
+    ['src/utils.mts', /^import /m],
+    ['src/utils.cts', /^import /m],
+  ])('formerly-missed %s now takes the AST path (header on non-first chunks)', async (path, headerRe) => {
+    const chunks = await astChunkContent(TS_CONTENT_LARGE, path, 200);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[1]).toMatch(headerRe);
+  });
+
   it('falls back to blank-line chunking for unsupported file types', async () => {
     const content = 'section one\n\n'.repeat(10) + 'section two\n\n'.repeat(10);
     const chunks = await astChunkContent(content, 'file.unknown', 100);
