@@ -50,12 +50,13 @@
     "prepublishOnly": "npm run build && npm run test:run"
   },
   "keywords": [
-    "openspec",
-    "spec-driven",
+    "architectural-memory",
+    "structural-analysis",
     "code-analysis",
-    "documentation",
-    "reverse-engineering",
-    "specification",
+    "call-graph",
+    "static-analysis",
+    "ai-coding-agents",
+    "mcp",
     "cli",
     "pi-package"
   ],
@@ -74,7 +75,7 @@
     "id": "openlore",
     "namespace": "lore",
     "displayName": "OpenLore",
-    "summary": "Reverse-engineer living OpenSpec specs from existing code, then keep code and specs in sync.",
+    "summary": "Persistent architectural memory and deterministic structural context for AI coding agents, computed locally from your code.",
     "bin": "openlore",
     "binArgs": [
       "npx",
