@@ -22,7 +22,11 @@ import {
   ADJACENT_TOOL_GROUPS,
   capabilityFamily,
   groupToolsByFamily,
+  enforceConclusionContract,
+  conclusionShapeFinding,
+  CONCLUSION_SHAPE_VIOLATION_CODE,
 } from './tool-contract.js';
+import { isKnownFindingCode } from './enforcement-policy.js';
 import { MAX_PROVENANCE_EDGES } from '../../../constants.js';
 import { TOOL_COGNITIVE_WEIGHTS } from './epistemic-lease.js';
 
@@ -158,19 +162,45 @@ describe('NoRedundantConclusions: adjacent tools disambiguate themselves', () =>
     }
   });
 
-  it('each member names at least one near-sibling in its own description', () => {
+  // AdjacentConclusionsCrossReferenceAllPairs (enforce-conclusion-contract-runtime):
+  // every member names EVERY sibling, not merely one — so a 3+-member group cannot
+  // pass on a single lucky mention while a genuinely-confusable sibling goes unnamed.
+  it('each member names EVERY other member of its group (all-pairs, not just one)', () => {
     for (const group of ADJACENT_TOOL_GROUPS) {
       for (const name of group) {
         const description = toolByName.get(name)?.description ?? '';
         const siblings = group.filter(s => s !== name);
-        const namesASibling = siblings.some(s => description.includes(s));
+        const missing = siblings.filter(s => !description.includes(s));
         expect(
-          namesASibling,
-          `tool "${name}" is adjacent to {${siblings.join(', ')}} but its description names none of them ` +
-            `(NoRedundantConclusions: state the distinct question and cross-reference the near-sibling)`,
-        ).toBe(true);
+          missing,
+          `tool "${name}" is adjacent to {${siblings.join(', ')}} but its description omits {${missing.join(', ')}} ` +
+            `(AdjacentConclusionsCrossReferenceAllPairs: name every sibling and state the distinct question)`,
+        ).toEqual([]);
       }
     }
+  });
+
+  it('registers the two audit-found adjacency pairs', () => {
+    const registered = ADJACENT_TOOL_GROUPS.map(g => [...g].sort().join('+'));
+    expect(registered).toContain(['find_path', 'trace_execution_path'].sort().join('+'));
+    expect(registered).toContain(['audit_spec_coverage', 'check_spec_drift'].sort().join('+'));
+  });
+
+  it('the all-pairs guard fails a synthetic 3-member group missing one sibling', () => {
+    // Mutation check: a member that names only ONE of its two siblings must be caught.
+    const descriptions: Record<string, string> = {
+      a: 'a relates to b and c',
+      b: 'b relates to a and c',
+      c: 'c relates to a only', // omits b
+    };
+    const group = ['a', 'b', 'c'];
+    const offenders: string[] = [];
+    for (const name of group) {
+      const siblings = group.filter(s => s !== name);
+      const missing = siblings.filter(s => !descriptions[name].includes(s));
+      if (missing.length > 0) offenders.push(`${name}→${missing.join(',')}`);
+    }
+    expect(offenders).toEqual(['c→b']);
   });
 });
 
@@ -232,5 +262,96 @@ describe('assertConclusionShape', () => {
       },
     };
     expect(() => assertConclusionShape('structural_diff', changelog)).not.toThrow();
+  });
+});
+
+// ============================================================================
+// ConclusionShapeIsEnforcedAtDispatch (mcp-quality; change:
+// enforce-conclusion-contract-runtime). The dispatch path runs the shape check on
+// every live response: strict (throw) under the test/CI suite, advisory (log +
+// disclose, still return) in production. These tests drive both modes via the
+// OPENLORE_CONCLUSION_CONTRACT override.
+// ============================================================================
+describe('enforceConclusionContract (runtime, dispatch-path)', () => {
+  const graphDump = { nodes: [{ id: 'a' }, { id: 'b' }], edges: [{ from: 'a', to: 'b' }] };
+
+  const withMode = (mode: 'strict' | 'advisory', fn: () => void) => {
+    const prev = process.env.OPENLORE_CONCLUSION_CONTRACT;
+    process.env.OPENLORE_CONCLUSION_CONTRACT = mode;
+    try {
+      fn();
+    } finally {
+      if (prev === undefined) delete process.env.OPENLORE_CONCLUSION_CONTRACT;
+      else process.env.OPENLORE_CONCLUSION_CONTRACT = prev;
+    }
+  };
+
+  it('the conclusion-shape-violation code is registered in the enforcement registry', () => {
+    expect(isKnownFindingCode(CONCLUSION_SHAPE_VIOLATION_CODE)).toBe(true);
+  });
+
+  it('returns a well-shaped conclusion untouched in both modes', () => {
+    const ok = { hubs: [{ name: 'validateDirectory', fanIn: 74 }] };
+    withMode('strict', () => expect(enforceConclusionContract('get_critical_hubs', ok)).toBe(ok));
+    withMode('advisory', () => expect(enforceConclusionContract('get_critical_hubs', ok)).toBe(ok));
+  });
+
+  it('leaves explicit-topology results untouched even when they are a graph dump', () => {
+    withMode('strict', () => expect(enforceConclusionContract('get_subgraph', graphDump)).toBe(graphDump));
+  });
+
+  it('strict mode: a regressing conclusion handler throws (fails the suite)', () => {
+    withMode('strict', () => {
+      expect(() => enforceConclusionContract('get_minimal_context', graphDump)).toThrow(
+        ToolContractViolationError,
+      );
+    });
+  });
+
+  it('advisory mode: the result is still returned, carrying the disclosure', () => {
+    withMode('advisory', () => {
+      const logged: string[] = [];
+      const out = enforceConclusionContract('get_minimal_context', graphDump, m => logged.push(m)) as {
+        nodes: unknown[];
+        edges: unknown[];
+        _governance: Array<{ code: string; subject: string }>;
+      };
+      // The computed result survives (dropping a working answer would harm the agent).
+      expect(out.nodes).toEqual(graphDump.nodes);
+      expect(out.edges).toEqual(graphDump.edges);
+      // ...and it carries a conclusion-shape-violation finding naming the tool.
+      expect(out._governance).toHaveLength(1);
+      expect(out._governance[0].code).toBe(CONCLUSION_SHAPE_VIOLATION_CODE);
+      expect(out._governance[0].subject).toBe('get_minimal_context');
+      expect(logged).toHaveLength(1);
+    });
+  });
+
+  it('advisory mode: bounded provenance passes untouched (no disclosure)', () => {
+    withMode('advisory', () => {
+      const edges = Array.from({ length: MAX_PROVENANCE_EDGES }, (_, i) => ({ from: `n${i}`, to: `n${i + 1}` }));
+      const ok = { blastRadius: 3, provenance: edges };
+      expect(enforceConclusionContract('analyze_impact', ok)).toBe(ok);
+    });
+  });
+
+  it('advisory mode: a bare array/primitive violation is wrapped, not dropped', () => {
+    withMode('advisory', () => {
+      const edgeDump = Array.from({ length: MAX_PROVENANCE_EDGES + 1 }, (_, i) => ({ from: `n${i}`, to: `n${i + 1}` }));
+      const out = enforceConclusionContract('analyze_impact', edgeDump) as {
+        result: unknown[];
+        _governance: Array<{ code: string }>;
+      };
+      expect(out.result).toBe(edgeDump);
+      expect(out._governance[0].code).toBe(CONCLUSION_SHAPE_VIOLATION_CODE);
+    });
+  });
+
+  it('conclusionShapeFinding is a well-formed governance finding', () => {
+    const f = conclusionShapeFinding('some_tool', 'returns a graph');
+    expect(f.code).toBe(CONCLUSION_SHAPE_VIOLATION_CODE);
+    expect(f.source).toBe('conclusion-contract');
+    expect(f.subject).toBe('some_tool');
+    expect(f.message).toContain('some_tool');
   });
 });

@@ -17,7 +17,8 @@
 
 import { DEFAULT_DRIFT_MAX_FILES } from '../../constants.js';
 import type { DecisionScope } from '../../types/index.js';
-import { resolveCanonicalToolName } from './mcp-handlers/tool-contract.js';
+import { resolveCanonicalToolName, enforceConclusionContract } from './mcp-handlers/tool-contract.js';
+import { logger } from '../../utils/logger.js';
 
 import { handleOrient } from './mcp-handlers/orient.js';
 import { handleSelectTests } from './mcp-handlers/test-impact.js';
@@ -120,7 +121,27 @@ export class UnknownToolError extends Error {
  * search_code, suggest_insertion_points). Callers must ensure args.directory
  * and the directory param are the same resolved path.
  */
+/**
+ * Dispatch a tool and enforce the conclusion-over-graph contract on its result.
+ *
+ * The contract check lives HERE (not in each transport's caller) because
+ * `dispatchTool` is the single point both transports — the stdio MCP server and
+ * the serve HTTP daemon — funnel through, so one check gives them provable parity
+ * (ConclusionShapeIsEnforcedAtDispatch). It runs after the handler and before the
+ * caller serializes/caps the result: strict (throw) under the test/CI suite so a
+ * regressing handler fails, advisory (log + disclose, still return) in production.
+ */
 export async function dispatchTool(
+  name: string,
+  args: Record<string, unknown>,
+  directory: string,
+): Promise<unknown> {
+  const canonical = resolveCanonicalToolName(name);
+  const result = await dispatchToolImpl(canonical, args, directory);
+  return enforceConclusionContract(canonical, result, (msg) => logger.warning(msg));
+}
+
+async function dispatchToolImpl(
   name: string,
   args: Record<string, unknown>,
   directory: string,

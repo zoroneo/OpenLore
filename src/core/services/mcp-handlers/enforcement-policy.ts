@@ -152,6 +152,12 @@ export const FINDING_CODE_REGISTRY: Record<string, FindingCodeSpec> = {
     source: 'interference-map',
     description: 'Two in-flight changes (branches/PRs/agent tasks, within or across a federation) have a write-write (WAW) conflict on a shared symbol; they must not land concurrently. A CI check can name this code to warn when a new PR collides with an open one.',
   },
+  // ── conclusion-over-graph contract (enforce-conclusion-contract-runtime) ──
+  'conclusion-shape-violation': {
+    defaultClass: 'advisory',
+    source: 'conclusion-contract',
+    description: 'A conclusion-classified tool returned a graph-shaped response at runtime (a top-level nodes[]+edges[] join, or a raw id-reference edge dump over MAX_PROVENANCE_EDGES) instead of the computed conclusion — pushing the traversal back onto the agent. Advisory by default: the result is still returned with this disclosure attached. Gate on it via enforcement.policy to fail CI when a handler regresses.',
+  },
 };
 
 /** Whether a code is registered (so a declared policy entry is recognized). */

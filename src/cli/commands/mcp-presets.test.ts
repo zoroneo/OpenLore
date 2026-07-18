@@ -593,8 +593,12 @@ describe('tools/list payload budget (spec-28)', () => {
     expect(payloadBytes({})).toBeLessThan(payloadBytes({ preset: 'full' }));
   });
 
+  // Nav bumped 13_700 → 14_200 when find_path and trace_execution_path gained their mutual
+  // cross-references (spec: enforce-conclusion-contract-runtime / AdjacentConclusionsCross-
+  // ReferenceAllPairs) — find_path is in the navigation preset, so making the default-surface
+  // path pair mutually legible costs ~180 B here. A conscious budget decision, not silent drift.
   it('navigation preset stays lean (the low-overhead navigate-only escape)', () => {
-    expect(payloadBytes({ preset: 'navigation' })).toBeLessThan(13_700);
+    expect(payloadBytes({ preset: 'navigation' })).toBeLessThan(14_200);
   });
 
   // change: unify-navigation-and-governance-substrate — the `substrate` both-faces

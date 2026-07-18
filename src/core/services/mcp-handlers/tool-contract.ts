@@ -20,6 +20,7 @@
  */
 
 import { MAX_PROVENANCE_EDGES } from '../../../constants.js';
+import type { GovernanceFinding } from './enforcement-policy.js';
 
 export type ToolOutputClass = 'conclusion' | 'explicit-topology';
 
@@ -288,6 +289,13 @@ export const ADJACENT_TOOL_GROUPS: ReadonlyArray<readonly string[]> = [
   ['find_clones', 'get_duplicate_report'],
   // Exact inverses: untested code vs. the reaching tests.
   ['report_coverage_gaps', 'select_tests'],
+  // Same point-to-point path conclusion, different job: cheapest-route selectors
+  // (by name/role/landmark) vs. an all-paths debugging trace between two functions.
+  // find_path is on the default `substrate` surface, so the distinction matters most here.
+  ['find_path', 'trace_execution_path'],
+  // Same spec↔code parity graph, two conclusions: which requirements lack code
+  // (coverage) vs. which existing code has drifted from its spec (drift).
+  ['audit_spec_coverage', 'check_spec_drift'],
 ];
 
 /**
@@ -379,6 +387,87 @@ export function assertConclusionShape(toolName: string, response: unknown): void
         `returns ${value.length} raw edge objects (> MAX_PROVENANCE_EDGES=${MAX_PROVENANCE_EDGES}); return the traversal result, not the graph`,
       );
     }
+  }
+}
+
+/* ===========================================================================
+ * Runtime enforcement of the conclusion-over-graph contract
+ * (change: enforce-conclusion-contract-runtime; spec: mcp-quality
+ * ConclusionShapeIsEnforcedAtDispatch).
+ *
+ * {@link assertConclusionShape} is the pure predicate; the dispatch path calls
+ * {@link enforceConclusionContract} on every live response so the invariant is
+ * checked in production, not only in synthetic tests. Enforcement is:
+ *   - STRICT under the test/CI suite — a regressing handler throws and fails the
+ *     suite (that is the whole point: catch the regression where it matters).
+ *   - ADVISORY in production (AdvisoryByDefault) — the violation is logged and a
+ *     `conclusion-shape-violation` governance finding is attached to the response,
+ *     but the computed result is still returned. Dropping a working answer to
+ *     punish its shape would harm the agent the contract exists to protect.
+ * =========================================================================== */
+
+/** Stable governance-finding code emitted when a conclusion tool regresses into a graph dump. */
+export const CONCLUSION_SHAPE_VIOLATION_CODE = 'conclusion-shape-violation';
+
+/**
+ * Whether the conclusion-shape check should be STRICT (throw) rather than advisory.
+ * Strict under the vitest/CI suite so a regressing handler fails the suite; advisory
+ * in production. Overridable via `OPENLORE_CONCLUSION_CONTRACT=strict|advisory` so a
+ * targeted test can exercise either mode deterministically.
+ */
+export function isStrictConclusionContract(): boolean {
+  const mode = process.env.OPENLORE_CONCLUSION_CONTRACT;
+  if (mode === 'strict') return true;
+  if (mode === 'advisory') return false;
+  return process.env.VITEST !== undefined || process.env.NODE_ENV === 'test';
+}
+
+/** The governance finding for a conclusion tool that returned a graph-shaped response. */
+export function conclusionShapeFinding(toolName: string, violation: string): GovernanceFinding {
+  return {
+    code: CONCLUSION_SHAPE_VIOLATION_CODE,
+    severity: 'warn',
+    source: 'conclusion-contract',
+    subject: toolName,
+    message: `Tool "${toolName}" returned a graph-shaped response instead of a conclusion: ${violation}`,
+  };
+}
+
+/**
+ * Attach the disclosure to a response without dropping it: an object gains a
+ * `_governance` finding array (merged if one already exists); a bare array or
+ * primitive (a degenerate conclusion shape) is wrapped as `{ result, _governance }`.
+ */
+function attachConclusionShapeDisclosure(toolName: string, result: unknown, violation: string): unknown {
+  const finding = conclusionShapeFinding(toolName, violation);
+  if (result !== null && typeof result === 'object' && !Array.isArray(result)) {
+    const obj = result as Record<string, unknown>;
+    const existing = Array.isArray(obj._governance) ? obj._governance : [];
+    return { ...obj, _governance: [...existing, finding] };
+  }
+  return { result, _governance: [finding] };
+}
+
+/**
+ * Enforce the conclusion-over-graph contract on a live dispatch result and return
+ * the value to serialize. `explicit-topology` and well-shaped `conclusion`
+ * responses are returned untouched. A violation throws in strict mode, or is logged
+ * and disclosed (result still returned) in advisory mode. Non-contract errors
+ * propagate unchanged.
+ */
+export function enforceConclusionContract(
+  toolName: string,
+  result: unknown,
+  log?: (message: string) => void,
+): unknown {
+  try {
+    assertConclusionShape(toolName, result);
+    return result;
+  } catch (err) {
+    if (!(err instanceof ToolContractViolationError)) throw err;
+    if (isStrictConclusionContract()) throw err;
+    log?.(err.message);
+    return attachConclusionShapeDisclosure(toolName, result, err.violation);
   }
 }
 

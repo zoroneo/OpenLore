@@ -386,7 +386,9 @@ export const TOOL_DEFINITIONS = [
       '"which call chain produced this error?", "is there a path from A to B?". ' +
       'Finds all execution paths between two functions in the call graph (BFS/DFS, ' +
       'shortest first). Complementary to get_subgraph — use get_subgraph for ' +
-      'neighbourhood exploration, trace_execution_path for point-to-point tracing.',
+      'neighbourhood exploration, trace_execution_path for point-to-point tracing. ' +
+      'Distinct from find_path: trace_execution_path enumerates the paths for debugging; ' +
+      'find_path returns just the single CHEAPEST route (and accepts role/landmark selectors) for quick reachability.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -458,6 +460,8 @@ export const TOOL_DEFINITIONS = [
       'USE THIS WHEN: you\'ve modified code and want to know if the specs are still aligned, ' +
       'or when asked "is the code in sync with the spec?", "what changed since the last spec run?". ' +
       'Compares git-changed files against spec coverage — impossible to replicate by reading files. ' +
+      'Distinct from its sibling audit_spec_coverage: check_spec_drift asks whether EXISTING specs still ' +
+      'match code you changed (drift), while audit_spec_coverage asks what requirements/code have NO spec at all (coverage gaps). ' +
       'Requires openlore generate to have been run at least once. No LLM required.',
     inputSchema: {
       type: 'object',
@@ -1282,7 +1286,10 @@ export const TOOL_DEFINITIONS = [
       'orphan requirements (spec requirements with no mapped implementation), ' +
       'and stale domains (source files changed after spec was last written). ' +
       'Use this before starting a new feature to understand what needs specs, ' +
-      'or to audit coverage health. Requires "openlore analyze" to have been run.',
+      'or to audit coverage health. Distinct from its sibling check_spec_drift: ' +
+      'audit_spec_coverage finds requirements/code with NO spec (coverage gaps); ' +
+      'check_spec_drift finds existing specs that no longer match changed code (drift). ' +
+      'Requires "openlore analyze" to have been run.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1457,7 +1464,9 @@ export const TOOL_DEFINITIONS = [
       'OR selectors: landmark:<id>, role:entrypoint|hub|sink, file:<path>. Returns the single ' +
       'CHEAPEST path (by call-distance, or fewest hops if useCallDistance=false) plus a few bounded ' +
       'alternates and a reason — not a raw multi-path dump. "No path within budget" is an explicit ' +
-      'answer. Run analyze_codebase first.',
+      'answer. Distinct from trace_execution_path, which enumerates ALL paths for debugging: reach for ' +
+      'find_path to select the cheapest route (by name, role, or landmark), trace_execution_path to see every path. ' +
+      'Run analyze_codebase first.',
     inputSchema: {
       type: 'object',
       properties: {
