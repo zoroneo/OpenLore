@@ -54,13 +54,31 @@ import { redactSecretString } from '../secret-redaction.js';
 const ANALYSIS_AGE_WARNING_MS = ANALYSIS_AGE_WARNING_HOURS * 60 * 60 * 1000;
 
 /**
- * Decide which read-path staleness signal (if any) should heal, and fire the
- * shared at-most-once background repair for it. Priority is worst-first:
- * `mismatched` (materially wrong index) → schema reset → an explicit stale region
- * → an aged analysis. `degraded` is deliberately NOT a trigger (it already gets a
- * WAL-checkpoint retry and may be a transient WAL-lag artifact). Fires only when a
- * repair builder is registered (the MCP server); a no-op otherwise, so CLI/tests
- * keep today's detection-only behavior. Never throws, never blocks the read.
+ * Which read-path staleness signal (if any) should heal — a pure, testable
+ * decision. Priority is worst-first: `mismatched` (materially wrong index) →
+ * schema reset → an explicit stale region → an aged analysis. `degraded` is
+ * deliberately NOT a trigger (it already gets a WAL-checkpoint retry and may be a
+ * transient WAL-lag artifact). Returns undefined when the index looks current.
+ */
+export function computeRepairReason(
+  integrityVerdict: string | undefined,
+  wasReset: boolean,
+  staleCount: number,
+  artifactMtimeMs: number,
+  now: number = Date.now(),
+): RepairReason | undefined {
+  if (integrityVerdict === 'mismatched') return 'integrity-mismatched';
+  if (wasReset) return 'schema-reset';
+  if (staleCount >= STALE_REGION_REPAIR_THRESHOLD) return 'stale-region';
+  if (now - artifactMtimeMs > ANALYSIS_AGE_WARNING_MS) return 'analysis-age';
+  return undefined;
+}
+
+/**
+ * Fire the shared at-most-once background repair for the strongest read-path
+ * staleness signal, if any. Fires only when a repair builder is registered (the
+ * MCP server); a no-op otherwise, so CLI/tests keep today's detection-only
+ * behavior. Never throws, never blocks the read.
  */
 function maybeTriggerBackgroundRepair(
   directory: string,
@@ -69,11 +87,7 @@ function maybeTriggerBackgroundRepair(
   staleCount: number,
   artifactMtimeMs: number,
 ): void {
-  let reason: RepairReason | undefined;
-  if (integrityVerdict === 'mismatched') reason = 'integrity-mismatched';
-  else if (wasReset) reason = 'schema-reset';
-  else if (staleCount >= STALE_REGION_REPAIR_THRESHOLD) reason = 'stale-region';
-  else if (Date.now() - artifactMtimeMs > ANALYSIS_AGE_WARNING_MS) reason = 'analysis-age';
+  const reason = computeRepairReason(integrityVerdict, wasReset, staleCount, artifactMtimeMs);
   if (!reason) return;
   try {
     repairInBackground(directory, reason);

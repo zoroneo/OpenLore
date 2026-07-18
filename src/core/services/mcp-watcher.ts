@@ -737,6 +737,11 @@ export class McpWatcher {
     }
   }
 
+  /** Test-only: drive the graph-stale trigger without a real git/fs event. */
+  _triggerGraphStaleForTesting(reason: GraphStaleReason): void {
+    this.scheduleGraphRebuild(reason);
+  }
+
   /**
    * Schedule a debounced, coalesced full-graph rebuild after a trigger an
    * incremental patch cannot repair (change: make-index-self-healing). Rapid

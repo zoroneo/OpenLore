@@ -589,26 +589,36 @@ async function runRemediation(rootPath: string, r: Remediation): Promise<string>
 }
 
 /**
+ * The deduped set of remediations `--fix` will run: only non-ok checks that
+ * surfaced a machine-readable remediation, each action at most once (two checks
+ * may both print "re-analyze"). Pure and exported so the "fixes exactly what it
+ * printed, nothing else" contract is unit-testable without executing anything.
+ */
+export function planRemediations(
+  checks: CheckResult[],
+): Array<{ check: CheckResult; remediation: Remediation }> {
+  const seen = new Set<string>();
+  const queue: Array<{ check: CheckResult; remediation: Remediation }> = [];
+  for (const c of checks) {
+    if (c.status === 'ok' || !c.remediation) continue;
+    if (seen.has(c.remediation.label)) continue;
+    seen.add(c.remediation.label);
+    queue.push({ check: c, remediation: c.remediation });
+  }
+  return queue;
+}
+
+/**
  * Execute the remediations attached to non-ok checks, one confirmation per mutating
  * action in a TTY (or all of them with --yes). Deduplicates repeated actions (two
  * checks may both print "re-analyze") so each runs at most once. Re-run bare doctor
  * afterward to confirm.
  */
 async function applyRemediations(rootPath: string, checks: CheckResult[], yes: boolean): Promise<void> {
-  const actionable = checks.filter((c) => c.status !== 'ok' && c.remediation);
-  if (actionable.length === 0) {
+  const queue = planRemediations(checks);
+  if (queue.length === 0) {
     logger.info('doctor --fix', 'Nothing to fix — no check surfaced an automatic remediation.');
     return;
-  }
-
-  // Dedupe by remediation label so the same action never runs twice.
-  const seen = new Set<string>();
-  const queue: Array<{ check: CheckResult; remediation: Remediation }> = [];
-  for (const c of actionable) {
-    const r = c.remediation!;
-    if (seen.has(r.label)) continue;
-    seen.add(r.label);
-    queue.push({ check: c, remediation: r });
   }
 
   logger.section('openlore doctor --fix');
