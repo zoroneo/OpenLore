@@ -162,9 +162,15 @@ describe('openlore serve', () => {
     const body = await jsonOf(res);
     expect(body.ok).toBe(true);
     expect(typeof body.version).toBe('string');
-    expect(body.preset).toBe('navigation');
+    // serve shares the one default-preset source with `openlore mcp`
+    // (LEAN_DEFAULT_PRESET = substrate; change fix-default-preset-claims). It no
+    // longer diverges to the old navigation surface.
+    expect(body.preset).toBe('substrate');
     expect(body.tools).toContain('orient');
     expect(body.tools).toContain('search_code');
+    // A governance read that IS in substrate but NOT in navigation — proves the
+    // default is the both-faces surface, not the navigate-only escape.
+    expect(body.tools).toContain('recall');
   });
 
   it('writes serve.json on start and removes it on close', async () => {

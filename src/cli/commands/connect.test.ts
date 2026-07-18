@@ -29,17 +29,19 @@ const exists = async (rel: string): Promise<boolean> => {
 };
 
 // Guard the `--preset` help string against the count/preset drift a v2.1.4 QA pass
-// caught (it said "all 62 tools" and omitted substrate + coordination, contradicting
-// every other surface that says 72). The full surface is 72; the preset list must stay
-// current. Mirrors the install command's wording.
+// caught (it said "all 62 tools" and omitted substrate + coordination). The preset
+// list must stay current. The hardcoded tool count was dropped in
+// fix-default-preset-claims — "the full surface" is approximate-free text that can't
+// go stale — so this no longer asserts a literal count, only that no OLD count leaks.
+// The names-the-default-via-the-constant guard lives in
+// default-preset-single-source.test.ts.
 describe('connect --preset help is current', () => {
-  it('lists the current presets (incl. substrate + coordination) and 72 tools, not the stale 62', () => {
+  it('lists the current presets (incl. substrate + coordination), no stale tool count', () => {
     const opt = connectCommand.options.find(o => o.long === '--preset');
     expect(opt, 'connect must register a --preset option').toBeDefined();
     const desc = opt!.description;
     expect(desc).toContain('substrate');
     expect(desc).toContain('coordination');
-    expect(desc).toContain('72 tools');
     expect(desc).not.toContain('62');
   });
 });

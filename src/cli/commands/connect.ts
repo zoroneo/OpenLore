@@ -17,6 +17,7 @@ import { checkbox } from '@inquirer/prompts';
 import { logger } from '../../utils/logger.js';
 import { runInstall, surfaceStatus } from '../install/index.js';
 import { type AgentName } from '../install/detect.js';
+import { LEAN_DEFAULT_PRESET } from '../../constants.js';
 
 interface ConnectOpts {
   preset?: string;
@@ -73,7 +74,7 @@ export const connectCommand = new Command('connect')
     'and SessionStart hook, and set the run permission. Omit the agent for an interactive picker.'
   )
   .argument('[agent]', 'Agent to connect (claude-code, cursor, cline, continue, agents-md)')
-  .option('--preset <name>', 'Wire the MCP server to a tool preset (navigation, substrate, minimal, memory, verify, federation, coordination, or full). Default (no preset) wires the lean navigation surface; "substrate" adds the governance reads recall + verify_claim + blast_radius; pass "full" to wire all 72 tools (the prior default).')
+  .option('--preset <name>', `Wire the MCP server to a tool preset (navigation, substrate, minimal, memory, verify, federation, coordination, or full). Default (no preset) wires the "${LEAN_DEFAULT_PRESET}" surface — the navigation core plus the governance reads recall + verify_claim + blast_radius (decision c79ec7ca / ADR-0023); "navigation" is the lean navigate-only escape; pass "full" to wire the full surface (the prior default).`)
   .option('--all-tools', 'Wire the full surface (alias of --preset full). Matches `openlore mcp --all-tools`.')
   .option('--dry-run', 'Print the planned changes without writing any files', false)
   .option('--force', 'Overwrite OpenLore-managed blocks even if hand-edited', false)

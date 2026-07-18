@@ -31,8 +31,9 @@ import { LEAN_DEFAULT_PRESET } from '../../constants.js';
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 // change: default-to-lean-tool-surface — the documented DEFAULT surface count must
-// track the lean default preset (the navigation surface), exactly as the full-surface
-// count tracks TOOL_DEFINITIONS.length. Sourced from the preset so it can't drift.
+// track the lean default preset (LEAN_DEFAULT_PRESET = substrate since ADR-0023),
+// exactly as the full-surface count tracks TOOL_DEFINITIONS.length. Sourced from the
+// preset so it can't drift.
 const LEAN_DEFAULT_COUNT = TOOL_PRESETS[LEAN_DEFAULT_PRESET].size;
 // The navigation preset is no longer the default (decision c79ec7ca flipped the default
 // to substrate) but is still a documented named preset and a one-flag escape, so docs that

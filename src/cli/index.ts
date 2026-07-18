@@ -157,7 +157,7 @@ Get started (one command, no API key):
 Core commands (no API key):
   openlore install      One-command setup: wire agent surfaces + build the index
   openlore orient       Relevant functions, callers, specs & insertion points for a task
-  openlore mcp          Run the MCP server your agent connects to (lean by default)
+  openlore mcp          Run the MCP server your agent connects to (substrate preset by default)
   openlore analyze      (Re)build the structural index from static analysis
   openlore prove        Measure OpenLore's token value on YOUR repo (--estimate = no API key)
   openlore doctor       Check your setup and tell you exactly what to fix
