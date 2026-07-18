@@ -3970,34 +3970,8 @@ export class CallGraphBuilder {
     // Pass 1: Extract nodes and raw edges from each file
     for (const file of files) {
       try {
-        let result: { nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg?: Map<string, FunctionCfg>; style?: FileStyleRaw; parseHealth?: FileParseHealth };
-
-        if (file.language === 'Python') {
-          result = await extractPyGraph(file.path, file.content);
-        } else if (file.language === 'TypeScript' || file.language === 'JavaScript') {
-          result = await extractTSGraph(file.path, file.content);
-        } else if (file.language === 'Go') {
-          result = await extractGoGraph(file.path, file.content);
-        } else if (file.language === 'Rust') {
-          result = await extractRustGraph(file.path, file.content);
-        } else if (file.language === 'Ruby') {
-          result = await extractRubyGraph(file.path, file.content);
-        } else if (file.language === 'Java') {
-          result = await extractJavaGraph(file.path, file.content);
-        } else if (file.language === 'C++') {
-          result = await extractCppGraph(file.path, file.content);
-        } else if (file.language === 'Swift') {
-          result = await extractSwiftGraph(file.path, file.content);
-        } else if (file.language === 'Elixir') {
-          result = await extractElixirGraph(file.path, file.content);
-        } else if (file.language === 'Dart') {
-          result = await extractDartGraph(file.path, file.content);
-        } else if (QUERY_LANG_SPECS[file.language]) {
-          // spec-08 additional languages (C#, Kotlin, PHP, C, Scala, Dart, Lua, Bash).
-          result = await extractByQueries(QUERY_LANG_SPECS[file.language], file.path, file.content);
-        } else {
-          continue;
-        }
+        const result = await dispatchFileExtract(file);
+        if (!result) continue;
 
         // Compute startLine (1-based) from byte offset — cheap, done once at build time
         const lineOffsets = [0];
@@ -4756,6 +4730,39 @@ function assignClassStableIds(classes: ClassNode[]): void {
   }
 }
 
+/** The per-file result of Pass-1 extraction (before cross-file resolution). */
+type FileExtractResult = {
+  nodes: FunctionNode[];
+  rawEdges: RawEdge[];
+  cfg?: Map<string, FunctionCfg>;
+  style?: FileStyleRaw;
+  parseHealth?: FileParseHealth;
+};
+
+/**
+ * Dispatch ONE file to its per-language extractor (Pass-1 only — nodes/edges/cfg/style/parseHealth,
+ * no cross-file resolution). The single source of truth for the language→extractor mapping, shared
+ * by the full build and the watcher's per-file refreshers so the dispatch is never duplicated.
+ * Returns `undefined` for a language with no extractor.
+ */
+async function dispatchFileExtract(
+  file: { path: string; content: string; language: string },
+): Promise<FileExtractResult | undefined> {
+  if (file.language === 'Python') return extractPyGraph(file.path, file.content);
+  if (file.language === 'TypeScript' || file.language === 'JavaScript') return extractTSGraph(file.path, file.content);
+  if (file.language === 'Go') return extractGoGraph(file.path, file.content);
+  if (file.language === 'Rust') return extractRustGraph(file.path, file.content);
+  if (file.language === 'Ruby') return extractRubyGraph(file.path, file.content);
+  if (file.language === 'Java') return extractJavaGraph(file.path, file.content);
+  if (file.language === 'C++') return extractCppGraph(file.path, file.content);
+  if (file.language === 'Swift') return extractSwiftGraph(file.path, file.content);
+  if (file.language === 'Elixir') return extractElixirGraph(file.path, file.content);
+  if (file.language === 'Dart') return extractDartGraph(file.path, file.content);
+  // spec-08 additional languages (C#, Kotlin, PHP, C, Scala, Lua, Bash).
+  if (QUERY_LANG_SPECS[file.language]) return extractByQueries(QUERY_LANG_SPECS[file.language], file.path, file.content);
+  return undefined;
+}
+
 /**
  * Tally ONE file's style fingerprint in isolation (change: add-codebase-style-fingerprint).
  * Reuses the same per-language extractor (and its single parse) the full build uses, returning
@@ -4789,8 +4796,8 @@ export async function extractFileStyle(
 export async function extractFileParseHealth(
   file: { path: string; content: string; language: string },
 ): Promise<FileParseHealth | undefined> {
-  const r = await new CallGraphBuilder().build([file]);
-  const h = r.parseHealthByFile?.get(file.path);
+  const result = await dispatchFileExtract(file);
+  const h = result?.parseHealth;
   if (h) h.language = file.language;
   return h;
 }
