@@ -130,6 +130,8 @@ async function syncDecision(
 ): Promise<string[]> {
   const modified: string[] = [];
 
+  // Resolve each affected domain to a real spec file, preserving order.
+  const resolved: Array<{ specPath: string; specAbsPath: string }> = [];
   for (const domain of decision.affectedDomains) {
     const mapping = options.specMap.byDomain.get(domain);
     if (!mapping) {
@@ -140,11 +142,25 @@ async function syncDecision(
     const specAbsPath = join(options.rootPath, mapping.specPath);
     if (!(await fileExists(specAbsPath))) continue;
 
-    if (!options.dryRun) {
-      await appendToSpec(specAbsPath, decision);
-      modified.push(mapping.specPath);
-    } else {
-      modified.push(mapping.specPath);
+    resolved.push({ specPath: mapping.specPath, specAbsPath });
+  }
+
+  // Scope the write to a single owning domain: the first affected domain that
+  // resolves to a spec gets the full requirement + Decisions entry; every other
+  // affected domain gets a one-line pointer to it. Fanning the full block to
+  // every domain (the old behavior) produced verbatim cross-domain duplicates —
+  // e.g. an MCP-preset requirement bolted onto the drift, analyzer, and cli specs.
+  // (Requirement: DecisionSyncWritesOneOwningDomain)
+  const [owner, ...others] = resolved;
+  if (owner) {
+    if (!options.dryRun) await appendToSpec(owner.specAbsPath, decision);
+    modified.push(owner.specPath);
+
+    for (const other of others) {
+      if (!options.dryRun) {
+        await appendDecisionPointer(other.specAbsPath, decision, owner.specPath);
+      }
+      modified.push(other.specPath);
     }
   }
 
@@ -176,6 +192,42 @@ async function appendToSpec(specPath: string, decision: PendingDecision): Promis
   content = appendDecisionSection(content, decision);
 
   await writeFile(specPath, content, 'utf-8');
+}
+
+/**
+ * Write a one-line pointer into a non-owning affected domain's spec. The full
+ * decision (requirement block + Decisions entry) lives in the owning domain; the
+ * other affected domains only reference it, so a decision that touches N domains
+ * appears in full exactly once. (Requirement: DecisionSyncWritesOneOwningDomain)
+ */
+async function appendDecisionPointer(
+  specPath: string,
+  decision: PendingDecision,
+  ownerSpecPath: string,
+): Promise<void> {
+  const content = await readFile(specPath, 'utf-8');
+  const next = appendDecisionPointerLine(content, decision, ownerSpecPath);
+  if (next !== content) await writeFile(specPath, next, 'utf-8');
+}
+
+function appendDecisionPointerLine(
+  content: string,
+  decision: PendingDecision,
+  ownerSpecPath: string,
+): string {
+  // Idempotent by a marker distinct from the full-entry markers
+  // (`> Decision recorded:` / `**ID:**`), so a re-sync never duplicates the
+  // pointer and a domain that already holds the full entry is left untouched.
+  const marker = `> Decision pointer: ${decision.id}`;
+  if (content.includes(marker) || content.includes(`**ID:** ${decision.id}`)) {
+    return content;
+  }
+  const line = `${marker} — "${decision.title}" is recorded in \`${ownerSpecPath}\`; it also affects this domain.`;
+
+  if (content.includes('## Decisions')) {
+    return content.trimEnd() + '\n\n' + line + '\n';
+  }
+  return content.trimEnd() + '\n\n## Decisions\n\n' + line + '\n';
 }
 
 function addSourceFiles(content: string, newFiles: string[]): string {
