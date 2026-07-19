@@ -871,4 +871,35 @@ describe('route-handler synthesis (on-disk fixtures)', () => {
     expect(edge!.synthesizedBy).toBe('route-handler');
     expect(edge!.kind).toBe('calls');
   });
+
+  // Regression (fix-route-anchor-fidelity): a comment/log preamble above the
+  // route registration used to shrink the skeleton the route line was computed
+  // against, so the line anchored into the ORIGINAL file landed ABOVE `setup`
+  // (no enclosing function → edge silently dropped) or inside the PREVIOUS
+  // function (mis-attributed). With the length-preserving mask the edge wires to
+  // `setup`, not to `listUsers`'s neighbor.
+  it('wires the route despite a comment/log preamble that used to drift the line', async () => {
+    const file = join(root, 'src', 'server.ts');
+    const content = [
+      '/*',
+      ' * Copyright 2026 Example Corp.',
+      ' * All rights reserved.',
+      ' */',
+      '// Route wiring module.',
+      "console.log('booting route module');",
+      '',
+      'function listUsers(req, res) { res.send([]); }',
+      '',
+      'function setup(app) {',
+      "  app.get('/users', listUsers);",
+      '}',
+    ].join('\n');
+    await writeFile(file, content, 'utf-8');
+    const b = await new CallGraphBuilder().build([{ path: file, content, language: 'TypeScript' }]);
+    const setup = idByName(b, 'setup'), handler = idByName(b, 'listUsers');
+    const edge = b.edges.find(e => e.calleeId === handler && e.confidence === 'synthesized' && e.synthesizedBy === 'route-handler');
+    expect(edge).toBeDefined();
+    // Attributed to the real enclosing function, neither dropped nor mis-attributed.
+    expect(edge!.callerId).toBe(setup);
+  });
 });

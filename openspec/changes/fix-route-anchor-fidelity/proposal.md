@@ -1,6 +1,15 @@
 # Fix TS/JS route line fidelity: skeleton-relative lines anchored against original file bytes
 
-> Status: PROPOSED (2026-07-08, e2e audit fifth pass). TS/JS route lines are computed against a
+> Status: SHIPPED (2026-07-19). `extractTsRouteDefinitions` now masks comments length-preservingly
+> (blank-to-spaces, newlines kept) instead of skeletonizing, so every `route.line` is byte-aligned
+> with the original file and exact by construction — the dropped/mis-attributed route-handler edge
+> and false dead-code candidate are both fixed. Orphaned `getSkeletonContent`/`detectLanguage`
+> imports removed. Spec `analyzer` gained `RouteLineFidelityIsLengthPreserving`. Regression proof:
+> unit line-fidelity + false-positive-suppression (ts-route-extractor.test.ts), route-handler edge
+> wired through the real builder despite the drift (edge-synthesis.test.ts), and a full
+> build → find_dead_code e2e (reachability-synthesis.test.ts) — all four fail without the fix.
+>
+> Original (PROPOSED 2026-07-08, e2e audit fifth pass): TS/JS route lines are computed against a
 > SHRUNKEN skeleton but consumed against ORIGINAL file bytes — dropped or mis-attributed
 > route-handler edges, and live Express/Fastify handlers surfacing as false dead-code candidates
 > (empirically reproduced). The length-preserving discipline already exists in the same file.

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, ARTIFACT_LLM_CONTEXT } from '../../../constants.js';
 import { handleFindDeadCode } from './reachability.js';
+import { CallGraphBuilder, serializeCallGraph } from '../../analyzer/call-graph.js';
 import type { FunctionNode, CallEdge } from '../../analyzer/call-graph.js';
 
 let root: string;
@@ -122,5 +123,37 @@ describe('provenance-aware reachability', () => {
     await writeContext(nodes, edges);
     const r = (await handleFindDeadCode({ directory: root, directResolvedOnly: true })) as { candidateDead: Array<{ name: string }> };
     expect(r.candidateDead.find(c => c.name === 'listUsers')).toBeDefined();
+  });
+
+  // End-to-end regression (fix-route-anchor-fidelity): build a real graph from
+  // source whose route sits beneath a comment/log preamble (the exact drift that
+  // used to drop the synthesized route-handler edge), then run find_dead_code over
+  // the serialized graph. The framework-invoked handler must NOT be a dead-code
+  // candidate — the whole point of route-handler liveness roots, which a dropped
+  // edge silently defeated.
+  it('a route handler beneath a comment/log preamble is not false dead-code (full build → find_dead_code)', async () => {
+    const dir = join(root, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+    await mkdir(dir, { recursive: true });
+    const file = join(root, 'server.ts');
+    const content = [
+      '/*',
+      ' * Copyright 2026 Example Corp.',
+      ' * All rights reserved.',
+      ' */',
+      '// Route wiring module.',
+      "console.log('booting route module');",
+      '',
+      'function listUsers(req, res) { res.send([]); }',
+      '',
+      'function setup(app) {',
+      "  app.get('/users', listUsers);",
+      '}',
+    ].join('\n');
+    await writeFile(file, content, 'utf-8');
+    const built = await new CallGraphBuilder().build([{ path: file, content, language: 'TypeScript' }]);
+    await writeFile(join(dir, ARTIFACT_LLM_CONTEXT), JSON.stringify({ callGraph: serializeCallGraph(built) }), 'utf-8');
+
+    const r = (await handleFindDeadCode({ directory: root })) as { candidateDead: Array<{ name: string }> };
+    expect(r.candidateDead.find(c => c.name === 'listUsers')).toBeUndefined();
   });
 });
