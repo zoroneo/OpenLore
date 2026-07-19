@@ -1,5 +1,15 @@
 # Fix export-parser fidelity: modifier-prefixed exports and comment-shifted line numbers
 
+> Status: IMPLEMENTED (2026-07-19). `parseJSExports` gained modifier-tolerant regexes (async/
+> generator functions, abstract classes, default-async name capture, and real const-enum names);
+> the local recovery block in `public-surface.ts` was deleted (RESERVED_NAMES glitch filter kept).
+> The JS/TS and Java cleaners now blank comments with same-length whitespace (newlines kept), and
+> the Python multi-line-import collapse is scoped to `from … import ( … )`, line-count-preserving,
+> and attributed to the `from` line (line numbers read from the line-aligned cleaned text). A stray
+> `^\s*` in the Java import regex that swallowed a preceding blank line was tightened to `^[ \t]*`.
+> Tests: export-recall + line-fidelity + Python-scoping in `import-parser.test.ts`, consumer parity
+> in `dependency-graph.test.ts`; public-surface breaking-change tests stay green.
+>
 > Status: PROPOSED (2026-07-08, e2e audit fifth pass). Two fidelity defects in the shared
 > import/export parser (`src/core/analyzer/import-parser.ts`): `export async function` /
 > `export function*` / `export abstract class` are invisible to `parseJSExports` — a gap a

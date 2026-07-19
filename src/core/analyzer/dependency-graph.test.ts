@@ -137,6 +137,26 @@ describe('DependencyGraphBuilder', () => {
       expect(result.edges).toHaveLength(0);
     });
 
+    it('surfaces modifier-prefixed exports on the node (parity with the shared parser)', async () => {
+      // Regression for fix-export-parser-fidelity: the dep-graph node's `exports`
+      // come straight from the shared parseJSExports, so `export async function`
+      // must appear here — not only in the public-surface consumer that used to
+      // recover it locally.
+      const fileA = await createFile(
+        tempDir,
+        'a.ts',
+        'export async function loadData() {}\nexport abstract class Store {}',
+      );
+      const files: ScoredFile[] = [createScoredFile({ absolutePath: fileA, name: 'a.ts' })];
+
+      const result = await buildDependencyGraph(files, { rootDir: tempDir });
+      const node = result.nodes.find((n) => n.file.name === 'a.ts');
+      const exportNames = node?.exports.map((e) => e.name) ?? [];
+
+      expect(exportNames).toContain('loadData');
+      expect(exportNames).toContain('Store');
+    });
+
     it('should handle type-only imports with lower weight', async () => {
       const fileA = await createFile(tempDir, 'a.ts', `
         import type { User } from './types';
