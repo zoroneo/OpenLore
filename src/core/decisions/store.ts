@@ -191,6 +191,51 @@ export const INACTIVE_STATUSES: ReadonlySet<DecisionStatus> = new Set([
   'rejected', 'synced', 'phantom',
 ]);
 
+/**
+ * Explicit status-transition table for promotion to `approved`. Promotion is
+ * the one status change that approve_decision and sync_decisions perform, and
+ * the one a human verdict must gate. A decision may be promoted to `approved`
+ * only from one of these statuses.
+ *
+ * Two statuses are deliberately excluded and can never be promoted to `approved`
+ * as a side-effect of any operation:
+ *   - `rejected`: a recorded human verdict. Reversing it requires an explicit
+ *     re-record (which returns the decision to `draft`), never a promote/sync.
+ *   - `synced`: already written to the spec files; not re-promoted.
+ */
+export const PROMOTABLE_TO_APPROVED: ReadonlySet<DecisionStatus> = new Set<DecisionStatus>([
+  'draft', 'consolidated', 'verified', 'phantom', 'approved', 'auto-approved',
+]);
+
+/**
+ * Guard the `→ approved` transition. If promoting the decision is illegal from
+ * its current status, return an error message naming that status and the human
+ * step required to make the promotion legal; otherwise return `null`. Shared by
+ * every promotion site (approve_decision, sync_decisions, the API sync, the CLI
+ * `--approve`) so all refuse the same transitions identically — one table, one
+ * verdict, no door left unlocked.
+ *
+ * This governs WHICH transitions are legal; the compare-and-swap commit of a
+ * legal one is governed separately (`harden-decision-consolidation`).
+ */
+export function illegalPromotionToApproved(
+  id: string,
+  status: DecisionStatus,
+  reviewNote?: string,
+): string | null {
+  if (PROMOTABLE_TO_APPROVED.has(status)) return null;
+  if (status === 'rejected') {
+    const note = reviewNote ? ` (rejection note: "${reviewNote}")` : '';
+    return `Decision ${id} was rejected by a human${note} and will not be silently promoted to approved. To reverse a recorded rejection, re-record the decision (record_decision) so the approval is an explicit, reviewable act.`;
+  }
+  if (status === 'synced') {
+    return `Decision ${id} is already synced to spec files and will not be re-promoted.`;
+  }
+  // Fail closed: any future status added to the vocabulary without being placed
+  // in PROMOTABLE_TO_APPROVED is refused rather than silently promoted.
+  return `Decision ${id} cannot be promoted to approved from status '${status}'.`;
+}
+
 /** Drop all inactive decisions — their content is already in ADRs / spec.md. */
 export function purgeInactiveDecisions(store: DecisionStore): DecisionStore {
   return {

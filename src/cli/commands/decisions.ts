@@ -30,6 +30,7 @@ import {
   patchDecision,
   getDecisionsByStatus,
   INACTIVE_STATUSES,
+  illegalPromotionToApproved,
 } from '../../core/decisions/store.js';
 import { readLedger } from '../../core/decisions/ledger.js';
 import { rewriteSyncedDecisionStatus } from '../../core/decisions/syncer.js';
@@ -621,8 +622,12 @@ the gate auto-accepts verified decisions, syncs them to specs marked "Auto-accep
         process.exitCode = 1;
         return;
       }
-      if (decision.status === 'synced') {
-        logger.error(`Decision ${id} is already synced to spec files — re-approval not allowed.`);
+      // Transition guard: refuse promoting a rejected (or already-synced)
+      // decision to approved — a recorded human verdict is never reversed as a
+      // side-effect; the human must re-record to reverse it explicitly.
+      const illegalApprove = illegalPromotionToApproved(id, decision.status, decision.reviewNote);
+      if (illegalApprove) {
+        logger.error(illegalApprove);
         process.exitCode = 1;
         return;
       }

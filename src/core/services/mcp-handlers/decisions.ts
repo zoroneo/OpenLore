@@ -17,6 +17,7 @@ import {
   upsertDecisions,
   patchDecision,
   makeDecisionId,
+  illegalPromotionToApproved,
 } from '../../decisions/store.js';
 import { syncApprovedDecisions } from '../../decisions/syncer.js';
 import { isDecisionsLockHeld } from '../../decisions/lock.js';
@@ -282,7 +283,10 @@ export async function handleApproveDecision(
 
     const decision = store.decisions.find((d) => d.id === id);
     if (!decision) return { error: `Decision ${id} not found.` };
-    if (decision.status === 'synced') return { error: `Decision ${id} is already synced to spec files — re-approval not allowed.` };
+    // Transition guard: refuse promoting a rejected (or already-synced) decision
+    // to approved — a recorded human verdict is never reversed as a side-effect.
+    const illegal = illegalPromotionToApproved(id, decision.status, decision.reviewNote);
+    if (illegal) return { error: illegal };
 
     const committed = await updateDecisionStore(rootPath, (s) => patchDecision(s, id, {
       status: 'approved',
@@ -365,6 +369,10 @@ export async function handleSyncDecisions(
     if (id) {
       const decision = store.decisions.find((d) => d.id === id);
       if (!decision) return { error: `Decision ${id} not found.` };
+      // Transition guard: sync must never resurrect a rejected decision (or
+      // re-promote a synced one) by promoting it to approved before the write.
+      const illegal = illegalPromotionToApproved(id, decision.status, decision.reviewNote);
+      if (illegal) return { error: illegal };
       store = await updateDecisionStore(
         rootPath,
         (s) => patchDecision(s, id, { status: 'approved' }),
