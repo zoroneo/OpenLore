@@ -118,7 +118,8 @@ describe('CFG overlay storage', () => {
     old.prepare("INSERT INTO nodes (id) VALUES ('stale::ghost')").run();
     old.close();
 
-    const reset = EdgeStore.open(dbPath);
+    // The analyze/write path is the one allowed to rebuild-on-bump (a read never wipes).
+    const reset = EdgeStore.openForAnalyze(dbPath);
     expect(reset.wasReset).toBe(true);
     reset.close();
 

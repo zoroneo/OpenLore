@@ -346,12 +346,11 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
   // non-atomically and could tear the graph. A trigger that arrives mid-rebuild
   // is coalesced into a single follow-up run rather than dropped or stacked.
   //
-  // Why serve must drive this at all: a schema-version bump makes EdgeStore.open()
-  // wipe the DB and report wasReset ONCE (the on-disk version is rewritten on that
-  // first open, so every later open reports false). serve consumes that flag at
-  // startup / first request, so the watcher's wasReset-keyed self-heal never sees
-  // it; without an explicit trigger, waitForGraphRebuild() would poll an empty
-  // store until it times out.
+  // Why serve must drive this at all: a schema-version bump now leaves the store
+  // intact and reports it not-ready on every read (change: harden-index-store-lifecycle),
+  // and the watcher's own open only *schedules* a rebuild — so serve still kicks the
+  // rebuild explicitly and blocks the first request on it, rather than letting
+  // waitForGraphRebuild() poll a not-ready store until it times out.
   const rebuildRunning = new Set<string>();
   const rebuildPending = new Set<string>();
   function triggerRebuild(directory: string): void {
@@ -452,14 +451,15 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
       }
 
       // Auto-heal schema mismatch: on first request for a directory, open
-      // EdgeStore once to detect wasReset; cache the result so we never
-      // re-open on subsequent requests. If reset, block until rebuild done.
+      // EdgeStore once to detect a not-ready (schema-mismatched / quarantined) store;
+      // cache the result so we never re-open on subsequent requests. If not ready,
+      // block until the rebuild is done.
       if (!schemaResetByDir.has(directory)) {
         try {
           const analysisDir = join(directory, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
           if (EdgeStore.exists(analysisDir)) {
             const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
-            schemaResetByDir.set(directory, es.wasReset);
+            schemaResetByDir.set(directory, es.notReady != null);
             es.close();
           } else {
             schemaResetByDir.set(directory, false);
@@ -470,8 +470,8 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
       }
       if (schemaResetByDir.get(directory)) {
         logger.debug(`[serve] Schema mismatch — waiting for graph rebuild before dispatching…`);
-        // Kick the rebuild ourselves (coalesced) — nothing else will, because the
-        // wasReset flag has already been consumed by the open above.
+        // Kick the rebuild ourselves (coalesced) — the watcher only schedules, and a
+        // read no longer wipes-then-heals; it reports not-ready until analyze runs.
         triggerRebuild(directory);
         // waitForGraphRebuild polls readCachedContext until edgeStore is
         // non-null. readCachedContext invalidates on llm-context.json mtime,
@@ -542,17 +542,17 @@ export async function startServe(options: ServeCliOptions): Promise<ServeHandle 
     const analysisDir = join(root, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
     if (EdgeStore.exists(analysisDir)) {
       const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
-      const reset = es.wasReset;
+      const reset = es.notReady != null;
       es.close();
       schemaResetByDir.set(root, reset);
       if (reset) {
         logger.warning(
-          `[serve] Schema version mismatch detected — graph index is being rebuilt in the background. ` +
+          `[serve] Graph index not ready (${es.notReady?.reason}) — it is being rebuilt in the background. ` +
           `Graph-dependent tools will wait for completion on first request.`
         );
         // Actually start the rebuild — the warning above is only honest if
-        // something kicks `analyze --force`. The watcher won't: its self-heal
-        // keys off wasReset, which this startup open just consumed.
+        // something kicks `analyze --force`. The watcher only schedules its own,
+        // and a read no longer wipes-then-heals (change: harden-index-store-lifecycle).
         triggerRebuild(root);
       }
     } else {

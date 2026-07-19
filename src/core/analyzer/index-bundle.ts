@@ -153,6 +153,14 @@ function computePayloadDigest(files: Array<{ name: string; bytes: Buffer }>): st
  */
 function attestExportedStore(dbPath: string): IndexAttestation {
   const store = EdgeStore.open(dbPath);
+  // A not-ready store (schema-mismatched or quarantined) cannot be exported as a
+  // healthy bundle — fail loudly rather than attest an empty/mismatched index
+  // (change: harden-index-store-lifecycle).
+  if (store.notReady) {
+    const fault = store.notReady;
+    store.close();
+    throw new Error(`cannot export graph index: ${fault.message}`);
+  }
   try {
     const nodes = store.getAllInternalNodes().map(n => ({ id: n.id, filePath: n.filePath }));
     const edges = store.getAllEdges().map(e => ({ callerId: e.callerId, calleeId: e.calleeId, calleeName: e.calleeName }));

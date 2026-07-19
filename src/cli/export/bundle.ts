@@ -34,7 +34,9 @@ function checkpointStore(dbPath: string): void {
   try {
     const store = EdgeStore.open(dbPath);
     try {
-      store.checkpoint();
+      // A schema-mismatched / quarantined store has no WAL of its own to fold — and
+      // must not be mutated on this read path (change: harden-index-store-lifecycle).
+      if (!store.notReady) store.checkpoint();
     } finally {
       store.close();
     }

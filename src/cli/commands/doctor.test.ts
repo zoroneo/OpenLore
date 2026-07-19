@@ -126,14 +126,19 @@ describe('doctor command', () => {
       expect(Array.isArray(checks)).toBe(true);
     });
 
-    it('should include exactly 8 checks', async () => {
+    it('should include exactly 9 checks', async () => {
       const checks = await runDoctorJson();
-      expect(checks).toHaveLength(8);
+      expect(checks).toHaveLength(9);
     });
 
     it('should include a Parse health check', async () => {
       const checks = await runDoctorJson();
       expect(checks.find(c => c.name === 'Parse health')).toBeDefined();
+    });
+
+    it('should include a Graph store check', async () => {
+      const checks = await runDoctorJson();
+      expect(checks.find(c => c.name === 'Graph store')).toBeDefined();
     });
 
     it('each check should have name, status, and detail fields', async () => {

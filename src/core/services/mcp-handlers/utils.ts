@@ -62,13 +62,14 @@ const ANALYSIS_AGE_WARNING_MS = ANALYSIS_AGE_WARNING_HOURS * 60 * 60 * 1000;
  */
 export function computeRepairReason(
   integrityVerdict: string | undefined,
-  wasReset: boolean,
+  schemaFault: boolean,
   staleCount: number,
   artifactMtimeMs: number,
   now: number = Date.now(),
 ): RepairReason | undefined {
   if (integrityVerdict === 'mismatched') return 'integrity-mismatched';
-  if (wasReset) return 'schema-reset';
+  // A read-path schema mismatch or a quarantined (corrupt) store both need a rebuild.
+  if (schemaFault) return 'schema-reset';
   if (staleCount >= STALE_REGION_REPAIR_THRESHOLD) return 'stale-region';
   if (now - artifactMtimeMs > ANALYSIS_AGE_WARNING_MS) return 'analysis-age';
   return undefined;
@@ -83,11 +84,11 @@ export function computeRepairReason(
 function maybeTriggerBackgroundRepair(
   directory: string,
   integrityVerdict: string | undefined,
-  wasReset: boolean,
+  schemaFault: boolean,
   staleCount: number,
   artifactMtimeMs: number,
 ): void {
-  const reason = computeRepairReason(integrityVerdict, wasReset, staleCount, artifactMtimeMs);
+  const reason = computeRepairReason(integrityVerdict, schemaFault, staleCount, artifactMtimeMs);
   if (!reason) return;
   try {
     repairInBackground(directory, reason);
@@ -393,44 +394,51 @@ export async function readCachedContext(directory: string, timeout?: number): Pr
         }
       }
       // Read-path staleness signals captured while the store is open, so the
-      // background repair trigger below can fire even when the schema-bump guard
+      // background repair trigger below can fire even when the empty/not-ready guard
       // closes the store (change: make-index-self-healing).
-      let wasReset = false;
+      let schemaFault = false;
       let staleCount = 0;
       if (EdgeStore.exists(analysisDir)) {
         const es = EdgeStore.open(EdgeStore.dbPath(analysisDir));
-        // Index integrity attestation (change: add-index-integrity-attestation).
-        // Reconcile the just-opened store against its build-time attestation BEFORE the
-        // wasReset/empty guard may close it, so a schema-bumped (now-empty) store still
-        // yields a `mismatched` verdict. Best-effort + additive: any fault here leaves
-        // the verdict unset (unverifiable), never blocks the load.
-        try {
-          const verdict = await computeIndexIntegrity(es, analysisDir);
-          if (verdict) {
-            ctx.integrity = verdict;
-            if (verdict.verdict !== 'healthy') {
-              // Recoverable signal: a non-healthy index is reported, never silently
-              // served as complete. Tools disclose it via the confidence boundary.
-              emit(directory, 'cache', { event: 'index_integrity', verdict: verdict.verdict });
-            }
-          }
-        } catch {
-          // Attestation reconciliation is additive; never block the load.
-        }
-        wasReset = es.wasReset;
-        try { staleCount = es.countStaleFiles(); } catch { /* pre-migration store — no stale_files table */ }
-        // Schema-bump guard: opening a DB whose SCHEMA_VERSION is stale wipes it
-        // (rebuild-on-bump). If the DB is now empty but the JSON analysis still has
-        // production nodes, the two are out of sync after an upgrade — do NOT serve
-        // the empty store. Edge-store tools then return "Re-run analyze_codebase"
-        // instead of silent empty results; the next analyze repopulates and re-attaches.
-        const jsonProdNodes = Array.isArray(ctx.callGraph?.nodes)
-          ? ctx.callGraph.nodes.filter(n => !n.isExternal && !n.isTest).length
-          : 0;
-        if ((es.wasReset || jsonProdNodes > 0) && es.countNodes() === 0 && jsonProdNodes > 0) {
+        if (es.notReady) {
+          // ReadPathsNeverDestroyTheIndex / CorruptGraphStoreQuarantineParity: a
+          // schema-mismatched or quarantined store is left intact on disk (or moved to
+          // *.corrupt-<n>) and reported — never served as an empty graph. Trigger the
+          // shared background repair and disclose via the freshness-note channel below
+          // (change: harden-index-store-lifecycle).
+          schemaFault = true;
           es.close();
         } else {
-          ctx.edgeStore = es;
+          // Index integrity attestation (change: add-index-integrity-attestation).
+          // Reconcile the just-opened store against its build-time attestation BEFORE the
+          // empty guard may close it. Best-effort + additive: any fault here leaves the
+          // verdict unset (unverifiable), never blocks the load.
+          try {
+            const verdict = await computeIndexIntegrity(es, analysisDir);
+            if (verdict) {
+              ctx.integrity = verdict;
+              if (verdict.verdict !== 'healthy') {
+                // Recoverable signal: a non-healthy index is reported, never silently
+                // served as complete. Tools disclose it via the confidence boundary.
+                emit(directory, 'cache', { event: 'index_integrity', verdict: verdict.verdict });
+              }
+            }
+          } catch {
+            // Attestation reconciliation is additive; never block the load.
+          }
+          try { staleCount = es.countStaleFiles(); } catch { /* pre-migration store — no stale_files table */ }
+          // Empty-store guard: if the store is empty but the JSON analysis still has
+          // production nodes, the two are out of sync — do NOT serve the empty store.
+          // Edge-store tools then return "Re-run analyze_codebase" instead of silent
+          // empty results; the next analyze repopulates and re-attaches.
+          const jsonProdNodes = Array.isArray(ctx.callGraph?.nodes)
+            ? ctx.callGraph.nodes.filter(n => !n.isExternal && !n.isTest).length
+            : 0;
+          if (es.countNodes() === 0 && jsonProdNodes > 0) {
+            es.close();
+          } else {
+            ctx.edgeStore = es;
+          }
         }
       }
       // Self-healing: any read-path staleness signal that today only produces a
@@ -438,7 +446,7 @@ export async function readCachedContext(directory: string, timeout?: number): Pr
       // finally closes the loop into repair (change: make-index-self-healing). The
       // rebuild never blocks this read; the answer is served now and disclosed as
       // stale-with-refresh-started (see repairStatusFor callers).
-      maybeTriggerBackgroundRepair(directory, ctx.integrity?.verdict, wasReset, staleCount, mtime);
+      maybeTriggerBackgroundRepair(directory, ctx.integrity?.verdict, schemaFault, staleCount, mtime);
       // Evict + close the previous entry's EdgeStore — otherwise each cache miss
       // (every `analyze` rewrites llm-context.json's mtime) leaks an open SQLite
       // connection + its WAL fd for the life of a long-lived daemon. The close is
