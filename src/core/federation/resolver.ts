@@ -113,7 +113,9 @@ export async function findCrossRepoConsumersBatch(
 
   for (const entry of scope.repos) {
     const status = repoStatus(entry, true);
-    if (status.state !== 'indexed') {
+    if (!status.consulted) {
+      // Consultable = indexed or unbaselined (index present, staleness unassessable);
+      // everything else (stale/unindexed/missing) is skipped and disclosed.
       reposSkipped.push(status);
       continue;
     }
@@ -226,7 +228,7 @@ export async function locateSymbolProducers(
   const reposSkipped: ConsultedRepo[] = [];
   for (const entry of scope.repos) {
     const status = repoStatus(entry, true);
-    if (status.state !== 'indexed') { reposSkipped.push(status); continue; }
+    if (!status.consulted) { reposSkipped.push(status); continue; }
     // Per-repo isolation: a mid-query store throw must not abort the fleet query.
     try {
       const ctx = await readCachedContext(resolve(entry.path));
@@ -304,7 +306,7 @@ export async function findCrossRepoClientCallers(
 
   for (const entry of scope.repos) {
     const status = repoStatus(entry, true);
-    if (status.state !== 'indexed') { reposSkipped.push(status); continue; }
+    if (!status.consulted) { reposSkipped.push(status); continue; }
     // Per-repo isolation: a malformed index / mid-query throw must not abort the fleet query.
     try {
       const ctx = await readCachedContext(resolve(entry.path));
@@ -497,7 +499,7 @@ export async function findCrossRepoTests(
   const wantedSet = new Set(wanted);
   for (const entry of scope.repos) {
     const status = repoStatus(entry, true);
-    if (status.state !== 'indexed') { reposSkipped.push(status); continue; }
+    if (!status.consulted) { reposSkipped.push(status); continue; }
     // Per-repo isolation: a malformed index / mid-query throw must not abort the
     // whole fleet query — skip that repo with a reason.
     try {

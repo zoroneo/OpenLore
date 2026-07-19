@@ -181,6 +181,27 @@ describe('handleSpecStoreStatus', () => {
     expect(report.findings.filter(f => f.code === 'index-missing')).toHaveLength(1);
   });
 
+  // Regression (change: harden-federation-freshness): a target registered before
+  // its first analyze (empty stored fingerprint) that later gains an index must be
+  // disclosed as index-unbaselined, never implied a freshness-checked indexed.
+  it('an unbaselined target yields exactly one index-unbaselined finding and does not block', async () => {
+    const api = makeRepo('api', null); // registered with no index → empty fingerprint
+    addRepo(home, api, { name: 'api' });
+    // Index appears after registration (create the analysis dir, then the hash).
+    mkdirSync(join(api, OPENLORE_ANALYSIS_REL_PATH), { recursive: true });
+    rewriteFingerprint(api, 'hash-v1');
+    const store = makeRepo('plans', null);
+    writeBinding({ name: 'plans', path: store, targets: ['api'] });
+
+    const report = await handleSpecStoreStatus(home);
+    const unbaselined = report.findings.filter(f => f.code === 'index-unbaselined');
+    expect(unbaselined).toHaveLength(1);
+    expect(unbaselined[0].severity).toBe('warn');
+    expect(report.findings.filter(f => f.code === 'index-stale')).toHaveLength(0);
+    expect(report.targets.find(t => t.name === 'api')?.state).toBe('unbaselined');
+    expect(report.sound).toBe(true); // a warning does not make the binding unsound
+  });
+
   it('a missing reference yields exactly one reference-missing finding', async () => {
     const api = makeRepo('api', 'hash-api');
     addRepo(home, api, { name: 'api' });

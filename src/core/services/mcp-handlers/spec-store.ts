@@ -32,6 +32,7 @@ export type SpecStoreFindingCode =
   | 'target-unresolved'   // a declared target name is not in the federation registry
   | 'target-missing'      // a resolved target's registered path no longer exists
   | 'index-missing'       // a resolved target has no built `.openlore` index
+  | 'index-unbaselined'   // a resolved target has an index but no fingerprint baseline (staleness unassessable)
   | 'index-stale'         // a resolved target's index is stale vs its working tree
   | 'reference-missing'   // a declared reference is unresolved or its path is gone
   | 'certificate-stale';  // a target has a persisted impact certificate whose anchored symbols moved
@@ -215,6 +216,13 @@ function resolveTarget(
       code: 'index-missing', severity: 'warn', subject: name,
       message: `Target "${name}" has no built index.`,
       remediation: `Build it: (cd ${entry.path} && openlore analyze)`,
+    } };
+  }
+  if (state === 'unbaselined') {
+    return { status, finding: {
+      code: 'index-unbaselined', severity: 'warn', subject: name,
+      message: `Target "${name}" has an index but no fingerprint baseline yet (registered before its first analyze); staleness cannot be assessed until it is baselined.`,
+      remediation: `Baseline it: run "openlore federation status" to adopt the live hash, or (cd ${entry.path} && openlore analyze) then re-run "openlore federation add".`,
     } };
   }
   if (state === 'stale') {

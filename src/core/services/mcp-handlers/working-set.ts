@@ -399,8 +399,11 @@ export async function handleWorkingSetContext(
 
   const intent = extractIntent(change.proposal, id);
 
-  // Briefable = resolved AND indexed. Everything else is reported but skipped.
-  const briefable = status.targets.filter(t => t.resolved && t.state === 'indexed' && t.path);
+  // Briefable = resolved AND consultable (indexed, or unbaselined — index present,
+  // staleness unassessable). Everything else is reported but skipped.
+  const briefable = status.targets.filter(
+    t => t.resolved && (t.state === 'indexed' || t.state === 'unbaselined') && t.path,
+  );
   const targets: WorkingSetTargetBrief[] = [];
   const allItems: WorkingSetItem[] = [];
 

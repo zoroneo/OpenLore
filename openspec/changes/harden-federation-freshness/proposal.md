@@ -1,6 +1,12 @@
 # Harden federation freshness: baseline the empty fingerprint, degrade a corrupt registry
 
-> Status: PROPOSED (2026-07-03, e2e audit follow-up). Two findings, one theme — the federation
+> Status: SHIPPED (2026-07-19). `evaluateRepoState` now returns an explicit `unbaselined` state for
+> an empty-fingerprint entry with a live index (never a false forever-`indexed`); `federation_status`
+> adopts the live hash on observation (`adoptEmptyFingerprints`) so later drift is caught as `stale`,
+> and degrades a corrupt registry to a `registry-unreadable` conclusion instead of throwing;
+> `spec_store_status` surfaces the `index-unbaselined` finding. Consultability gates in the resolver,
+> fleet-memory, working-set, and the CLI treat `unbaselined` as consultable-but-labeled (no regression
+> for pre-analyze registrations that were previously `indexed`). Two findings, one theme — the federation
 > surface must be as honest about its own staleness as the tools it reports on. A repo registered
 > before its first `openlore analyze` keeps an empty stored fingerprint forever, so the staleness
 > check can never fire and it reports `indexed`/consultable as its index drifts arbitrarily. And

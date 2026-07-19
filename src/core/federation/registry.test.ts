@@ -2,15 +2,17 @@
  * Federation registry unit tests (change: add-multi-repo-federation).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, symlinkSync, realpathSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, symlinkSync, realpathSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   addRepo,
   removeRepo,
   listRepos,
   loadRegistry,
   evaluateRepoState,
+  adoptEmptyFingerprints,
+  repoStatus,
   federationManifestPath,
 } from './registry.js';
 import { OPENLORE_ANALYSIS_REL_PATH } from '../../constants.js';
@@ -139,5 +141,85 @@ describe('federation registry', () => {
     mkdirSync(join(home, '.openlore'), { recursive: true });
     writeFileSync(federationManifestPath(home), '{ not json');
     expect(() => loadRegistry(home)).toThrow(/not valid JSON/i);
+  });
+
+  // Regression (change: harden-federation-freshness). A repo registered before its
+  // first analyze stores an empty fingerprint; once its index appears it must be
+  // disclosed as `unbaselined`, never reported as a freshness-checked `indexed`
+  // forever while its index drifts arbitrarily.
+  it('classifies a registered-before-analyze repo as unbaselined once it has an index', () => {
+    const peer = makePeer('a'); // registered with no index → empty stored fingerprint
+    addRepo(home, peer, { name: 'a' });
+    expect(listRepos(home)[0].fingerprint).toBe('');
+    // No index yet → unindexed (adoption needs a live fingerprint).
+    expect(evaluateRepoState(listRepos(home)[0])).toBe('unindexed');
+    // Index built after registration → unbaselined, not indexed.
+    writeFingerprint(peer, 'h1');
+    expect(evaluateRepoState(listRepos(home)[0])).toBe('unbaselined');
+  });
+
+  it('adopts the live hash on observation, closing the forever-indexed blind spot', () => {
+    const peer = makePeer('a'); // empty fingerprint at registration
+    addRepo(home, peer, { name: 'a' });
+    writeFingerprint(peer, 'h1'); // index appears
+
+    const adopted = adoptEmptyFingerprints(home);
+    expect(adopted).toEqual(['a']);
+    // Baseline is now persisted: h1.
+    expect(listRepos(home)[0].fingerprint).toBe('h1');
+    expect(evaluateRepoState(listRepos(home)[0])).toBe('indexed');
+
+    // Subsequent drift is now detectable as stale (was silently 'indexed' before).
+    writeFingerprint(peer, 'h2');
+    expect(evaluateRepoState(listRepos(home)[0])).toBe('stale');
+
+    // Idempotent: a second adoption pass has nothing to do.
+    expect(adoptEmptyFingerprints(home)).toEqual([]);
+  });
+
+  it('adoption only fires for an empty-fingerprint entry that has a live index', () => {
+    const noIndex = makePeer('a'); // empty fingerprint, no index
+    const baselined = makePeer('b', 'h'); // already carries a fingerprint
+    addRepo(home, noIndex, { name: 'a' });
+    addRepo(home, baselined, { name: 'b' });
+
+    expect(adoptEmptyFingerprints(home)).toEqual([]); // 'a' has no index; 'b' already baselined
+    expect(evaluateRepoState(listRepos(home).find(r => r.name === 'a')!)).toBe('unindexed');
+    expect(evaluateRepoState(listRepos(home).find(r => r.name === 'b')!)).toBe('indexed');
+  });
+
+  it('adoption is harmless on a corrupt registry (nothing to adopt, no throw)', () => {
+    mkdirSync(join(home, '.openlore'), { recursive: true });
+    writeFileSync(federationManifestPath(home), '{ not json');
+    expect(adoptEmptyFingerprints(home)).toEqual([]); // swallowed; caller degrades separately
+  });
+
+  // chmod is a no-op for root (write always permitted), so this assertion of a
+  // failed write only holds for a non-root user.
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  (isRoot ? it.skip : it)('adoption is harmless on a read-only registry (no crash; state still honest)', () => {
+    const peer = makePeer('a'); // empty fingerprint
+    addRepo(home, peer, { name: 'a' });
+    writeFingerprint(peer, 'h1'); // index appears → would-be adoption
+    const dotDir = dirname(federationManifestPath(home));
+    chmodSync(dotDir, 0o555); // read+execute, no write → saveRegistry's tmp write fails
+    try {
+      expect(() => adoptEmptyFingerprints(home)).not.toThrow();
+      expect(adoptEmptyFingerprints(home)).toEqual([]); // write failed → nothing baselined
+      // The state is still reported honestly (a read never depends on the write).
+      expect(evaluateRepoState(listRepos(home)[0])).toBe('unbaselined');
+    } finally {
+      chmodSync(dotDir, 0o755); // restore so afterEach can clean up
+    }
+  });
+
+  it('repoStatus reports an unbaselined repo as consultable but labeled', () => {
+    const peer = makePeer('a'); // empty fingerprint
+    addRepo(home, peer, { name: 'a' });
+    writeFingerprint(peer, 'h1');
+    const status = repoStatus(listRepos(home)[0], true);
+    expect(status.state).toBe('unbaselined');
+    expect(status.consulted).toBe(true); // consultable
+    expect(status.reason).toMatch(/no fingerprint baseline/i); // but disclosed
   });
 });

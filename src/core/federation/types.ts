@@ -45,6 +45,13 @@ export interface FederationRegistry {
 export type RepoIndexState =
   /** Index present and its live fingerprint matches the registry. */
   | 'indexed'
+  /**
+   * Index present but the entry carries no stored fingerprint baseline yet (the
+   * repo was registered before its first `openlore analyze`). Staleness cannot be
+   * assessed until a baseline is adopted; consultable but disclosed as such — never
+   * reported as a freshness-checked `indexed`.
+   */
+  | 'unbaselined'
   /** Index present but its live fingerprint differs from the registry (rebuild it). */
   | 'stale'
   /** No `.openlore/` index found at the repo path (run `openlore analyze`). */
@@ -59,7 +66,10 @@ export interface ConsultedRepo {
   state: RepoIndexState;
   /** True when the query actually loaded and used this repo's index. */
   consulted: boolean;
-  /** Present when the repo was skipped — why it was not consulted. */
+  /**
+   * Present when the repo was skipped (why it was not consulted), or as a caveat
+   * when it was consulted but its freshness could not be assessed (`unbaselined`).
+   */
   reason?: string;
 }
 
