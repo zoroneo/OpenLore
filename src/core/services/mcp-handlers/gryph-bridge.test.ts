@@ -27,6 +27,16 @@ import {
   PANIC_DECAY_PER_MIN,
 } from './panic-constants.js';
 
+// vitest hoists vi.mock to the top of the module regardless of where it is written, so
+// this mock already applied file-wide when it lived inside a test; declaring it at top
+// level makes that explicit and avoids the hoisting deprecation warning a future vitest
+// will promote to an error (change: fix-test-suite-hygiene). Gryph is treated as
+// unavailable (spawnSync exits non-zero) so the provider degrades rather than shelling out.
+vi.mock('node:child_process', () => ({
+  spawnSync: vi.fn(() => ({ status: 1, stdout: null })),
+  spawn: vi.fn(),
+}));
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -130,10 +140,6 @@ describe('applyGryphDelta', () => {
 
 describe('GryphBehaviorProvider', () => {
   it('returns null when gryph not available', async () => {
-    vi.mock('node:child_process', () => ({
-      spawnSync: vi.fn(() => ({ status: 1, stdout: null })),
-      spawn: vi.fn(),
-    }));
     const provider = new GryphBehaviorProvider();
     const result = await provider.collect(new Date().toISOString());
     // may return null (gryph unavailable) or a snapshot — just must not throw

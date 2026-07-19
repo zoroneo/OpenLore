@@ -10,6 +10,178 @@ import { join } from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
+// vi.mock calls are hoisted to the top of the module by vitest regardless of where they
+// appear; keeping them at top level makes that behavior explicit and avoids the hoisting
+// deprecation warning that a future vitest will promote to an error (change: fix-test-suite-hygiene).
+// Mock the vector indexes
+vi.mock('../vector-index.js', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    VectorIndex: {
+      ...actual.VectorIndex,
+      exists: vi.fn().mockReturnValue(true),
+      search: vi.fn().mockImplementation((_dir: string, query: string, _embed: any, opts: any) => {
+        // Simulate finding functions related to the query
+        const results = [];
+
+        if (query.includes('auth') || query.includes('validate') || query.includes('token')) {
+          results.push({
+            record: {
+              id: 'src/auth/jwt.ts::validateToken',
+              name: 'validateToken',
+              filePath: 'src/auth/jwt.ts',
+              className: '',
+              language: 'TypeScript',
+              signature: 'validateToken(token: string): boolean',
+              docstring: 'Validates JWT token',
+              fanIn: 5,
+              fanOut: 2,
+              isHub: false,
+              isEntryPoint: false,
+              text: '[TypeScript] src/auth/jwt.ts validateToken\nvalidateToken(token: string): boolean\nValidates JWT token'
+            },
+            score: 0.85
+          });
+
+          results.push({
+            record: {
+              id: 'src/auth/middleware.ts::authMiddleware',
+              name: 'authMiddleware',
+              filePath: 'src/auth/middleware.ts',
+              className: '',
+              language: 'TypeScript',
+              signature: 'authMiddleware(req, res, next): void',
+              docstring: 'Authentication middleware',
+              fanIn: 3,
+              fanOut: 1,
+              isHub: false,
+              isEntryPoint: true,
+              text: '[TypeScript] src/auth/middleware.ts authMiddleware\nauthMiddleware(req, res, next): void\nAuthentication middleware'
+            },
+            score: 0.75
+          });
+        }
+
+        if (query.includes('user') || query.includes('create')) {
+          results.push({
+            record: {
+              id: 'src/users/service.ts::createUser',
+              name: 'createUser',
+              filePath: 'src/users/service.ts',
+              className: 'UserService',
+              language: 'TypeScript',
+              signature: 'createUser(userData: UserInput): Promise<User>',
+              docstring: 'Creates a new user',
+              fanIn: 2,
+              fanOut: 3,
+              isHub: false,
+              isEntryPoint: false,
+              text: '[TypeScript] src/users/service.ts UserService.createUser\ncreateUser(userData: UserInput): Promise<User>\nCreates a new user'
+            },
+            score: 0.80
+          });
+        }
+
+        return Promise.resolve(results.slice(0, opts.limit));
+      })
+    }
+  };
+});
+
+vi.mock('../spec-vector-index.js', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    SpecVectorIndex: {
+      ...actual.SpecVectorIndex,
+      exists: vi.fn().mockReturnValue(true),
+      search: vi.fn().mockImplementation((_dir: string, query: string, _embed: any, opts: any) => {
+        // Simulate finding spec requirements related to the query
+        const results = [];
+
+        if (query.includes('auth') || query.includes('validate') || query.includes('token')) {
+          results.push({
+            record: {
+              id: 'auth.validateToken',
+              domain: 'auth',
+              section: 'requirements',
+              title: 'Requirement: ValidateToken',
+              text: '[spec:auth] Requirement: ValidateToken\nThe system SHALL validate JWT tokens using HMAC-SHA256 signature verification.\n\n#### Scenario: ValidToken\n- **GIVEN** A valid JWT token with correct signature\n- **WHEN** validateToken() is called\n- **THEN** Returns true\n\n#### Scenario: InvalidToken\n- **GIVEN** A JWT token with incorrect signature\n- **WHEN** validateToken() is called\n- **THEN** Returns false',
+              linkedFiles: ['src/auth/jwt.ts', 'src/auth/middleware.ts']
+            },
+            score: 0.90
+          });
+
+          results.push({
+            record: {
+              id: 'auth.handleAuthentication',
+              domain: 'auth',
+              section: 'requirements',
+              title: 'Requirement: HandleAuthentication',
+              text: '[spec:auth] Requirement: HandleAuthentication\nThe system SHALL handle authentication requests with proper error handling and logging.\n\n#### Scenario: SuccessfulAuth\n- **GIVEN** Valid credentials\n- **WHEN** Authentication request is made\n- **THEN** Returns authenticated user with JWT token',
+              linkedFiles: ['src/auth/middleware.ts']
+            },
+            score: 0.85
+          });
+        }
+
+        if (query.includes('user') || query.includes('create')) {
+          results.push({
+            record: {
+              id: 'users.createUser',
+              domain: 'users',
+              section: 'requirements',
+              title: 'Requirement: CreateUser',
+              text: '[spec:users] Requirement: CreateUser\nThe system SHALL create users with email validation and password hashing.\n\n#### Scenario: ValidUserCreation\n- **GIVEN** Valid user data with unique email\n- **WHEN** createUser() is called\n- **THEN** User is created with hashed password\n\n#### Scenario: DuplicateEmail\n- **GIVEN** User data with existing email\n- **WHEN** createUser() is called\n- **THEN** Throws DuplicateEmailError',
+              linkedFiles: ['src/users/service.ts']
+            },
+            score: 0.88
+          });
+        }
+
+        return Promise.resolve(results.slice(0, opts.limit));
+      })
+    }
+  };
+});
+
+// Mock mapping.json (spread actual module to keep mkdir, writeFile, rm, readdir)
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    readFile: vi.fn().mockResolvedValue(
+      JSON.stringify({
+        mappings: [
+          {
+            domain: 'auth',
+            requirement: 'ValidateToken',
+            functions: [
+              { file: 'src/auth/jwt.ts', name: 'validateToken' },
+              { file: 'src/auth/middleware.ts', name: 'authMiddleware' }
+            ]
+          },
+          {
+            domain: 'auth',
+            requirement: 'HandleAuthentication',
+            functions: [
+              { file: 'src/auth/middleware.ts', name: 'authMiddleware' }
+            ]
+          },
+          {
+            domain: 'users',
+            requirement: 'CreateUser',
+            functions: [
+              { file: 'src/users/service.ts', name: 'createUser' }
+            ]
+          }
+        ]
+      })
+    ),
+  };
+});
+
 describe('UnifiedSearch E2E', () => {
   let testDir: string;
   let outputDir: string;
@@ -36,174 +208,6 @@ describe('UnifiedSearch E2E', () => {
       })
     };
 
-    // Mock the vector indexes
-    vi.mock('../vector-index.js', async (importOriginal) => {
-      const actual = await importOriginal() as any;
-      return {
-        ...actual,
-        VectorIndex: {
-          ...actual.VectorIndex,
-          exists: vi.fn().mockReturnValue(true),
-          search: vi.fn().mockImplementation((_dir: string, query: string, _embed: any, opts: any) => {
-            // Simulate finding functions related to the query
-            const results = [];
-
-            if (query.includes('auth') || query.includes('validate') || query.includes('token')) {
-              results.push({
-                record: {
-                  id: 'src/auth/jwt.ts::validateToken',
-                  name: 'validateToken',
-                  filePath: 'src/auth/jwt.ts',
-                  className: '',
-                  language: 'TypeScript',
-                  signature: 'validateToken(token: string): boolean',
-                  docstring: 'Validates JWT token',
-                  fanIn: 5,
-                  fanOut: 2,
-                  isHub: false,
-                  isEntryPoint: false,
-                  text: '[TypeScript] src/auth/jwt.ts validateToken\nvalidateToken(token: string): boolean\nValidates JWT token'
-                },
-                score: 0.85
-              });
-
-              results.push({
-                record: {
-                  id: 'src/auth/middleware.ts::authMiddleware',
-                  name: 'authMiddleware',
-                  filePath: 'src/auth/middleware.ts',
-                  className: '',
-                  language: 'TypeScript',
-                  signature: 'authMiddleware(req, res, next): void',
-                  docstring: 'Authentication middleware',
-                  fanIn: 3,
-                  fanOut: 1,
-                  isHub: false,
-                  isEntryPoint: true,
-                  text: '[TypeScript] src/auth/middleware.ts authMiddleware\nauthMiddleware(req, res, next): void\nAuthentication middleware'
-                },
-                score: 0.75
-              });
-            }
-
-            if (query.includes('user') || query.includes('create')) {
-              results.push({
-                record: {
-                  id: 'src/users/service.ts::createUser',
-                  name: 'createUser',
-                  filePath: 'src/users/service.ts',
-                  className: 'UserService',
-                  language: 'TypeScript',
-                  signature: 'createUser(userData: UserInput): Promise<User>',
-                  docstring: 'Creates a new user',
-                  fanIn: 2,
-                  fanOut: 3,
-                  isHub: false,
-                  isEntryPoint: false,
-                  text: '[TypeScript] src/users/service.ts UserService.createUser\ncreateUser(userData: UserInput): Promise<User>\nCreates a new user'
-                },
-                score: 0.80
-              });
-            }
-
-            return Promise.resolve(results.slice(0, opts.limit));
-          })
-        }
-      };
-    });
-
-    vi.mock('../spec-vector-index.js', async (importOriginal) => {
-      const actual = await importOriginal() as any;
-      return {
-        ...actual,
-        SpecVectorIndex: {
-          ...actual.SpecVectorIndex,
-          exists: vi.fn().mockReturnValue(true),
-          search: vi.fn().mockImplementation((_dir: string, query: string, _embed: any, opts: any) => {
-            // Simulate finding spec requirements related to the query
-            const results = [];
-
-            if (query.includes('auth') || query.includes('validate') || query.includes('token')) {
-              results.push({
-                record: {
-                  id: 'auth.validateToken',
-                  domain: 'auth',
-                  section: 'requirements',
-                  title: 'Requirement: ValidateToken',
-                  text: '[spec:auth] Requirement: ValidateToken\nThe system SHALL validate JWT tokens using HMAC-SHA256 signature verification.\n\n#### Scenario: ValidToken\n- **GIVEN** A valid JWT token with correct signature\n- **WHEN** validateToken() is called\n- **THEN** Returns true\n\n#### Scenario: InvalidToken\n- **GIVEN** A JWT token with incorrect signature\n- **WHEN** validateToken() is called\n- **THEN** Returns false',
-                  linkedFiles: ['src/auth/jwt.ts', 'src/auth/middleware.ts']
-                },
-                score: 0.90
-              });
-
-              results.push({
-                record: {
-                  id: 'auth.handleAuthentication',
-                  domain: 'auth',
-                  section: 'requirements',
-                  title: 'Requirement: HandleAuthentication',
-                  text: '[spec:auth] Requirement: HandleAuthentication\nThe system SHALL handle authentication requests with proper error handling and logging.\n\n#### Scenario: SuccessfulAuth\n- **GIVEN** Valid credentials\n- **WHEN** Authentication request is made\n- **THEN** Returns authenticated user with JWT token',
-                  linkedFiles: ['src/auth/middleware.ts']
-                },
-                score: 0.85
-              });
-            }
-
-            if (query.includes('user') || query.includes('create')) {
-              results.push({
-                record: {
-                  id: 'users.createUser',
-                  domain: 'users',
-                  section: 'requirements',
-                  title: 'Requirement: CreateUser',
-                  text: '[spec:users] Requirement: CreateUser\nThe system SHALL create users with email validation and password hashing.\n\n#### Scenario: ValidUserCreation\n- **GIVEN** Valid user data with unique email\n- **WHEN** createUser() is called\n- **THEN** User is created with hashed password\n\n#### Scenario: DuplicateEmail\n- **GIVEN** User data with existing email\n- **WHEN** createUser() is called\n- **THEN** Throws DuplicateEmailError',
-                  linkedFiles: ['src/users/service.ts']
-                },
-                score: 0.88
-              });
-            }
-
-            return Promise.resolve(results.slice(0, opts.limit));
-          })
-        }
-      };
-    });
-
-    // Mock mapping.json (spread actual module to keep mkdir, writeFile, rm, readdir)
-    vi.mock('node:fs/promises', async (importOriginal) => {
-      const actual = await importOriginal() as any;
-      return {
-        ...actual,
-        readFile: vi.fn().mockResolvedValue(
-          JSON.stringify({
-            mappings: [
-              {
-                domain: 'auth',
-                requirement: 'ValidateToken',
-                functions: [
-                  { file: 'src/auth/jwt.ts', name: 'validateToken' },
-                  { file: 'src/auth/middleware.ts', name: 'authMiddleware' }
-                ]
-              },
-              {
-                domain: 'auth',
-                requirement: 'HandleAuthentication',
-                functions: [
-                  { file: 'src/auth/middleware.ts', name: 'authMiddleware' }
-                ]
-              },
-              {
-                domain: 'users',
-                requirement: 'CreateUser',
-                functions: [
-                  { file: 'src/users/service.ts', name: 'createUser' }
-                ]
-              }
-            ]
-          })
-        ),
-      };
-    });
   });
 
   afterAll(async () => {

@@ -11,6 +11,14 @@
  *   • a newly-added symbol that a prior NON-caller should now resolve to is
  *     never re-resolved (getCallerFiles misses it — it was an `external` edge);
  *   • direct callers past CALLER_REPARSE_LIMIT are silently dropped.
+ *
+ * DETERMINISM (change: fix-test-suite-hygiene — the once-flaky guard): these tests
+ * await `handleChange`, which calls `handleBatch(..., { syncFlush: true })` — the
+ * signature AND vector writes run inline and are fully awaited, so convergence is
+ * complete when the promise resolves. Every comparison is over a `.sort()`ed edge
+ * signature, and each test runs in its own `mkdtemp` root. There is NO time-window
+ * or debounce wait, which is what made an earlier version flaky under full-suite
+ * load. Do not reintroduce one: assert on the awaited result, never on a timer.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

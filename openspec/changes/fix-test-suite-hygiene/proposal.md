@@ -1,7 +1,17 @@
 # Test-suite hygiene: eliminate deprecation time bombs and the known flake
 
-> Status: PROPOSED (2026-07-03, e2e audit). The suite is green (283 files / 5,589 tests) but
-> carries two liabilities that will bite on their own schedule rather than ours.
+> Status: SHIPPED (2026-07-19). Notes on how it landed: (1) the five `vi.mock` calls (four in
+> `unified-search.e2e.test.ts`, one in `gryph-bridge.test.ts`) moved to module top level — a
+> zero-behavior change since vitest already hoisted them. (2) The deprecation-warning escalation is
+> implemented as a deterministic guard test (`src/vitest-hygiene.test.ts`) that fails the moment any
+> `vi.mock` appears indented (inside a block) anywhere under `src`/`test`/`examples` — more robust
+> than scraping vitest's stderr, and it runs in the same CI `test:run` the repo already gates on.
+> (3) The `mcp-watcher-parity` flake was NOT reproducible on current main: the test is already
+> event-driven (it awaits `handleChange` → `handleBatch({ syncFlush: true })`, whose signature+vector
+> writes run inline and are fully awaited; every comparison is over a `.sort()`ed edge signature; each
+> test uses its own `mkdtemp` root). Intervening watcher hardening (the inline `syncFlush` path)
+> resolved it. Verified deterministic across 18 clean runs (12 isolated + 6 full-suite); a comment now
+> documents the guarantee so a future edit can't silently reintroduce a timer-based wait.
 
 ## The gap
 
