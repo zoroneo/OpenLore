@@ -83,6 +83,43 @@ export const HOOK_COOLDOWN_MS: Record<PanicLevel, number> = {
 };
 
 // ============================================================================
+// L4 BLOCK RECOVERY EXEMPTION
+// ============================================================================
+
+/**
+ * Tools a hard L4 `experimental_blocking` block MUST let through: the prescribed orient()
+ * recovery plus the read-only OpenLore navigation/recall no-ops that help the agent re-orient.
+ * The block message tells the agent to call orient() — blocking that very call would trap the
+ * agent with no escape but a human config edit. This set is bounded and explicit: every entry is
+ * a read-only tool that cannot perform the cross-module write the block exists to prevent.
+ *
+ * Matching is prefix-insensitive: a payload tool name of `mcp__openlore__orient`, `orient`, or any
+ * `<server>__orient` resolves to `orient` (see isRecoveryTool in panic-response.ts).
+ */
+export const PANIC_RECOVERY_TOOLS: readonly string[] = [
+  'orient',
+  'recall',
+  'verify_claim',
+  'blast_radius',
+  'get_map',
+  'find_path',
+  'search_code',
+];
+
+// ============================================================================
+// WATCHER SINGLETON
+// ============================================================================
+
+/**
+ * A gryph-watch PID claim whose heartbeat (PID-file mtime) is older than this is treated as stale
+ * and stealable, even if the recorded PID still answers signal-0 — that PID may have been recycled
+ * to an unrelated process. A live watcher refreshes the heartbeat every WATCHER_HEARTBEAT_MS, so a
+ * genuinely-running watcher is never within one stale window of being stolen.
+ */
+export const WATCHER_HEARTBEAT_MS = 30_000;
+export const WATCHER_STALE_MS = 90_000;
+
+// ============================================================================
 // GRYPH SIGNAL WEIGHTS
 // ============================================================================
 

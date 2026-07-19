@@ -5,27 +5,13 @@
  * evidence a maintainer needs before enabling any interventional panic posture by default.
  *
  * Read-only, no side effects. Always exits 0 (it is a report, not a gate that blocks). Use --json
- * for machine-readable output. The verdict is INSUFFICIENT_DATA or REVIEW_REQUIRED — never auto-CLEARED.
+ * for machine-readable output. The verdict is a mechanical read of the criteria — CLEARED only when
+ * every criterion is met — and even CLEARED activates nothing (setup does, with acknowledgement).
  */
 
 import { Command } from 'commander';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { OPENLORE_DIR } from '../../constants.js';
-import { validatePanicSignal } from '../../core/services/mcp-handlers/panic-validation.js';
-import type { PanicTelemetryEvent, PanicGateReport } from '../../core/services/mcp-handlers/panic-validation.js';
-
-function readPanicEvents(directory: string): PanicTelemetryEvent[] {
-  const path = join(directory, OPENLORE_DIR, 'telemetry', 'panic.jsonl');
-  if (!existsSync(path)) return [];
-  const out: PanicTelemetryEvent[] = [];
-  for (const line of readFileSync(path, 'utf-8').split('\n')) {
-    const t = line.trim();
-    if (!t) continue;
-    try { out.push(JSON.parse(t) as PanicTelemetryEvent); } catch { /* skip malformed */ }
-  }
-  return out;
-}
+import { validatePanicSignal, readPanicTelemetry } from '../../core/services/mcp-handlers/panic-validation.js';
+import type { PanicGateReport } from '../../core/services/mcp-handlers/panic-validation.js';
 
 function pct(r: number | null): string {
   return r === null ? '—' : `${Math.round(r * 100)}%`;
@@ -36,13 +22,13 @@ function render(report: PanicGateReport): string {
   const line = (s = '') => L.push(s);
   line('OBSERVE-MODE VALIDATION — panic signal accuracy gate');
   line('────────────────────────────────────────────────────────');
-  line(`verdict                  : ${report.verdict}  (never auto-CLEARED — a maintainer decides)`);
+  line(`verdict                  : ${report.verdict}  (CLEARED = criteria met; activation still needs your acknowledgement)`);
   line(`episodes                 : ${report.episodes.completed} completed / ${report.episodes.total} total  (need ≥${report.min_episodes})`);
   const h = report.peak_level_histogram;
   line(`peak levels              : L1×${h.L1}  L2×${h.L2}  L3×${h.L3}  L4×${h.L4}`);
   line('');
   const fp = report.false_positive;
-  line(`false-positive proxy     : ${pct(fp.proxy_rate)}  (${fp.resolved_via_decay}/${report.episodes.completed} resolved without re-orient; target ≤20%)`);
+  line(`false-positive proxy     : ${pct(fp.proxy_rate)}  (upper bound: ${fp.resolved_via_decay}/${report.episodes.completed} resolved-by-decay, not re-orient; target ≤20%)`);
   if (fp.high_level_count > 0) line(`  high-level FP (L3+)     : ${fp.high_level_count}`);
   if (fp.by_trigger.length) {
     line('  by trigger (fp/all)    :');
@@ -72,7 +58,7 @@ export const panicValidateCommand = new Command('panic-validate')
   .action((options: { directory: string; json: boolean; strict: boolean }) => {
     let exitCode = 0;
     try {
-      const events = readPanicEvents(options.directory);
+      const events = readPanicTelemetry(options.directory);
       const report = validatePanicSignal(events);
       process.stdout.write(options.json ? JSON.stringify(report, null, 2) + '\n' : render(report) + '\n');
       if (options.strict) {

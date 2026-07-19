@@ -2,8 +2,12 @@
  * Observe-mode accuracy gate — validatePanicSignal() over synthetic panic telemetry.
  */
 
-import { describe, it, expect } from 'vitest';
-import { validatePanicSignal, PANIC_GATE } from './panic-validation.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { validatePanicSignal, readPanicTelemetry, PANIC_GATE } from './panic-validation.js';
 import type { PanicTelemetryEvent } from './panic-validation.js';
 
 const ts = (offsetMs: number) => new Date(1_700_000_000_000 + offsetMs).toISOString();
@@ -40,7 +44,7 @@ describe('validatePanicSignal — accuracy gate', () => {
     expect(r.false_positive.proxy_rate).toBeNull();
     expect(r.intervention.follow_through_rate).toBeNull();
     expect(r.criteria.data_sufficient).toBe(false);
-    expect(r.verdict).not.toBe('CLEARED'); // CLEARED is never a possible verdict
+    expect(r.verdict).not.toBe('CLEARED'); // below the episode floor CLEARED is impossible
   });
 
   it('episode resolved via orient is not a false positive', () => {
@@ -124,7 +128,7 @@ describe('validatePanicSignal — accuracy gate', () => {
     expect(['INSUFFICIENT_DATA', 'REVIEW_REQUIRED']).toContain(r.verdict);
   });
 
-  it('recommends review when all criteria meet target (data + low fp + good follow-through)', () => {
+  it('emits CLEARED when every criterion meets target (data + low fp + good follow-through)', () => {
     const events: PanicTelemetryEvent[] = [];
     for (let i = 0; i < PANIC_GATE.MIN_EPISODES; i++) {
       events.push(...episode(i * 10_000, i * 10_000 + 1000, { withOrient: true }));
@@ -133,8 +137,20 @@ describe('validatePanicSignal — accuracy gate', () => {
     const r = validatePanicSignal(events);
     expect(r.criteria.fp_ok).toBe(true);
     expect(r.criteria.follow_through_ok).toBe(true);
-    expect(r.recommendations.some((s) => s.includes('may now review enabling an advisory posture'))).toBe(true);
-    expect(r.verdict).toBe('REVIEW_REQUIRED'); // still human-decided
+    expect(r.criteria.data_sufficient).toBe(true);
+    expect(r.verdict).toBe('CLEARED'); // mechanical read of the criteria — does not activate anything
+    expect(r.recommendations.some((s) => s.includes('Gate CLEARED'))).toBe(true);
+  });
+
+  it('does NOT clear when follow-through is unmeasured (pure observe mode, no interventions)', () => {
+    // Data sufficient + fp ok, but no hook intercepts → follow-through null → not affirmatively met.
+    const events: PanicTelemetryEvent[] = [];
+    for (let i = 0; i < PANIC_GATE.MIN_EPISODES; i++) {
+      events.push(...episode(i * 10_000, i * 10_000 + 1000, { withOrient: true }));
+    }
+    const r = validatePanicSignal(events);
+    expect(r.criteria.follow_through_ok).toBeNull();
+    expect(r.verdict).toBe('REVIEW_REQUIRED');
   });
 
   it('flags a high false-positive proxy as blocking', () => {
@@ -146,5 +162,68 @@ describe('validatePanicSignal — accuracy gate', () => {
     expect(r.false_positive.proxy_rate).toBe(1);
     expect(r.criteria.fp_ok).toBe(false);
     expect(r.recommendations.some((s) => s.includes('exceeds the 20% target'))).toBe(true);
+  });
+});
+
+// ============================================================================
+// readPanicTelemetry — spans the live file AND rotated archives (episode floor reachable)
+// ============================================================================
+
+describe('readPanicTelemetry', () => {
+  let dir: string;
+  let tel: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'openlore-panictel-'));
+    tel = join(dir, '.openlore', 'telemetry');
+    mkdirSync(tel, { recursive: true });
+  });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  const writeJsonl = (name: string, events: PanicTelemetryEvent[]): void =>
+    writeFileSync(join(tel, name), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+
+  it('returns [] when nothing has been written', () => {
+    expect(readPanicTelemetry(dir)).toEqual([]);
+  });
+
+  it('reads only the live file when no archives exist', () => {
+    writeJsonl('panic.jsonl', [{ ts: '2026-01-01T00:00:00Z', event: 'hook_intervention' }]);
+    expect(readPanicTelemetry(dir)).toHaveLength(1);
+  });
+
+  it('spans live + rotated archives so rotated episodes are not discarded', () => {
+    // Rotation shifts live→.1→.2…; the gate must still see all of them.
+    writeJsonl('panic.2.jsonl', [{ ts: '2026-01-01T00:00:00Z', event: 'panic_level_change', from_level: 0, to_level: 2 }]);
+    writeJsonl('panic.1.jsonl', [{ ts: '2026-01-01T00:00:01Z', event: 'panic_level_change', from_level: 2, to_level: 0 }]);
+    writeJsonl('panic.jsonl', [{ ts: '2026-01-01T00:00:02Z', event: 'hook_intervention' }]);
+    const events = readPanicTelemetry(dir);
+    expect(events).toHaveLength(3);
+    // A completed episode lives entirely in the rotated archives — the gate must count it.
+    const report = validatePanicSignal(events);
+    expect(report.episodes.completed).toBe(1);
+  });
+
+  it('makes the MIN_EPISODES floor reachable across rotation (episodes split over archives)', () => {
+    // Half the completed episodes in an archive, half live — neither file alone meets the floor.
+    const half = Math.ceil(PANIC_GATE.MIN_EPISODES / 2);
+    const ep = (i: number): PanicTelemetryEvent[] => ([
+      { ts: new Date(1_700_000_000_000 + i * 10_000).toISOString(), event: 'panic_level_change', from_level: 0, to_level: 2 },
+      { ts: new Date(1_700_000_000_000 + i * 10_000 + 1000).toISOString(), event: 'panic_level_change', from_level: 2, to_level: 0 },
+    ]);
+    const archived: PanicTelemetryEvent[] = [];
+    const live: PanicTelemetryEvent[] = [];
+    for (let i = 0; i < half; i++) archived.push(...ep(i));
+    for (let i = half; i < PANIC_GATE.MIN_EPISODES; i++) live.push(...ep(i));
+    writeJsonl('panic.1.jsonl', archived);
+    writeJsonl('panic.jsonl', live);
+    const report = validatePanicSignal(readPanicTelemetry(dir));
+    expect(report.episodes.completed).toBeGreaterThanOrEqual(PANIC_GATE.MIN_EPISODES);
+    expect(report.criteria.data_sufficient).toBe(true);
+  });
+
+  it('skips malformed lines and never throws', () => {
+    writeFileSync(join(tel, 'panic.jsonl'), '{bad\n{"ts":"2026-01-01T00:00:00Z","event":"hook_intervention"}\n\n');
+    expect(() => readPanicTelemetry(dir)).not.toThrow();
+    expect(readPanicTelemetry(dir)).toHaveLength(1);
   });
 });
