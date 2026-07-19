@@ -10,7 +10,7 @@
   <a href="https://www.npmjs.com/package/openlore"><img src="https://img.shields.io/npm/v/openlore?color=2563eb&label=npm&logo=npm&logoColor=white" alt="npm version"></a>
   <a href="https://github.com/clay-good/OpenLore/actions/workflows/ci.yml"><img src="https://github.com/clay-good/OpenLore/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/npm/l/openlore?color=22c55e" alt="MIT License"></a>
-  <img src="https://img.shields.io/node/v/openlore?color=339933&logo=node.js&logoColor=white" alt="Node >=22.5">
+  <img src="https://img.shields.io/node/v/openlore?color=339933&logo=node.js&logoColor=white" alt="Node >=22.13">
   <br>
   <img src="https://img.shields.io/badge/MCP-ready-7c3aed?logo=anthropic&logoColor=white" alt="MCP ready">
   <img src="https://img.shields.io/badge/languages-18%20%2B%2012%20IaC-f97316" alt="18 languages + 12 IaC ecosystems">
@@ -478,7 +478,7 @@ We'd rather you know these up front than discover them mid-task.
 
 ## Requirements
 
-- **Node.js 22.5+** (launching under an older Node fails fast with a one-line message and exit code 78, never a stack trace).
+- **Node.js 22.13+** (the first line where the built-in `node:sqlite` is available without runtime flags; launching under an older or incapable Node fails fast with a one-line message and exit code 78, never a stack trace).
 - **No API key** for `analyze`, `drift`, `mcp`, `init`, and every governance/navigation tool.
 - **API key** only for `generate`, `verify`, and `drift --use-llm`:
   ```bash

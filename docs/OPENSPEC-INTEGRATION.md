@@ -483,7 +483,8 @@ and project-root resolution from the spawn directory.
 
 ### Node-version guard
 
-OpenLore requires **Node ≥22.5**; OpenSpec requires only ≥20.19. A user on Node 20/21 can run
+OpenLore requires **Node ≥22.13** (the first line where the built-in `node:sqlite` is available
+without runtime flags); OpenSpec requires only ≥20.19. A user on Node 20/21 can run
 `openspec lore generate`, which spawns `openlore` under an unsupported Node. `engines` is advisory at
 install time and does not protect the spawn, so OpenLore **fails fast at runtime**: one legible
 stderr line naming the required and actual versions, and a stable exit code **78** — never a stack

@@ -1,12 +1,22 @@
 # Raise the Node floor to where `node:sqlite` actually exists — and probe the capability, not the version
 
-> Status: PROPOSED (2026-07-03, e2e audit follow-up). `package.json` declares `engines.node:
+> Status: IMPLEMENTED (2026-07-19). The floor moved from `>=22.5.0` to `>=22.13.0` (the verified
+> unflagged `node:sqlite` line, nodejs/node#55854) across all three declarations — `engines.node`
+> (package.json), `MIN_NODE` (node-version-guard.ts), and `MIN_NODE_MAJOR/MINOR_VERSION`
+> (constants.ts) — plus the README badge/requirement line and the live docs (cli-reference,
+> OPENSPEC-INTEGRATION). `checkNodeVersion` and doctor's Node check now probe `node:sqlite` via
+> `process.getBuiltinModule` (injectable `isSqliteAvailable`) so the capability, not the version
+> number, has the final word: a version at/above the floor with the builtin unavailable fails
+> honestly (stderr line + exit code 78 / doctor `fail` naming the missing capability), never an
+> uncaught first-import crash. The guard test extends the floor-coherence check to constants.ts and
+> adds probe cases. Not touched: the historical `docs/specs/openlore-spec-26-*` audit record, whose
+> since-reversed "keep 22.5" recommendation is left as dated history.
+>
+> Original problem (2026-07-03, e2e audit follow-up): `package.json` declared `engines.node:
 > ">=22.5.0"`, but `node:sqlite` required `--experimental-sqlite` until Node 22.13.0 / 23.4.0 and
 > nothing in the tree passes that flag — so a fresh install on the low end of the DECLARED range
-> crashes at first import, while the version guard and doctor both bless the very version that
-> crashes. Raise the floor to the verified unflagged line, align all three floor declarations, and
-> make the guard probe `node:sqlite` availability directly so a future flag change can't reopen
-> the gap.
+> crashed at first import, while the version guard and doctor both blessed the very version that
+> crashes.
 
 ## The gap
 
