@@ -159,10 +159,13 @@ function parseNamedImports(namesStr: string): string[] {
 export function parseJSImports(content: string): ImportInfo[] {
   const imports: ImportInfo[] = [];
 
-  // Remove comments to avoid false matches
+  // Blank comments with same-length whitespace (newlines kept) so `match.index`
+  // offsets and `getLineNumber(content, …)` agree with the original file — the
+  // `parseHtmlAssetImports` discipline. Stripping them outright would shift every
+  // recorded import line upward past a block-comment header.
   const cleanContent = content
-    .replace(/\/\*[\s\S]*?\*\//g, '') // Block comments
-    .replace(/\/\/.*$/gm, '');        // Line comments
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')) // Block comments
+    .replace(/\/\/.*$/gm, (m) => ' '.repeat(m.length));            // Line comments
 
   // ES Module: import X from 'module'
   let match: RegExpExecArray | null;
@@ -322,15 +325,21 @@ export function parseJSImports(content: string): ImportInfo[] {
 export function parseJSExports(content: string): ExportInfo[] {
   const exports: ExportInfo[] = [];
 
-  // Remove comments
+  // Blank comments with same-length whitespace (newlines kept) so `match.index`
+  // offsets and `getLineNumber(content, …)` agree with the original file — the
+  // `parseHtmlAssetImports` discipline. Stripping comments outright would shift
+  // every recorded export line upward past a block-comment header.
   const cleanContent = content
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/.*$/gm, '');
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/\/\/.*$/gm, (m) => ' '.repeat(m.length));
 
   let match: RegExpExecArray | null;
 
-  // export default
-  const defaultExportRegex = /export\s+default\s+(?:(class|function)\s+(\w+)|(\w+))/g;
+  // export default — tolerate the `async` modifier and a generator `*` so
+  // `export default async function foo` captures `foo` (not `async`), and skip
+  // `abstract` before a default class.
+  const defaultExportRegex =
+    /export\s+default\s+(?:(?:async\s+)?(?:abstract\s+)?(class|function)\s*\*?\s*(\w+)|(\w+))/g;
   while ((match = defaultExportRegex.exec(cleanContent)) !== null) {
     const kind = match[1] as 'class' | 'function' | undefined;
     const name = match[2] || match[3] || 'default';
@@ -362,8 +371,9 @@ export function parseJSExports(content: string): ExportInfo[] {
     }
   }
 
-  // export const/let/var
-  const varExportRegex = /export\s+(?:const|let|var)\s+(\w+)/g;
+  // export const/let/var — but NOT `export const enum X` (a TS const-enum,
+  // recovered with its real name by the enum regex below).
+  const varExportRegex = /export\s+(?:const|let|var)\s+(?!enum\b)(\w+)/g;
   while ((match = varExportRegex.exec(cleanContent)) !== null) {
     exports.push({
       name: match[1],
@@ -375,8 +385,10 @@ export function parseJSExports(content: string): ExportInfo[] {
     });
   }
 
-  // export function
-  const funcExportRegex = /export\s+function\s+(\w+)/g;
+  // export function — tolerate `async` and a generator `*` so
+  // `export async function`, `export function* gen`, and
+  // `export async function* agen` are not silently dropped.
+  const funcExportRegex = /export\s+(?:async\s+)?function\s*\*?\s*(\w+)/g;
   while ((match = funcExportRegex.exec(cleanContent)) !== null) {
     exports.push({
       name: match[1],
@@ -388,8 +400,8 @@ export function parseJSExports(content: string): ExportInfo[] {
     });
   }
 
-  // export class
-  const classExportRegex = /export\s+class\s+(\w+)/g;
+  // export class — tolerate the `abstract` modifier.
+  const classExportRegex = /export\s+(?:abstract\s+)?class\s+(\w+)/g;
   while ((match = classExportRegex.exec(cleanContent)) !== null) {
     exports.push({
       name: match[1],
@@ -427,8 +439,9 @@ export function parseJSExports(content: string): ExportInfo[] {
     });
   }
 
-  // export enum
-  const enumExportRegex = /export\s+enum\s+(\w+)/g;
+  // export enum — tolerate `declare` and `const` (a TS const-enum) so the real
+  // enum name is captured instead of the bare `enum` glitch.
+  const enumExportRegex = /export\s+(?:declare\s+)?(?:const\s+)?enum\s+(\w+)/g;
   while ((match = enumExportRegex.exec(cleanContent)) !== null) {
     exports.push({
       name: match[1],
@@ -513,11 +526,25 @@ const PYTHON_BUILTINS = new Set([
 export function parsePythonImports(content: string): ImportInfo[] {
   const imports: ImportInfo[] = [];
 
-  // Remove comments and collapse multi-line parenthesized imports onto one line
-  // e.g. "from x import (\n  A,\n  B\n)" → "from x import A, B"
+  // Blank line comments (same length, newlines kept) and collapse ONLY multi-line
+  // `from X import ( … )` blocks onto the `from` line, relocating the newlines the
+  // collapse consumes to trailing blank lines so total line count — and every
+  // recorded import line — matches the original source. A multi-line import is
+  // attributed to its first (the `from`) line. Parenthesized spans that are NOT
+  // import lists (e.g. a multi-line call) are left untouched, so they cannot shift
+  // the line numbers of imports below them. Because the collapse is not
+  // length-preserving, line numbers below are read from `cleanContent`, whose
+  // newline positions stay line-aligned with the original.
   const cleanContent = content
-    .replace(/#.*$/gm, '')
-    .replace(/\(\s*([\s\S]*?)\s*\)/g, (_, inner) => inner.replace(/\s*\n\s*/g, ', '));
+    .replace(/#.*$/gm, (m) => ' '.repeat(m.length))
+    .replace(
+      /^([ \t]*from\s+[\w.]+\s+import\s*)\(([\s\S]*?)\)/gm,
+      (whole, prefix, inner) => {
+        const joined = prefix + inner.replace(/\s*\n\s*/g, ', ');
+        const consumedNewlines = (whole.match(/\n/g) ?? []).length;
+        return joined + '\n'.repeat(consumedNewlines);
+      },
+    );
 
   let match: RegExpExecArray | null;
 
@@ -539,7 +566,7 @@ export function parsePythonImports(content: string): ImportInfo[] {
         hasNamespace: true,
         isTypeOnly: false,
         isDynamic: false,
-        line: getLineNumber(content, match.index),
+        line: getLineNumber(cleanContent, match.index),
       });
     }
   }
@@ -563,7 +590,7 @@ export function parsePythonImports(content: string): ImportInfo[] {
         hasNamespace: true,
         isTypeOnly: false,
         isDynamic: false,
-        line: getLineNumber(content, match.index),
+        line: getLineNumber(cleanContent, match.index),
       });
     } else {
       const names = importsPart.split(',').map(n => {
@@ -581,7 +608,7 @@ export function parsePythonImports(content: string): ImportInfo[] {
         hasNamespace: false,
         isTypeOnly: false,
         isDynamic: false,
-        line: getLineNumber(content, match.index),
+        line: getLineNumber(cleanContent, match.index),
       });
     }
   }
@@ -707,12 +734,15 @@ export function parseJavaPackage(content: string): string | undefined {
 function parseJavaImports(content: string): ImportInfo[] {
   const imports: ImportInfo[] = [];
 
-  // Strip comments to avoid false matches
+  // Blank comments with same-length whitespace (newlines kept) so recorded
+  // import lines match the original file (the `parseHtmlAssetImports` discipline).
   const clean = content
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/.*$/gm, '');
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/\/\/.*$/gm, (m) => ' '.repeat(m.length));
 
-  const importRegex = /^\s*import\s+(static\s+)?([\w.]+(?:\.\*)?)\s*;/gm;
+  // `^[ \t]*` (not `^\s*`) so a preceding blank line's newline is not consumed
+  // into the match — that would report the import one line early.
+  const importRegex = /^[ \t]*import\s+(static\s+)?([\w.]+(?:\.\*)?)\s*;/gm;
   let match: RegExpExecArray | null;
   while ((match = importRegex.exec(clean)) !== null) {
     const isStatic = !!match[1];
@@ -772,9 +802,11 @@ function parseJavaImports(content: string): ImportInfo[] {
 function parseJavaExports(content: string): ExportInfo[] {
   const exports: ExportInfo[] = [];
 
+  // Blank comments with same-length whitespace (newlines kept) so recorded
+  // export lines match the original file (the `parseHtmlAssetImports` discipline).
   const clean = content
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/.*$/gm, '');
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/\/\/.*$/gm, (m) => ' '.repeat(m.length));
 
   let match: RegExpExecArray | null;
 

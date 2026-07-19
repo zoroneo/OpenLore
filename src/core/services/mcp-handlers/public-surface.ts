@@ -162,21 +162,17 @@ function exportedNames(rawContent: string, language: string): Set<string> {
     // the definition site (tracked there), and counting them here double-reports a barrel'd symbol
     // (and turns a definition-site rename into a phantom remove+add at the barrel). Matches the
     // surface-listing path, which also filters re-exports.
+    // The shared `parseJSExports` now recognizes modifier-prefixed exports directly —
+    // `export async function` / `export function* gen` / `export abstract class`,
+    // `export default async function foo` (name `foo`, not `async`), and the real name
+    // of a `export const enum X` — so no per-consumer recovery is needed here. The
+    // RESERVED_NAMES filter stays as a defense-in-depth glitch guard (e.g. an anonymous
+    // `export default function () {}` still yields the bare `function` token).
     const names = new Set(
       parseJSExports(content)
         .filter((e) => !e.isReExport && e.name && e.name !== 'default' && !RESERVED_NAMES.has(e.name))
         .map((e) => e.name),
     );
-    // `parseJSExports`' `export function` regex matches neither `export async function` nor a
-    // GENERATOR (`export function* gen` / `export async function* agen`) — recover all of those
-    // here so async/generator exports are not silently dropped. Local fix; shared parser unchanged.
-    const fn = /\bexport\s+(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/g;
-    // `parseJSExports` also mis-names `export const enum X` (and `export enum X`) — recover the real
-    // enum name (the bare `enum` token was filtered out above as a reserved-word glitch).
-    const en = /\bexport\s+(?:declare\s+)?(?:const\s+)?enum\s+([A-Za-z_$][\w$]*)/g;
-    let m: RegExpExecArray | null;
-    while ((m = fn.exec(content)) !== null) names.add(m[1]);
-    while ((m = en.exec(content)) !== null) names.add(m[1]);
     return names;
   }
   if (language === 'Python') {

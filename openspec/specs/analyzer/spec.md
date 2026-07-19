@@ -5912,6 +5912,79 @@ The system SHALL expose the substrate preset (navigation core plus recall, verif
 > Decision recorded: c79ec7ca
 > Date: 2026-06-28
 
+### Requirement: ExportParserRecognizesModifierPrefixedExports
+
+The shared JavaScript/TypeScript export parser (`parseJSExports`) SHALL recognize modifier-prefixed
+exports so that no exported symbol is silently dropped or mis-named: `export async function`,
+generator `export function* gen` / `export async function* agen`, and `export abstract class` MUST
+be emitted with their real name and correct kind (`function`/`class`); `export default async
+function foo` MUST capture the name `foo`, never the `async` modifier; and `export const enum X`
+(and `export declare enum X`) MUST be emitted as an `enum` named `X`, never the bare `enum` token or
+a spurious `variable`. Because the parser is the single shared reader, every consumer — the
+dependency graph, the spec verifier's `compareExports`, and the mapping generator's export index —
+SHALL inherit this recognition without per-consumer recovery.
+
+#### Scenario: Async and generator function exports are recovered
+
+- **GIVEN** a source file with `export async function fetchData`, `export function* gen`, and
+  `export async function* agen`
+- **WHEN** its exports are parsed
+- **THEN** `fetchData`, `gen`, and `agen` each appear as a `function` export
+
+#### Scenario: A default async function keeps its real name
+
+- **GIVEN** `export default async function foo() {}`
+- **WHEN** its exports are parsed
+- **THEN** the default export is named `foo`, not `async`
+
+#### Scenario: A const-enum keeps its real name
+
+- **GIVEN** `export const enum Color { Red, Green }`
+- **WHEN** its exports are parsed
+- **THEN** an `enum` named `Color` is emitted, with no `enum`-named or `variable` export
+
+#### Scenario: The dependency-graph node inherits the recovery
+
+- **GIVEN** a file exporting `export async function loadData` and `export abstract class Store`
+- **WHEN** the dependency graph is built
+- **THEN** the file's node lists both `loadData` and `Store` among its exports
+
+> Change: fix-export-parser-fidelity
+> Date: 2026-07-19
+
+### Requirement: ImportExportLineNumbersMatchOriginalSource
+
+The import/export parser SHALL compute every recorded import and export line number against text
+that is line-aligned with the original file. Comment removal in the JavaScript/TypeScript and Java
+cleaners MUST blank comments with same-length whitespace (newlines kept), never strip them
+line-removing, so a block-comment header does not shift every recorded line upward. Python's
+multi-line-import collapse MUST be scoped to `from … import ( … )` statements, preserve the total
+line count (relocating consumed newlines to trailing blank lines), and attribute a multi-line import
+to its first (`from`) line; a parenthesized span that is not an import list MUST NOT perturb the line
+numbers of imports below it.
+
+#### Scenario: An import below a block-comment header records its true line
+
+- **GIVEN** a JS/TS or Java file with a 12-line block-comment header and an import/export below it
+- **WHEN** the file is parsed
+- **THEN** each import/export records its actual line in the original file, not a shifted one
+
+#### Scenario: A multi-line Python import is attributed to its from line
+
+- **GIVEN** a Python file with `from baz import (\n a,\n b\n)` and an `import os` below it
+- **WHEN** the file is parsed
+- **THEN** the `baz` import is recorded on its `from` line with names `a` and `b`
+- **AND** the `import os` below keeps its true line
+
+#### Scenario: A multi-line non-import call does not shift imports below it
+
+- **GIVEN** a Python file with a multi-line function call between two imports
+- **WHEN** the file is parsed
+- **THEN** the import below the call records its true line
+
+> Change: fix-export-parser-fidelity
+> Date: 2026-07-19
+
 ## Technical Notes
 
 - **Implementation**: `src/core/analyzer/repository-mapper.ts, src/api/types.ts, src/core/analyzer/embedding-service.ts, src/core/analyzer/subgraph-extractor.ts, src/core/analyzer/architecture-writer.ts, src/core/analyzer/dependency-graph.ts, src/core/analyzer/spec-vector-index.ts, src/core/analyzer/file-walker.ts, src/core/analyzer/import-resolver-bridge.ts, src/core/analyzer/refactor-analyzer.ts, src/core/analyzer/vector-index.ts, src/core/analyzer/import-parser.ts, src/core/analyzer/signature-extractor.ts, src/core/analyzer/artifact-generator.ts, src/core/analyzer/cpp-header-resolver.ts, src/core/analyzer/call-graph.ts, src/core/analyzer/duplicate-detector.ts, src/core/analyzer/type-inference-engine.ts, src/core/analyzer/significance-scorer.ts, src/core/analyzer/http-route-parser.ts, src/core/analyzer/ast-chunker.ts, src/core/analyzer/codebase-digest.ts, src/utils/progress.ts, src/utils/prompts.ts, src/utils/logger.ts, src/utils/shutdown.ts`

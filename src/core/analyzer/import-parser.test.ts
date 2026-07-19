@@ -10,6 +10,7 @@ import {
   ImportExportParser,
   parseFile,
   parseFiles,
+  parseJSExports,
   resolveImport,
 } from './import-parser.js';
 
@@ -1335,9 +1336,9 @@ export function test() {}
       const filePath = await createFile(tempDir, 'test.ts', content);
       const analysis = await parser.parseFile(filePath);
 
-      // Note: our simple regex may or may not catch 'async function'
-      // This test documents the current behavior
-      expect(analysis.exports.length).toBeGreaterThanOrEqual(0);
+      expect(analysis.exports).toContainEqual(
+        expect.objectContaining({ name: 'fetchData', kind: 'function', isDefault: false }),
+      );
     });
 
     it('should handle arrow function exports', async () => {
@@ -1597,5 +1598,191 @@ export function test() {}
 
       expect(result).toBe(fooPath);
     });
+  });
+});
+
+// ============================================================================
+// EXPORT-PARSER FIDELITY (change: fix-export-parser-fidelity)
+// ============================================================================
+
+describe('parseJSExports — modifier-prefixed exports', () => {
+  const namesOf = (src: string) => parseJSExports(src).map((e) => e.name);
+
+  it('recognizes export async function', () => {
+    expect(parseJSExports(`export async function fetchData() {}`)).toContainEqual(
+      expect.objectContaining({ name: 'fetchData', kind: 'function', isDefault: false }),
+    );
+  });
+
+  it('recognizes a generator export function* gen', () => {
+    expect(parseJSExports(`export function* gen() {}`)).toContainEqual(
+      expect.objectContaining({ name: 'gen', kind: 'function' }),
+    );
+  });
+
+  it('recognizes an async generator export async function* agen', () => {
+    expect(parseJSExports(`export async function* agen() {}`)).toContainEqual(
+      expect.objectContaining({ name: 'agen', kind: 'function' }),
+    );
+  });
+
+  it('recognizes export abstract class', () => {
+    expect(parseJSExports(`export abstract class Base {}`)).toContainEqual(
+      expect.objectContaining({ name: 'Base', kind: 'class' }),
+    );
+  });
+
+  it('captures the real name (not "async") for export default async function foo', () => {
+    const exps = parseJSExports(`export default async function foo() {}`);
+    const def = exps.find((e) => e.isDefault);
+    expect(def).toMatchObject({ name: 'foo', kind: 'function', isDefault: true });
+    expect(namesOf(`export default async function foo() {}`)).not.toContain('async');
+  });
+
+  it('captures the real name of a const-enum (export const enum X)', () => {
+    const exps = parseJSExports(`export const enum Color { Red, Green }`);
+    expect(exps).toContainEqual(expect.objectContaining({ name: 'Color', kind: 'enum' }));
+    // The bare `enum` glitch and a spurious `variable` export must not appear.
+    expect(exps.some((e) => e.name === 'enum')).toBe(false);
+    expect(exps.some((e) => e.kind === 'variable')).toBe(false);
+  });
+
+  it('still recognizes a plain export enum X', () => {
+    expect(parseJSExports(`export enum Size { S, M, L }`)).toContainEqual(
+      expect.objectContaining({ name: 'Size', kind: 'enum' }),
+    );
+  });
+
+  it('does not regress plain function/class/variable exports', () => {
+    const src = `export function plain() {}\nexport class C {}\nexport const x = 1;`;
+    const exps = parseJSExports(src);
+    expect(exps).toContainEqual(expect.objectContaining({ name: 'plain', kind: 'function' }));
+    expect(exps).toContainEqual(expect.objectContaining({ name: 'C', kind: 'class' }));
+    expect(exps).toContainEqual(expect.objectContaining({ name: 'x', kind: 'variable' }));
+  });
+
+  it('still treats a variable merely prefixed with "enum" as a variable', () => {
+    expect(parseJSExports(`export const enumValue = 3;`)).toContainEqual(
+      expect.objectContaining({ name: 'enumValue', kind: 'variable' }),
+    );
+  });
+});
+
+describe('import/export line numbers match the original source', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await createTempDir();
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('records the TRUE line for a JS import/export below a 12-line block-comment header', async () => {
+    const src = [
+      '/**', // 1
+      ' * line 2', // 2
+      ' * line 3', // 3
+      ' * line 4', // 4
+      ' * line 5', // 5
+      ' * line 6', // 6
+      ' * line 7', // 7
+      ' * line 8', // 8
+      ' * line 9', // 9
+      ' * line 10', // 10
+      ' * line 11', // 11
+      ' */', // 12
+      '', // 13
+      "import { thing } from './thing';", // 14
+      'export async function run() {}', // 15
+    ].join('\n');
+    const filePath = await createFile(tempDir, 'header.ts', src);
+    const analysis = await parseFile(filePath);
+
+    expect(analysis.imports.find((i) => i.source === './thing')?.line).toBe(14);
+    expect(analysis.exports.find((e) => e.name === 'run')?.line).toBe(15);
+  });
+
+  it('records the TRUE line for a TS export below a block-comment header', async () => {
+    const src = [
+      '/* a', // 1
+      '   b */', // 2
+      '', // 3
+      'export interface Widget { id: string }', // 4
+    ].join('\n');
+    const filePath = await createFile(tempDir, 'iface.ts', src);
+    const analysis = await parseFile(filePath);
+    expect(analysis.exports.find((e) => e.name === 'Widget')?.line).toBe(4);
+  });
+
+  it('records the TRUE line for a Java import/export below a block-comment header', async () => {
+    const src = [
+      '/*', // 1
+      ' * header a', // 2
+      ' * header b', // 3
+      ' */', // 4
+      'package com.foo;', // 5
+      '', // 6
+      'import com.bar.Baz;', // 7
+      '', // 8
+      'public class Foo {}', // 9
+    ].join('\n');
+    const filePath = await createFile(tempDir, 'Foo.java', src);
+    const analysis = await parseFile(filePath);
+    expect(analysis.imports.find((i) => i.source === 'com.bar.Baz')?.line).toBe(7);
+    expect(analysis.exports.find((e) => e.name === 'Foo')?.line).toBe(9);
+  });
+
+  it('records the TRUE line for a Python import below a comment header', async () => {
+    const src = [
+      '# header line 1', // 1
+      '# header line 2', // 2
+      '', // 3
+      'from foo import bar', // 4
+    ].join('\n');
+    const filePath = await createFile(tempDir, 'a.py', src);
+    const analysis = await parseFile(filePath);
+    expect(analysis.imports.find((i) => i.source === 'foo')?.line).toBe(4);
+  });
+
+  it('attributes a multi-line Python import to its first (from) line and preserves lines below', async () => {
+    const src = [
+      'from foo import bar', // 1
+      '', // 2
+      'from baz import (', // 3
+      '    a,', // 4
+      '    b,', // 5
+      ')', // 6
+      '', // 7
+      'import os', // 8
+    ].join('\n');
+    const filePath = await createFile(tempDir, 'multi.py', src);
+    const analysis = await parseFile(filePath);
+
+    expect(analysis.imports.find((i) => i.source === 'foo')?.line).toBe(1);
+    const baz = analysis.imports.find((i) => i.source === 'baz');
+    expect(baz?.line).toBe(3);
+    expect(baz?.importedNames).toEqual(expect.arrayContaining(['a', 'b']));
+    // The collapse must not shift the line of the import below the multi-line block.
+    expect(analysis.imports.find((i) => i.source === 'os')?.line).toBe(8);
+  });
+
+  it('does not let a multi-line NON-import call perturb import line numbers below it', async () => {
+    const src = [
+      'from foo import bar', // 1
+      '', // 2
+      'result = some_call(', // 3
+      '    1,', // 4
+      '    2,', // 5
+      ')', // 6
+      '', // 7
+      'import os', // 8
+    ].join('\n');
+    const filePath = await createFile(tempDir, 'scope.py', src);
+    const analysis = await parseFile(filePath);
+
+    expect(analysis.imports.find((i) => i.source === 'foo')?.line).toBe(1);
+    expect(analysis.imports.find((i) => i.source === 'os')?.line).toBe(8);
   });
 });
