@@ -16,6 +16,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { logger } from '../../utils/logger.js';
 import { isGitRepository } from '../drift/git-diff.js';
+import { gitPathArgs } from '../../utils/git-args.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -87,7 +88,7 @@ async function gitLog(rootPath: string, extraArgs: string[], maxCommits: number)
   try {
     ({ stdout } = await execFileAsync(
       'git',
-      ['log', `--max-count=${maxCommits}`, `--format=${format}`, '--name-only', ...extraArgs],
+      gitPathArgs('log', `--max-count=${maxCommits}`, `--format=${format}`, '--name-only', ...extraArgs),
       { cwd: rootPath, maxBuffer: 64 * 1024 * 1024 },
     ));
   } catch {

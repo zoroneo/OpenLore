@@ -21,6 +21,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { ARTIFACT_FINGERPRINT, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DIR } from '../../../constants.js';
+import { gitPathArgs } from '../../../utils/git-args.js';
 import type { IndexIntegrity } from '../../analyzer/index-attestation.js';
 import { repairStatusFor, REPAIR_REASON_DETAIL } from '../cold-start-bootstrap.js';
 
@@ -278,7 +279,7 @@ async function countSourceChangedSince(absDir: string, commit: string): Promise<
     const { isGitRepository, validateGitRef } = await import('../../drift/git-diff.js');
     if (!(await isGitRepository(absDir))) return null;
     validateGitRef(commit);
-    const { stdout } = await execFileAsync('git', ['diff', '--name-only', commit, '--'], { cwd: absDir });
+    const { stdout } = await execFileAsync('git', gitPathArgs('diff', '--name-only', commit, '--'), { cwd: absDir });
     return stdout
       .split('\n')
       .map((s) => s.trim())

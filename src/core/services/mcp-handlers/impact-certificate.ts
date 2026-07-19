@@ -39,6 +39,7 @@ import { AnchorContext } from '../../decisions/anchor-adapter.js';
 import { memoryFreshness } from '../../decisions/anchor.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { OPENLORE_DIR } from '../../../constants.js';
+import { gitPathArgs } from '../../../utils/git-args.js';
 import type { SerializedCallGraph, FunctionNode, CallEdge } from '../../analyzer/call-graph.js';
 import type {
   StructuralAnchor,
@@ -299,7 +300,7 @@ export async function collectChangedFiles(rootPath: string, baseRef: string): Pr
   // Untracked files (git ls-files --others) are absent from `git diff`; fold them in
   // as additions so a new-file opening is never missed (best-effort enumeration).
   try {
-    const { stdout } = await execFileAsync('git', ['ls-files', '--others', '--exclude-standard'], {
+    const { stdout } = await execFileAsync('git', gitPathArgs('ls-files', '--others', '--exclude-standard'), {
       cwd: rootPath, maxBuffer: 16 * 1024 * 1024,
     });
     for (const path of stdout.split('\n').map(s => s.trim()).filter(Boolean)) {

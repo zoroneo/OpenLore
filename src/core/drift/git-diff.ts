@@ -12,6 +12,7 @@ import { promisify } from 'node:util';
 import type { ChangedFile } from '../../types/index.js';
 import { logger } from '../../utils/logger.js';
 import { DIFF_MAX_CHARS } from '../../constants.js';
+import { gitPathArgs } from '../../utils/git-args.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -423,7 +424,7 @@ export async function getChangedFiles(options: GitDiffOptions): Promise<GitDiffR
   // Get committed changes on branch vs base
   try {
     const { stdout } = await execFileAsync(
-      'git', ['diff', '--name-status', '--diff-filter=ACDMR', `${resolvedBase}...HEAD`],
+      'git', gitPathArgs('diff', '--name-status', '--diff-filter=ACDMR', `${resolvedBase}...HEAD`),
       { cwd: rootPath }
     );
     for (const entry of parseNameStatus(stdout)) {
@@ -434,7 +435,7 @@ export async function getChangedFiles(options: GitDiffOptions): Promise<GitDiffR
     logger.debug(`Three-dot diff failed, falling back to two-dot: ${(err as Error).message}`);
     try {
       const { stdout } = await execFileAsync(
-        'git', ['diff', '--name-status', '--diff-filter=ACDMR', `${resolvedBase}..HEAD`],
+        'git', gitPathArgs('diff', '--name-status', '--diff-filter=ACDMR', `${resolvedBase}..HEAD`),
         { cwd: rootPath }
       );
       for (const entry of parseNameStatus(stdout)) {
@@ -451,7 +452,7 @@ export async function getChangedFiles(options: GitDiffOptions): Promise<GitDiffR
     // Staged changes
     try {
       const { stdout } = await execFileAsync(
-        'git', ['diff', '--cached', '--name-status', '--diff-filter=ACDMR'],
+        'git', gitPathArgs('diff', '--cached', '--name-status', '--diff-filter=ACDMR'),
         { cwd: rootPath }
       );
       for (const entry of parseNameStatus(stdout)) {
@@ -466,7 +467,7 @@ export async function getChangedFiles(options: GitDiffOptions): Promise<GitDiffR
     // Unstaged working tree changes
     try {
       const { stdout } = await execFileAsync(
-        'git', ['diff', '--name-status', '--diff-filter=ACDMR'],
+        'git', gitPathArgs('diff', '--name-status', '--diff-filter=ACDMR'),
         { cwd: rootPath }
       );
       const unstaged = parseNameStatus(stdout);
@@ -487,7 +488,7 @@ export async function getChangedFiles(options: GitDiffOptions): Promise<GitDiffR
   let numstatMap = new Map<string, { additions: number; deletions: number }>();
   try {
     const { stdout } = await execFileAsync(
-      'git', ['diff', '--numstat', `${resolvedBase}...HEAD`],
+      'git', gitPathArgs('diff', '--numstat', `${resolvedBase}...HEAD`),
       { cwd: rootPath }
     );
     numstatMap = parseNumstat(stdout);
@@ -495,7 +496,7 @@ export async function getChangedFiles(options: GitDiffOptions): Promise<GitDiffR
     logger.debug(`Three-dot numstat failed, falling back to two-dot: ${(err as Error).message}`);
     try {
       const { stdout } = await execFileAsync(
-        'git', ['diff', '--numstat', `${resolvedBase}..HEAD`],
+        'git', gitPathArgs('diff', '--numstat', `${resolvedBase}..HEAD`),
         { cwd: rootPath }
       );
       numstatMap = parseNumstat(stdout);

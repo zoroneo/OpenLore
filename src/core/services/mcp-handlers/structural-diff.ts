@@ -26,6 +26,7 @@ import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { validateDirectory, readCachedContext, safeJoin } from './utils.js';
 import { isGitRepository, resolveBaseRef, validateGitRef, getChangedFiles } from '../../drift/git-diff.js';
+import { gitPathArgs } from '../../../utils/git-args.js';
 import { CallGraphBuilder, serializeCallGraph } from '../../analyzer/call-graph.js';
 import { detectLanguage } from '../../analyzer/signature-extractor.js';
 import { signatureShape } from '../../scip/moniker.js';
@@ -104,7 +105,7 @@ export async function handleStructuralDiff(input: StructuralDiffInput): Promise<
   try {
     if (input.headRef) {
       const { stdout } = await execFileAsync(
-        'git', ['diff', '--name-status', '--diff-filter=ACDMR', `${resolvedBase}..${input.headRef}`],
+        'git', gitPathArgs('diff', '--name-status', '--diff-filter=ACDMR', `${resolvedBase}..${input.headRef}`),
         { cwd: absDir, maxBuffer: 16 * 1024 * 1024 },
       );
       changed = stdout.split('\n').filter(Boolean).map(line => {
@@ -121,7 +122,7 @@ export async function handleStructuralDiff(input: StructuralDiffInput): Promise<
       // git diff excludes untracked files; a brand-new file's functions are all
       // structural additions, so fold them in for the working-tree comparison.
       try {
-        const { stdout } = await execFileAsync('git', ['ls-files', '--others', '--exclude-standard'], {
+        const { stdout } = await execFileAsync('git', gitPathArgs('ls-files', '--others', '--exclude-standard'), {
           cwd: absDir, maxBuffer: 16 * 1024 * 1024,
         });
         const seen = new Set(changed.map(c => c.path));
