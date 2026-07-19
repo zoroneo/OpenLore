@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: shipped
 date: 2026-07-18
 ---
 

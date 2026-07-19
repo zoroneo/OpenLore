@@ -358,6 +358,60 @@ router.get('/ping', (req, res) => {
   });
 });
 
+// Regression (fix-route-anchor-fidelity): route lines were computed against a
+// SHRUNKEN skeleton (comment/log/blank lines removed) but consumed against the
+// ORIGINAL file bytes, so any comment/log preamble above a route drifted its
+// reported line — silently dropping or mis-attributing the synthesized
+// route-handler edge and surfacing live handlers as false dead-code. The mask is
+// now length-preserving, so `route.line` is exact by construction.
+describe('extractTsRouteDefinitions — line fidelity under a comment/log preamble', () => {
+  let tmpDir: string;
+  beforeEach(async () => { tmpDir = await createTempDir(); });
+  afterEach(async () => { await rm(tmpDir, { recursive: true, force: true }); });
+
+  it('reports the TRUE line for a route beneath a copyright block, a comment, and a log line', async () => {
+    const content = [
+      '/*',                                            // 1
+      ' * Copyright 2026 Example Corp.',               // 2
+      ' * All rights reserved.',                       // 3
+      ' */',                                           // 4
+      '// Route wiring module.',                       // 5
+      "console.log('booting route module');",          // 6
+      '',                                              // 7
+      'function listUsers(req, res) { res.send([]); }', // 8
+      '',                                              // 9
+      'function setup(app) {',                         // 10
+      "  app.get('/users', listUsers);",               // 11  <- the true line
+      '}',                                             // 12
+    ].join('\n');
+    const fp = await createFile(tmpDir, 'server.ts', content);
+    const routes = await extractTsRouteDefinitions(fp);
+    const route = routes.find(r => r.path === '/users');
+    expect(route).toBeDefined();
+    // Exact: not the drifted skeleton line (which lands above `setup`, dropping the edge).
+    expect(route!.line).toBe(11);
+    // The registration line the handler-name lookup reads is the real one.
+    expect(route!.handlerName).toBe('listUsers');
+  });
+
+  it('still suppresses a route pattern that appears only inside a comment (no false route)', async () => {
+    const content = [
+      "import express from 'express';",
+      'const app = express();',
+      "// app.get('/example', exampleHandler);  a doc example, not a real route",
+      "app.get('/real', realHandler); /* app.post('/inline', h) is only a comment */",
+    ].join('\n');
+    const fp = await createFile(tmpDir, 'app.ts', content);
+    const routes = await extractTsRouteDefinitions(fp);
+    const paths = routes.map(r => r.path);
+    expect(paths).toContain('/real');
+    expect(paths).not.toContain('/example');
+    expect(paths).not.toContain('/inline');
+    // And the surviving real route keeps its exact line (4).
+    expect(routes.find(r => r.path === '/real')!.line).toBe(4);
+  });
+});
+
 describe('buildRouteInventory', () => {
   let tmpDir: string;
 

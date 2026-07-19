@@ -29,8 +29,6 @@
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { isTestFile } from './test-file.js';
-import { getSkeletonContent } from './code-shaper.js';
-import { detectLanguage } from './language-detection.js';
 
 // ============================================================================
 // TYPES
@@ -1056,11 +1054,19 @@ function detectTsFramework(source: string, filePath: string): string {
 export async function extractTsRouteDefinitions(filePath: string): Promise<RouteDefinition[]> {
   let source: string;
   try {
-    const { readFile } = await import('node:fs/promises');
-    // Use skeleton to strip comments — prevents false positives from comment
-    // examples inside parser/extractor files that contain route pattern strings.
-    // Line numbers in the result are approximate (skeleton line positions).
-    source = getSkeletonContent(await readFile(filePath, 'utf-8'), detectLanguage(filePath));
+    const raw = await readFile(filePath, 'utf-8');
+    // Mask comments LENGTH-PRESERVINGLY (blank to spaces, keep newlines) rather than
+    // skeletonizing. The skeleton REMOVES pure-comment/log/blank lines and shrinks the
+    // text, so every `route.line` was computed in a coordinate system offset from the
+    // ORIGINAL file that synthesizeRouteHandlerEdges (call-graph.ts) and find_dead_code
+    // consume it against — silently dropping or mis-attributing route-handler edges and
+    // surfacing live handlers as false dead-code. Blanking keeps the string byte-aligned
+    // with the original, so `route.line` is exact by construction while route pattern
+    // strings inside comments still never match. Same length-preserving discipline as
+    // extractHttpCalls (:193-195) and maskPythonNonCode (:906-908).
+    source = raw
+      .replace(/\/\*[\s\S]*?\*\//g, blankKeepNewlines)
+      .replace(/(^|[\s,;()[\]{}])(\/\/.*)$/gm, (_m, prefix, comment) => prefix + ' '.repeat(comment.length));
   } catch {
     return [];
   }
