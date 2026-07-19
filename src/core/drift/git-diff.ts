@@ -343,6 +343,27 @@ function parseNumstat(output: string): Map<string, { additions: number; deletion
 }
 
 /**
+ * Merge a numstat map into an accumulator, summing per-path counts.
+ * A file that is both staged and modified in the working tree contributes both
+ * diffs; the summed count slightly over-counts overlapping lines, which is
+ * acceptable for the severity thresholds it feeds (never under-counts to zero).
+ */
+function mergeNumstat(
+  into: Map<string, { additions: number; deletions: number }>,
+  from: Map<string, { additions: number; deletions: number }>,
+): void {
+  for (const [path, stat] of from) {
+    const existing = into.get(path);
+    if (existing) {
+      existing.additions += stat.additions;
+      existing.deletions += stat.deletions;
+    } else {
+      into.set(path, { additions: stat.additions, deletions: stat.deletions });
+    }
+  }
+}
+
+/**
  * Get the unified diff content for a specific file against a base ref.
  * Returns the diff text, truncated to maxChars to fit LLM context windows.
  */
@@ -502,6 +523,31 @@ export async function getChangedFiles(options: GitDiffOptions): Promise<GitDiffR
       numstatMap = parseNumstat(stdout);
     } catch (err2) {
       logger.debug(`Two-dot numstat also failed: ${(err2 as Error).message}`);
+    }
+  }
+
+  // When staged/working-tree files are part of the changeset, their line counts
+  // are not in the commit-range numstat above — gather them and merge per path so
+  // uncommitted work carries real counts into severity and messages (not +0/-0).
+  if (includeUnstaged) {
+    try {
+      const { stdout } = await execFileAsync(
+        'git', gitPathArgs('diff', '--cached', '--numstat'),
+        { cwd: rootPath }
+      );
+      mergeNumstat(numstatMap, parseNumstat(stdout));
+    } catch (err) {
+      logger.debug(`Could not get staged numstat: ${(err as Error).message}`);
+    }
+
+    try {
+      const { stdout } = await execFileAsync(
+        'git', gitPathArgs('diff', '--numstat'),
+        { cwd: rootPath }
+      );
+      mergeNumstat(numstatMap, parseNumstat(stdout));
+    } catch (err) {
+      logger.debug(`Could not get working-tree numstat: ${(err as Error).message}`);
     }
   }
 

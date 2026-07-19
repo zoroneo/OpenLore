@@ -20,6 +20,7 @@ import {
   extractChangedADRIds,
   detectADRGaps,
   detectADROrphaned,
+  normalizeADRId,
 } from './drift-detector.js';
 import type { ADRMap, ADRMapping } from './spec-mapper.js';
 import { createMockLLMService } from '../services/llm-service.js';
@@ -1122,6 +1123,22 @@ function makeADRMap(adrs: Array<{ id: string; title: string; domains: string[]; 
   return { byId, byDomain };
 }
 
+describe('normalizeADRId', () => {
+  it('collapses zero-padded and unpadded spellings to one canonical form', () => {
+    expect(normalizeADRId('ADR-23')).toBe(normalizeADRId('ADR-023'));
+    expect(normalizeADRId('ADR-023')).toBe(normalizeADRId('ADR-0023'));
+    expect(normalizeADRId('ADR-0001')).toBe(normalizeADRId('ADR-1'));
+  });
+
+  it('distinguishes different ADR numbers', () => {
+    expect(normalizeADRId('ADR-0023')).not.toBe(normalizeADRId('ADR-0024'));
+  });
+
+  it('leaves a non-ADR string untouched', () => {
+    expect(normalizeADRId('not-an-adr')).toBe('not-an-adr');
+  });
+});
+
 describe('extractChangedADRIds', () => {
   it('should extract ADR IDs from changed ADR files', () => {
     const files = [
@@ -1169,13 +1186,31 @@ describe('detectADRGaps', () => {
     expect(issues[0].message).toContain('ADR-001');
   });
 
-  it('should skip ADRs that were also updated', () => {
+  it('should skip ADRs that were also updated (extraction and suppression share one format)', () => {
+    // Format-parity: feed suppression the id format extraction actually produces,
+    // not a hand-picked matching string. A zero-padded ADR file ("ADR-0001") and a
+    // zero-padded map key must still suppress the gap.
+    const changedFiles = [
+      makeChangedFile({ path: 'src/auth/login.ts' }),
+      makeChangedFile({ path: 'openspec/decisions/adr-0001-jwt.md' }),
+    ];
+    const specMap = makeSpecMap([{ name: 'auth', files: ['src/auth/login.ts'] }]);
+    const adrMap = makeADRMap([{ id: 'ADR-0001', title: 'JWT Authentication', domains: ['auth'] }]);
+
+    const changedADRIds = extractChangedADRIds(changedFiles);
+    const issues = detectADRGaps(changedFiles, adrMap, specMap, changedADRIds);
+    expect(issues).toHaveLength(0);
+  });
+
+  it('reports the gap when the code changed but the ADR did not (zero-padded)', () => {
     const changedFiles = [makeChangedFile({ path: 'src/auth/login.ts' })];
     const specMap = makeSpecMap([{ name: 'auth', files: ['src/auth/login.ts'] }]);
-    const adrMap = makeADRMap([{ id: 'ADR-001', title: 'JWT Authentication', domains: ['auth'] }]);
+    const adrMap = makeADRMap([{ id: 'ADR-0001', title: 'JWT Authentication', domains: ['auth'] }]);
 
-    const issues = detectADRGaps(changedFiles, adrMap, specMap, new Set(['ADR-001']));
-    expect(issues).toHaveLength(0);
+    const changedADRIds = extractChangedADRIds(changedFiles);
+    const issues = detectADRGaps(changedFiles, adrMap, specMap, changedADRIds);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].kind).toBe('adr-gap');
   });
 
   it('should not report when changed files are not in ADR-related domains', () => {
