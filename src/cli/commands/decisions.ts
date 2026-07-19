@@ -17,6 +17,7 @@ import { join } from 'node:path';
 
 import { logger } from '../../utils/logger.js';
 import { colorForStdout } from '../../utils/colors.js';
+import { gitPathArgs } from '../../utils/git-args.js';
 import { redirectConsoleToStderr } from '../../utils/quiet-stdout.js';
 import { fileExists, resolveLLMProvider } from '../../utils/command-helpers.js';
 import { readOpenLoreConfig } from '../../core/services/config-manager.js';
@@ -950,7 +951,7 @@ the gate auto-accepts verified decisions, syncs them to specs marked "Auto-accep
         if (isGitRepo) {
           try {
             const { stdout } = await execFileAsync(
-              'git', ['diff', '--cached', '--name-only', '--diff-filter=ACDMR'],
+              'git', gitPathArgs('diff', '--cached', '--name-only', '--diff-filter=ACDMR'),
               { cwd: rootPath },
             );
             const stagedFiles = stdout.trim().split('\n').filter(Boolean);

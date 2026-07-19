@@ -23,6 +23,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isGitRepository } from '../drift/git-diff.js';
+import { gitPathArgs } from '../../utils/git-args.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -106,7 +107,7 @@ export async function analyzeChangeCoupling(
   try {
     ({ stdout } = await execFileAsync(
       'git',
-      ['log', `--max-count=${maxCommits}`, '--no-merges', `--format=${RS}%h`, '--name-only'],
+      gitPathArgs('log', `--max-count=${maxCommits}`, '--no-merges', `--format=${RS}%h`, '--name-only'),
       { cwd: rootPath, maxBuffer: 128 * 1024 * 1024 },
     ));
   } catch {

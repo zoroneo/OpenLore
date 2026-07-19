@@ -1,6 +1,12 @@
 # Git path quoting: history-derived joins silently drop non-ASCII filenames
 
-> Status: PROPOSED (2026-07-03, e2e audit follow-up). Every git-history shell-out parses file
+> Status: SHIPPED (2026-07-19, PR fix-git-path-quoting). Implemented as the shared
+> `gitPathArgs()` helper in `src/utils/git-args.ts` (`-c core.quotepath=false`), adopted at every
+> path-list git spawn (log/diff/diff-tree `--name-only`/`--name-status`/`--numstat` and
+> `ls-files`), with a structural guard test (`git-args.test.ts`) that fails CI on a new unguarded
+> site and a non-ASCII fixture test (`git-path-quoting.test.ts`) proving provenance, coupling, and
+> drift changed-file detection all return the exact unquoted path. Originally proposed
+> (2026-07-03, e2e audit follow-up). Every git-history shell-out parses file
 > paths from stdout under git's default `core.quotepath=true`, which octal-escapes and quotes any
 > path with non-ASCII bytes — `src/café.ts` comes back as `"src/caf\303\251.ts"` and never matches
 > the analyzer's repo-relative paths. Provenance, coupling, drift, and everything joined on them

@@ -19,6 +19,7 @@ import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { gitPathArgs } from '../../../utils/git-args.js';
 import { validateDirectory, readCachedContext } from './utils.js';
 import { assembleBoundary, computeStaleness } from './confidence-boundary.js';
 import { parseJSExports } from '../../analyzer/import-parser.js';
@@ -381,7 +382,7 @@ async function changedSourceFiles(absDir: string, base: string): Promise<Array<{
     .map((f) => ({ path: f.path, status: f.status as string, ...(f.oldPath ? { oldPath: f.oldPath } : {}) }));
   const seen = new Set(out.map((c) => c.path));
   try {
-    const { stdout } = await execFileAsync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: absDir, maxBuffer: 16 * 1024 * 1024 });
+    const { stdout } = await execFileAsync('git', gitPathArgs('ls-files', '--others', '--exclude-standard'), { cwd: absDir, maxBuffer: 16 * 1024 * 1024 });
     for (const path of stdout.split('\n').map((s) => s.trim()).filter(Boolean)) {
       if (eligible(path) && !seen.has(path)) { seen.add(path); out.push({ path, status: 'added' }); }
     }

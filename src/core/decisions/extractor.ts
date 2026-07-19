@@ -15,6 +15,7 @@ import {
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getChangedFiles, getFileDiff, resolveBaseRef } from '../drift/git-diff.js';
+import { gitPathArgs } from '../../utils/git-args.js';
 const execFileAsync = promisify(execFile);
 import { matchFileToDomains, getSpecContent } from '../drift/spec-mapper.js';
 import type { LLMService } from '../services/llm-service.js';
@@ -83,7 +84,7 @@ function isRelevantStagedFile(filePath: string): boolean {
 
 async function getStagedFiles(rootPath: string): Promise<Array<{ path: string; status: string }>> {
   const { stdout } = await execFileAsync(
-    'git', ['diff', '--cached', '--name-status', '--diff-filter=ACDMR'],
+    'git', gitPathArgs('diff', '--cached', '--name-status', '--diff-filter=ACDMR'),
     { cwd: rootPath },
   );
   return stdout.trim().split('\n').filter(Boolean).map((line) => {

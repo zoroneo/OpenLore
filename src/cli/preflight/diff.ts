@@ -20,6 +20,7 @@ import { promisify } from 'node:util';
 import { stat, readdir, readFile, access } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import { OPENLORE_DIR } from '../../constants.js';
+import { gitPathArgs } from '../../utils/git-args.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -77,12 +78,12 @@ async function shortHead(repoRoot: string): Promise<string | null> {
 async function diffViaGit(repoRoot: string, since: string): Promise<string[]> {
   // Use ...HEAD (merge-base) so we capture every file the PR touched relative
   // to the branch point, not just the latest commit's diff.
-  const tracked = (await runGit(repoRoot, ['diff', '--name-only', `${since}...HEAD`]))
+  const tracked = (await runGit(repoRoot, gitPathArgs('diff', '--name-only', `${since}...HEAD`)))
     .split('\n')
     .filter(Boolean);
   // Include uncommitted modifications so a developer running locally before
   // committing also gets honest feedback.
-  const uncommitted = (await runGit(repoRoot, ['diff', '--name-only', 'HEAD']))
+  const uncommitted = (await runGit(repoRoot, gitPathArgs('diff', '--name-only', 'HEAD')))
     .split('\n')
     .filter(Boolean);
   const set = new Set([...tracked, ...uncommitted]);

@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { logger } from '../../utils/logger.js';
 import { fileExists } from '../../utils/command-helpers.js';
+import { gitPathArgs } from '../../utils/git-args.js';
 import { handleAnnotateStory } from '../../core/services/mcp-handlers/change.js';
 
 // ============================================================================
@@ -98,7 +99,7 @@ async function uninstallPostCommitHook(rootPath: string): Promise<void> {
 /** Files changed in the last commit (HEAD~1..HEAD). */
 function getLastCommitChangedFiles(rootPath: string): string[] {
   try {
-    const output = execFileSync('git', ['diff', 'HEAD~1', 'HEAD', '--name-only'], {
+    const output = execFileSync('git', gitPathArgs('diff', 'HEAD~1', 'HEAD', '--name-only'), {
       cwd: rootPath,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -110,7 +111,7 @@ function getLastCommitChangedFiles(rootPath: string): string[] {
   } catch {
     // Might be the first commit or a shallow clone — fall back to HEAD only
     try {
-      const output = execFileSync('git', ['diff-tree', '--no-commit-id', '-r', '--name-only', 'HEAD'], {
+      const output = execFileSync('git', gitPathArgs('diff-tree', '--no-commit-id', '-r', '--name-only', 'HEAD'), {
         cwd: rootPath,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
