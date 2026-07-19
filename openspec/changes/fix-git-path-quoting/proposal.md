@@ -1,6 +1,6 @@
 # Git path quoting: history-derived joins silently drop non-ASCII filenames
 
-> Status: SHIPPED (2026-07-19, PR fix-git-path-quoting). Implemented as the shared
+> Status: SHIPPED (2026-07-19, PR #249). Implemented as the shared
 > `gitPathArgs()` helper in `src/utils/git-args.ts` (`-c core.quotepath=false`), adopted at every
 > path-list git spawn (log/diff/diff-tree `--name-only`/`--name-status`/`--numstat` and
 > `ls-files`), with a structural guard test (`git-args.test.ts`) that fails CI on a new unguarded
