@@ -1,6 +1,6 @@
 # Persist the tokenized keyword corpus: make the tokenizer-version stamp guard a real serve-time artifact, not just the incremental lane
 
-> Status: PROPOSED (2026-07-18). Follow-up to the shipped `fix-bm25-identifier-tokenization`
+> Status: SHIPPED (2026-07-18, PR #222; status reconciled 2026-07-19). Originally proposed (2026-07-18). Follow-up to the shipped `fix-bm25-identifier-tokenization`
 > (PR #221). That change added an identifier-aware tokenizer and a `TOKENIZER_VERSION` stamp, and
 > its spec (`analyzer` › IdentifierAwareKeywordTokenization) states that "The persisted text index
 > SHALL carry a tokenizer-version stamp, and a version mismatch SHALL trigger a rebuild rather than

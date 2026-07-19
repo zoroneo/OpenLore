@@ -5,7 +5,7 @@ date: 2026-07-18
 
 # Scope the decision syncer and delegate change lifecycle to OpenSpec
 
-> Status: PROPOSED (2026-07-03, e2e audit; rescoped 2026-07-18). The original draft proposed an
+> Status: SHIPPED (2026-07-18, PR #236; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit; rescoped 2026-07-18). The original draft proposed an
 > `openlore change archive` / `openlore change list` CLI with a bespoke spec-delta fold engine.
 > That re-implements the OpenSpec CLI — a **distinct product** (`@fission-ai/openspec`) OpenLore
 > already depends on and uses as its spec-driven-development framework. `openspec archive` already

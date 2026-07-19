@@ -1,6 +1,6 @@
 # Harden call resolution: never guess on ambiguity (name_only, self/cls, type_name, overloads)
 
-> Status: PROPOSED (2026-07-03, e2e audit). Closes the one place the resolution ladder still
+> Status: SHIPPED (2026-07-18, PR #228; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). Closes the one place the resolution ladder still
 > *guesses*: an ambiguous candidate set silently binds to `candidates[0]`. Pure precision/honesty
 > work on the existing ladder — no new capability, dependency, or LLM. Grounded in the north star
 > (`overview/spec.md`, decision `c6d1ad07`) and the resolver's own stated discipline

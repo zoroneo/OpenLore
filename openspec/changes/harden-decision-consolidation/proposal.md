@@ -1,6 +1,6 @@
 # Harden decision consolidation: fail-closed spawns, CAS status promotion, coalesced runs
 
-> Status: PROPOSED (2026-07-03, e2e audit). Closes three robustness gaps in the decision
+> Status: SHIPPED (2026-07-18, PR #231; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). Closes three robustness gaps in the decision
 > lifecycle: an unhandled background-spawn error that can kill the long-lived MCP server, a success
 > message returned even when the spawn failed, and a status promotion that bypasses the
 > compare-and-swap discipline every sibling handler follows. Pure hardening of existing mechanisms

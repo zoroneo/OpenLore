@@ -1,6 +1,6 @@
 # Doc-claim sync guards: every quantitative doc claim is CI-guarded or derived from code
 
-> Status: PROPOSED (2026-07-03, e2e audit). The README/docs state ~20 quantitative claims (tool
+> Status: SHIPPED (2026-07-18, PR #230; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). The README/docs state ~20 quantitative claims (tool
 > count, preset sizes, language counts, test floor) with no CI guard — the exact figure that has
 > already drifted once (docs said "50 tools" when the real surface was 58). Extends the existing
 > `honesty-contract.test.ts` guard pattern so a doc number can never silently rot again. Test +
