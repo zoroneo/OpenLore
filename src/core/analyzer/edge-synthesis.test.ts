@@ -902,4 +902,39 @@ describe('route-handler synthesis (on-disk fixtures)', () => {
     // Attributed to the real enclosing function, neither dropped nor mis-attributed.
     expect(edge!.callerId).toBe(setup);
   });
+
+  // Regression (fix-artifact-output-determinism): synthesizeRouteHandlerEdges
+  // aggregated per-file routes by pushing into a shared array inside Promise.all,
+  // so the synthesized-edge order depended on I/O completion and the serialized
+  // graph bytes were not a pure function of the input. Building the SAME multi-file
+  // input twice must produce the SAME synthesized-edge order.
+  it('produces a stable synthesized route-handler edge order across runs', async () => {
+    const files: Array<{ path: string; content: string; language: string }> = [];
+    for (const name of ['alpha', 'bravo', 'charlie', 'delta']) {
+      const file = join(root, 'src', `${name}.ts`);
+      const content = [
+        `function ${name}Handler(req, res) { res.send('${name}'); }`,
+        `function ${name}Setup(app) {`,
+        `  app.get('/${name}', ${name}Handler);`,
+        '}',
+      ].join('\n');
+      await writeFile(file, content, 'utf-8');
+      files.push({ path: file, content, language: 'TypeScript' });
+    }
+    const synthOrder = (b: Built): string =>
+      JSON.stringify(
+        b.edges
+          .filter(e => e.synthesizedBy === 'route-handler')
+          .map(e => `${e.callerId}->${e.calleeId}`)
+      );
+
+    const runs = new Set<string>();
+    for (let i = 0; i < 3; i++) {
+      const b = await new CallGraphBuilder().build(files);
+      runs.add(synthOrder(b));
+    }
+    expect(runs.size).toBe(1);
+    // All four route-handler edges are present (not an empty coincidental match).
+    expect(JSON.parse([...runs][0])).toHaveLength(4);
+  });
 });

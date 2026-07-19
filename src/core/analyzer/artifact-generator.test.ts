@@ -198,6 +198,50 @@ describe('AnalysisArtifactGenerator', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  describe('Phase-3 sampling determinism (fix-artifact-output-determinism)', () => {
+    it('selects the same validation files in the same order across identical runs', async () => {
+      // Build a real tree of 8 leaf files. The phase-3 sample shuffles the leaf
+      // candidates; a seeded shuffle (hash of the sorted candidate paths) must pick
+      // the SAME subset in the SAME order every run — an unseeded Math.random shuffle
+      // of 8 candidates would agree across two runs with probability ~1/8!.
+      const leafNodes: DependencyNode[] = [];
+      const leafIds: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        const rel = `src/leaf${i}.ts`;
+        const abs = join(tempDir, rel);
+        await mkdir(join(tempDir, 'src'), { recursive: true });
+        await writeFile(abs, `export const leaf${i} = ${i};\n`);
+        const id = `/leaf/${rel}`;
+        leafIds.push(id);
+        leafNodes.push({
+          id,
+          file: createScoredFile({ name: `leaf${i}.ts`, path: rel, absolutePath: abs }),
+          exports: [],
+          metrics: { inDegree: 0, outDegree: 0, betweenness: 0, pageRank: 0.1 },
+        });
+      }
+      // Empty highValueFiles ⇒ phase-2 is empty ⇒ all 8 leaves are phase-3 candidates.
+      const repoMap = createMockRepoMap({ highValueFiles: [] });
+      const depGraph = createMockDepGraph({
+        nodes: leafNodes,
+        edges: [],
+        rankings: {
+          byImportance: [], byConnectivity: [], clusterCenters: [],
+          leafNodes: leafIds, bridgeNodes: [], orphanNodes: [],
+        },
+      });
+
+      const opts = { rootDir: tempDir, outputDir, maxDeepAnalysisFiles: 0, maxValidationFiles: 8 };
+      const a = await generateArtifacts(repoMap, depGraph, opts);
+      const b = await generateArtifacts(repoMap, depGraph, opts);
+
+      const pathsA = a.llmContext.phase3_validation.files.map(f => f.path);
+      const pathsB = b.llmContext.phase3_validation.files.map(f => f.path);
+      expect(pathsA.length).toBe(8);
+      expect(pathsA).toEqual(pathsB);
+    });
+  });
+
   describe('RepoStructure Generation', () => {
     it('should generate valid repo-structure.json', async () => {
       const repoMap = createMockRepoMap();

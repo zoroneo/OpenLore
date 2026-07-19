@@ -1,35 +1,39 @@
 # Tasks — fix artifact output determinism
 
 ## Implementation
-- [ ] Seeded phase-3 sampling (artifact-generator.ts:1102-1108): deterministic PRNG seeded
-      from a hash of the sorted candidate file list; Fisher-Yates unchanged otherwise;
-      sampling intent preserved, bytes stable across identical trees
-- [ ] `buildRouteInventory` (http-route-parser.ts:1241-1256): per-file-then-flatten (the
-      extractAllHttpEdges :840-863 precedent) — each file maps to its own routes array,
+- [x] Seeded phase-3 sampling (artifact-generator.ts): deterministic PRNG (mulberry32)
+      seeded from a sha1 hash of the sorted candidate file list; Fisher-Yates unchanged
+      otherwise; sampling intent preserved, bytes stable across identical trees
+- [x] `buildRouteInventory` (http-route-parser.ts): per-file-then-flatten (the
+      extractAllHttpEdges precedent) — each file maps to its own routes array,
       flattened in filePaths order
-- [ ] `synthesizeRouteHandlerEdges` (call-graph.ts:3639-3645): same pattern for the shared
+- [x] `synthesizeRouteHandlerEdges` (call-graph.ts): same pattern for the shared
       `routes` array; synthesized edge order becomes a pure function of the file list
-- [ ] `extractEnvVars` (env-extractor.ts:156-206): collect per-file read/declaration
-      results inside Promise.all, upsert sequentially in filePaths order — `files[]` order
-      (:159) and description first-wins (:162) become input-order deterministic
-- [ ] Digest: sort spec domains before emission (codebase-digest.ts:233-241); fix the
-      "internal call edges" figure (:109) — internal-only edge count (both endpoints
-      non-test/non-external, matching prodNodes :106-108 and internalNodes
-      call-graph.ts:4489) or an honest label naming the true population of
-      stats.totalEdges (call-graph.ts:4644)
+- [x] `extractEnvVars` (env-extractor.ts): collect per-file upsert ops inside
+      Promise.all, apply them sequentially in filePaths order — `files[]` order
+      and description first-wins become input-order deterministic
+- [x] Digest: sort spec domains before emission (codebase-digest.ts); fix the
+      "internal call edges" figure — count only edges whose BOTH endpoints are
+      production nodes (non-test, non-external), matching the adjacent
+      "functions analyzed" (prodNodes) count
 
 ## Verification
-- [ ] Double-run byte test: two analyzes of an identical fixture tree produce byte-identical
-      llm-context.json (timestamps normalized), route inventory, env-var inventory, and
-      serialized synthesized edges
-- [ ] Adversarial-latency test: per-file extractors stubbed with randomized delays →
-      aggregated order still equals input order at all three sites
-- [ ] Digest test: spec domains emitted sorted; the edge figure's population matches its
-      label (assert against a fixture graph containing test and external edges)
-- [ ] Regenerate CODEBASE.md once and note the corrected edge figure in the change
-- [ ] Full suite green
+- [x] Double-run byte test: two analyzes of an identical fixture tree produce byte-identical
+      llm-context.json (timestamps normalized), route inventory, and env-var inventory.
+      Also verified at repo scale: OpenLore's own 11.2 MB llm-context.json is byte-identical
+      across two full `analyze --force` runs.
+- [x] Adversarial-latency test: per-file extractors stubbed with reversed-completion
+      delays → aggregated order still equals input order for buildRouteInventory and
+      extractEnvVars (artifact-output-determinism.test.ts)
+- [x] Digest test: spec domains emitted sorted; the edge figure's population matches its
+      label (fixture graph containing test and external edges → internal-only count)
+- [x] Regenerated CODEBASE.md once: the "internal call edges" figure dropped from
+      16969 (all `calls` edges, incl. test-caller + external-callee) to 6132
+      (production→production only), matching the 2997 production-function count — the
+      old figure mixed two populations under one "internal" label.
+- [x] Full suite green (6120 passed, 2 skipped)
 
 ## Spec
-- [ ] `analyzer` delta: ADD ArtifactBytesAreAPureFunctionOfInput,
+- [x] `analyzer` delta: ADD ArtifactBytesAreAPureFunctionOfInput,
       ConcurrentExtractorsAggregateInInputOrder
-- [ ] `architecture` delta: ADD DigestFiguresUseOnePopulationPerLabel
+- [x] `architecture` delta: ADD DigestFiguresUseOnePopulationPerLabel

@@ -3667,14 +3667,19 @@ async function synthesizeRouteHandlerEdges(
   resolveHandler: HandlerResolver,
 ): Promise<CallEdge[]> {
   const contentByPath = new Map(files.map(f => [f.path, f.content]));
-  const routes: RouteDefinition[] = [];
-  await Promise.all(files.map(async (f) => {
+  // Per-file-then-flatten: `Promise.all` resolves in INPUT (file-list) order, so the
+  // synthesized edge order is a pure function of the input — pushing into a shared
+  // `routes` array inside the callbacks would order routes by I/O completion, making
+  // the serialized graph bytes non-deterministic (decision c6d1ad07).
+  const perFileRoutes = await Promise.all(files.map(async (f): Promise<RouteDefinition[]> => {
     try {
-      if (/\.(py|pyw)$/.test(f.path)) routes.push(...await extractRouteDefinitions(f.path));
-      else if (/\.(ts|tsx|js|jsx|mjs)$/.test(f.path)) routes.push(...await extractTsRouteDefinitions(f.path));
-      else if (/\.java$/.test(f.path)) routes.push(...await extractJavaRouteDefinitions(f.path));
+      if (/\.(py|pyw)$/.test(f.path)) return await extractRouteDefinitions(f.path);
+      if (/\.(ts|tsx|js|jsx|mjs)$/.test(f.path)) return await extractTsRouteDefinitions(f.path);
+      if (/\.java$/.test(f.path)) return await extractJavaRouteDefinitions(f.path);
     } catch { /* best-effort per file */ }
+    return [];
   }));
+  const routes: RouteDefinition[] = perFileRoutes.flat();
   if (routes.length === 0) return [];
 
   const nodesByFile = new Map<string, FunctionNode[]>();

@@ -1243,24 +1243,25 @@ export async function buildRouteInventory(
 ): Promise<RouteInventory> {
   const { relative } = await import('node:path');
 
-  const allRoutes: RouteDefinition[] = [];
-
-  await Promise.all(
-    filePaths.map(async fp => {
+  // Collect per-file routes and flatten in filePaths order. `Promise.all` resolves
+  // in INPUT order regardless of completion order, so the inventory is a deterministic
+  // function of the file list — pushing into a shared array inside the callbacks would
+  // append in I/O-completion order (the byte-determinism hazard `extractAllHttpEdges`
+  // documents and fixes above).
+  const perFile = await Promise.all(
+    filePaths.map(async (fp): Promise<RouteDefinition[]> => {
       // Routes declared inside test files (e.g. a `fastify.get('/error')` set up by a
       // test harness) are fixtures, not the app's real API surface — exclude them so the
       // inventory doesn't report phantom endpoints.
-      if (isTestFile(fp)) return;
+      if (isTestFile(fp)) return [];
       const ext = extname(fp).toLowerCase();
-      if (['.py', '.pyw'].includes(ext)) {
-        allRoutes.push(...await extractRouteDefinitions(fp));
-      } else if (['.ts', '.tsx', '.js', '.jsx', '.mjs'].includes(ext)) {
-        allRoutes.push(...await extractTsRouteDefinitions(fp));
-      } else if (ext === '.java') {
-        allRoutes.push(...await extractJavaRouteDefinitions(fp));
-      }
+      if (['.py', '.pyw'].includes(ext)) return extractRouteDefinitions(fp);
+      if (['.ts', '.tsx', '.js', '.jsx', '.mjs'].includes(ext)) return extractTsRouteDefinitions(fp);
+      if (ext === '.java') return extractJavaRouteDefinitions(fp);
+      return [];
     })
   );
+  const allRoutes: RouteDefinition[] = perFile.flat();
 
   const byMethod: Record<string, number> = {};
   const byFramework: Record<string, number> = {};

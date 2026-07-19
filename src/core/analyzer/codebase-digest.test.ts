@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateCodebaseDigest } from './codebase-digest.js';
@@ -225,5 +225,58 @@ describe('generateCodebaseDigest', () => {
     const content = await readFile(join(tmpDir, 'CODEBASE.md'), 'utf-8');
 
     expect(content).toContain('MyClass.start');
+  });
+
+  it('counts only production→production edges under the "internal call edges" label', async () => {
+    // Regression (fix-artifact-output-determinism): `stats.totalEdges` counts ALL
+    // `calls` edges — including test-caller and external-callee edges — so the
+    // "internal call edges" figure must be computed from the production population
+    // (matching the adjacent "functions analyzed" count), not read off totalEdges.
+    const tmpDir = await mkdtemp(join(tmpdir(), 'digest-test-'));
+    const node = (id: string, extra: Record<string, unknown> = {}) => ({
+      id, name: id.split('::').pop()!, filePath: id.split('::')[0], fanIn: 0, fanOut: 0,
+      isAsync: false, language: 'TypeScript', startIndex: 0, endIndex: 10, ...extra,
+    });
+    const cg = makeCallGraph({
+      nodes: [
+        node('src/a.ts::a'),
+        node('src/b.ts::b'),
+        node('src/a.test.ts::t', { isTest: true }),
+        node('node:fs::readFile', { isExternal: true }),
+      ],
+      edges: [
+        { callerId: 'src/a.ts::a', calleeId: 'src/b.ts::b', calleeName: 'b', kind: 'calls', confidence: 'import' },          // prod→prod ✓
+        { callerId: 'src/a.test.ts::t', calleeId: 'src/a.ts::a', calleeName: 'a', kind: 'calls', confidence: 'import' },       // test→prod ✗
+        { callerId: 'src/a.ts::a', calleeId: 'node:fs::readFile', calleeName: 'readFile', kind: 'calls', confidence: 'external' }, // prod→external ✗
+        { callerId: 'src/a.ts::a', calleeId: 'src/b.ts::b', calleeName: 'b', kind: 'tested_by', confidence: 'import' },        // non-calls ✗
+      ],
+      // A totalEdges that DISAGREES with the true internal count — proving the
+      // digest recomputes rather than trusting the mixed-population stat.
+      stats: { totalNodes: 2, totalEdges: 4, avgFanIn: 0, avgFanOut: 0 },
+    });
+
+    await generateCodebaseDigest(makeContext(cg), null, { rootPath: tmpDir, outputDir: tmpDir });
+    const content = await readFile(join(tmpDir, 'CODEBASE.md'), 'utf-8');
+
+    expect(content).toContain('**2** functions / methods analyzed');
+    expect(content).toContain('**1** internal call edges');
+    expect(content).not.toContain('**4** internal call edges');
+  });
+
+  it('emits spec domains in sorted, platform-independent order', async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), 'digest-test-'));
+    const specsDir = join(tmpDir, 'openspec', 'specs');
+    // Create in deliberately unsorted order.
+    for (const d of ['zebra', 'analyzer', 'mcp-handlers', 'api']) {
+      await mkdir(join(specsDir, d), { recursive: true });
+      await writeFile(join(specsDir, d, 'spec.md'), `# ${d}\n`);
+    }
+
+    await generateCodebaseDigest(makeContext(), null, { rootPath: tmpDir, outputDir: tmpDir });
+    const content = await readFile(join(tmpDir, 'CODEBASE.md'), 'utf-8');
+
+    const order = ['analyzer', 'api', 'mcp-handlers', 'zebra'].map(d => content.indexOf(`\`${d}\``));
+    expect(order.every(i => i >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((x, y) => x - y));
   });
 });

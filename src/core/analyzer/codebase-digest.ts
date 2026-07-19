@@ -104,9 +104,17 @@ export async function generateCodebaseDigest(
       // calls inflate the counts and leak into the god-function list (e.g. a Java
       // `FooTest.checkOption` showing up as an orchestrator).
       const prodNodes = cg.nodes.filter(n => !n.isTest && !n.isExternal);
+      // `stats.totalEdges` counts ALL `calls` edges — including test-caller and
+      // external-callee edges — so labeling it "internal" next to the production-only
+      // function count mixes two populations under one qualifier. Count only edges
+      // whose BOTH endpoints are production nodes, matching `prodNodes` above.
+      const prodNodeIds = new Set(prodNodes.map(n => n.id));
+      const internalEdges = cg.edges.filter(
+        e => (!e.kind || e.kind === 'calls') && prodNodeIds.has(e.callerId) && prodNodeIds.has(e.calleeId)
+      ).length;
       lines.push('## Overview');
       lines.push(`- **${prodNodes.length}** functions / methods analyzed`);
-      lines.push(`- **${cg.stats?.totalEdges ?? '?'}** internal call edges`);
+      lines.push(`- **${internalEdges}** internal call edges`);
       lines.push(`- **${cg.entryPoints?.length ?? 0}** entry points (no internal callers)`);
       lines.push(`- **${cg.hubFunctions?.length ?? 0}** hub functions (high fan-in)`);
       if (cg.stats?.avgFanIn !== undefined) {
@@ -231,7 +239,11 @@ export async function generateCodebaseDigest(
     if (existsSync(specsDir)) {
       try {
         const entries = await readdir(specsDir);
-        const domains = entries.filter(e => existsSync(join(specsDir, e, 'spec.md')));
+        // Sort before emission: raw `readdir` order is platform-dependent, so an
+        // unsorted list would make the digest bytes vary across machines.
+        const domains = entries
+          .filter(e => existsSync(join(specsDir, e, 'spec.md')))
+          .sort((a, b) => a.localeCompare(b));
         if (domains.length > 0) {
           lines.push('## Spec domains');
           lines.push('OpenSpec domains available for this project. Use `search_specs` or `get_spec` to query them.');
