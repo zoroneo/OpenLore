@@ -388,7 +388,7 @@ function projectToStableIds(fp: Footprint, repo: string, stableByNodeId: Map<str
   const writeSet = fp.writeSet
     .map(w => {
       const sid = stableByNodeId.get(w.id);
-      return sid ? { ...w, id: sid, filePath: `${repo} ${w.filePath}` } : null;
+      return sid ? { ...w, id: sid, filePath: `${repo}\x00${w.filePath}` } : null;
     })
     .filter((w): w is WriteMember => w !== null)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
