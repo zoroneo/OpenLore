@@ -3073,7 +3073,7 @@ The system SHALL suggests a domain name based on directory and file contents.
 - **WHEN** suggestDomainName is called
 - **THEN** A default domain name is returned
 
-### Requirement: Detectcycles
+### Requirement: DetectcyclesDfs
 
 The system SHALL detects cycles in the dependency graph using dfs.
 
@@ -3143,7 +3143,7 @@ The system SHALL calculates overall statistics.
 - **WHEN** calculateStatistics is called
 - **THEN** Default statistics are returned
 
-### Requirement: Builddependencygraph
+### Requirement: BuilddependencygraphFromScoredFiles
 
 The system SHALL builds a dependency graph from a list of scored files using the provided options.
 
@@ -3488,7 +3488,7 @@ The system SHALL calculates the reciprocal rank fusion score for merging two ran
 - **WHEN** rrfScore is called
 - **THEN** The RRF score is calculated and returned
 
-### Requirement: Buildtext
+### Requirement: BuildtextForFunctionEmbedding
 
 The system SHALL builds the text to embed for a function, combining language, path, qualified name, signature, docstring, and skeleton body.
 
@@ -3794,7 +3794,7 @@ The system SHALL generates all analysis artifacts including repository structure
 - **WHEN** generateArtifacts is called
 - **THEN** An error is thrown indicating the directory does not exist
 
-### Requirement: Istestfile
+### Requirement: IstestfileSpecAware
 
 The system SHALL determines if a file is a test/spec file based on its path and name.
 
@@ -5019,10 +5019,7 @@ The system SHALL use `stableId` as the primary cross-version node matcher in str
 The system SHALL record an optional `stableId` on a code-anchored memory alongside its path-based `nodeId`, and SHALL resolve a memory's anchor by first attempting the `nodeId` (current behavior) and, only on a miss, resolving by `stableId`. A memory anchored to a symbol later moved/renamed-file but otherwise unchanged SHALL resolve via `stableId` to the relocated symbol and report `fresh` (or `drifted` if its content changed) instead of `orphaned`. A memory recorded before this change (carrying only `nodeId`) SHALL behave exactly as today, with no migration.
 ### Requirement: AnchorPersistedMemoryToCallgraphSymbolsWithDeterministicFreshness
 
-The system SHALL anchor persisted memories to call-graph symbols and compute deterministic fresh/drifted/orphaned verdicts on recall without LLM inference.
-
-> Decision recorded: 34b178df
-> Date: 2026-06-16
+The canonical statement of this decision lives in the `mcp-handlers` domain — see [mcp-handlers/spec.md](../mcp-handlers/spec.md) (decision `34b178df`).
 ### Requirement: CodeanchoredMemoryToolsRememberrecallAreOptinViaADedicatedPreset
 
 The system SHALL expose remember and recall tools only through the opt-in memory preset, not in the default or minimal tool surfaces.
@@ -5110,10 +5107,7 @@ The system SHALL support an opt-in personalized-PageRank ranking mode for query-
 
 ### Requirement: EpistemicLeaseEmitsNeutralFreshnessFactsNotCoerciveImperatives
 
-The system SHALL surface epistemic-lease freshness as neutral factual signals (elapsed time, cognitive load, index-behind-HEAD) rather than imperative commands directed at the consuming agent.
-
-> Decision recorded: 8e95746d
-> Date: 2026-06-16
+The canonical statement of this decision lives in the `mcp-handlers` domain — see [mcp-handlers/spec.md](../mcp-handlers/spec.md) (decision `8e95746d`).
 ### Requirement: UnifyDomainnameDerivationBehindASingleLeaffirstHelper
 
 The system SHALL derive domain names using a leaf-first path walk with shared noise-directory filtering, ensuring consistent domain naming across dependency-graph clustering and repository mapping.
@@ -5716,10 +5710,7 @@ The system SHALL resolve cross-repo consumer call sites by matching producer sta
 > Date: 2026-06-19
 ### Requirement: ExcludeSupersededDecisionsFromAuthoritativeRecallViaOneSharedSupersessionPredicate
 
-The system SHALL exclude superseded decisions from authoritative recall and orient context using a single shared supersession predicate, surfacing them only as reversal warnings.
-
-> Decision recorded: 6c32e6c6
-> Date: 2026-06-19
+The canonical statement of this decision lives in the `mcp-handlers` domain — see [mcp-handlers/spec.md](../mcp-handlers/spec.md) (decision `6c32e6c6`).
 ### Requirement: LeanDefaultMcpSurfaceNavigationPresetFull62toolSurfaceIsOptinViaPresetFullAlltools
 
 **[SUPERSEDED by c79ec7ca / ADR-0023.]** This requirement (the `navigation` preset as the default MCP surface; full surface via `--preset full` / `--all-tools`) is superseded: the default is now the `substrate` preset (the navigation core plus `recall` + `verify_claim` + `blast_radius`, 13 tools), and `--preset navigation` remains the lean navigate-only escape.

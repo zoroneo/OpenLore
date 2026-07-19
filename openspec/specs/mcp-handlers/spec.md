@@ -94,10 +94,7 @@ The system SHALL verify every registered MCP tool against real codebases via a l
 > Date: 2026-06-10
 ### Requirement: ComputeCfgdefuseOverlayInsideLivetreeExtractorsExtendReturnContractToNodesRawedgesCfg
 
-The system SHALL compute intraprocedural control-flow graphs and reaching-definition def-use edges inside language extractors while the parse tree is live, storing the overlay in the database only.
-
-> Decision recorded: c8f2b9bf
-> Date: 2026-06-12
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `c8f2b9bf`).
 ### Requirement: AnchorPersistedMemoryToCallgraphSymbolsWithDeterministicFreshness
 
 The system SHALL anchor persisted memories to call-graph symbols and compute deterministic fresh/drifted/orphaned verdicts on recall without LLM inference.
@@ -190,10 +187,7 @@ The system SHALL resolve structural anchors against the call graph when recordin
 > Date: 2026-06-16
 ### Requirement: ValuelevelImpacttraceFallsBackToFunctionGranularityOnIllposedQueriesInsteadOfReportingZero
 
-The system SHALL fall back to function-granularity impact when a value-level query target cannot be resolved in the overlay, reporting applied:false with a reason rather than an empty narrowed result.
-
-> Decision recorded: a37d851f
-> Date: 2026-06-16
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `a37d851f`).
 ### Requirement: DowngradeStableidMoveConfidenceFromExactToStableidWithVerifySemantics
 
 The system SHALL report cross-file stable-id matches with confidence 'stable-id' and instruct the consumer to verify, rather than asserting the match is exact.
@@ -208,11 +202,7 @@ The system SHALL anchor stableId parameter-group detection to the symbol's own n
 > Date: 2026-06-16
 ### Requirement: PersonalizedPagerankAsQueryconditionedRetrievalRankingNotGlobalSalience
 
-The system SHALL support an opt-in personalized-PageRank ranking mode for query-conditioned retrieval in orient and get_minimal_context, seeded by task-matched symbols rather than global salience.
-
-> Decision recorded: 0bdd4319
-> Date: 2026-06-16
-
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `0bdd4319`).
 ### Requirement: EpistemicLeaseEmitsNeutralFreshnessFactsNotCoerciveImperatives
 
 The system SHALL surface epistemic-lease freshness as neutral factual signals (elapsed time, cognitive load, index-behind-HEAD) rather than imperative commands directed at the consuming agent.
@@ -221,11 +211,7 @@ The system SHALL surface epistemic-lease freshness as neutral factual signals (e
 > Date: 2026-06-16
 ### Requirement: UseADeterministicFieldweightedRankerForRecallNoLearnedModel
 
-The system SHALL rank recalled memories using a deterministic field-weighted scoring algorithm with identifier-aware normalization, without requiring LLM inference or embedding lookups.
-
-> Decision recorded: 08005eb9
-> Date: 2026-06-18
-
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `08005eb9`).
 ### Requirement: BitemporalMemoryValidity
 
 Every memory SHALL carry, in addition to its transaction time (`recordedAt`), a deterministic
@@ -420,10 +406,7 @@ The system SHALL exclude superseded decisions from authoritative recall and orie
 > Date: 2026-06-19
 ### Requirement: SpecstoreBindingResolvesDeclaredTargetsByNameAgainstTheFederationRegistry
 
-The system SHALL provide a declarative spec-store binding that resolves named targets against the federation registry and surfaces health findings as conclusion-shaped diagnostics without throwing or blocking.
-
-> Decision recorded: c6e36101
-> Date: 2026-06-21
+The canonical statement of this decision lives in the `config` domain — see [config/spec.md](../config/spec.md) (decision `c6e36101`).
 
 ## Decisions
 
