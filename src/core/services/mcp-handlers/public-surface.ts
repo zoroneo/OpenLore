@@ -54,6 +54,12 @@ export interface CertifyPublicSurfaceInput {
   baseRef?: string;
   /** Cap the surface listing (surface mode). */
   maxResults?: number;
+  /**
+   * Certification is fatal on an unresolvable base by default: a verdict computed
+   * against a base the caller did not ask for is not a certificate. Set this to accept
+   * the disclosed main → master → HEAD~1 fallback instead (fix-cli-conclusion-honesty).
+   */
+  allowBaseFallback?: boolean;
 }
 
 // ── exported-name extraction (the surface predicate, computable on any content) ──
@@ -387,11 +393,18 @@ async function diffSurface(
   absDir: string,
   ctx: Awaited<ReturnType<typeof readCachedContext>>,
   baseRef: string,
+  allowBaseFallback: boolean,
 ): Promise<unknown> {
-  const { resolveBaseRef, validateGitRef } = await import('../../drift/git-diff.js');
+  const { resolveBaseRefDisclosed, validateGitRef } = await import('../../drift/git-diff.js');
   try { validateGitRef(baseRef); } catch (e) { return { error: (e as Error).message }; }
-  let resolvedBase: string;
-  try { resolvedBase = await resolveBaseRef(absDir, baseRef); } catch (e) { return { error: `cannot resolve base ref: ${(e as Error).message}` }; }
+  let base: Awaited<ReturnType<typeof resolveBaseRefDisclosed>>;
+  try { base = await resolveBaseRefDisclosed(absDir, baseRef); } catch (e) { return { error: `cannot resolve base ref: ${(e as Error).message}` }; }
+  // Certification is fatal on an unresolvable base: never certify against a base the
+  // caller did not ask for (fix-cli-conclusion-honesty). --allow-base-fallback opts in.
+  if (base.fellBack && !allowBaseFallback) {
+    return { error: `base ref "${base.requested}" did not resolve — refusing to certify the public surface against a fallback base ("${base.resolved}"). Pass an existing ref, or --allow-base-fallback to accept the disclosed fallback.` };
+  }
+  const resolvedBase = base.resolved;
   const oldRef = await mergeBase(absDir, resolvedBase);
 
   const changed = await changedSourceFiles(absDir, resolvedBase);
@@ -414,6 +427,9 @@ async function diffSurface(
     mode: 'diff',
     base: resolvedBase,
     head: 'working tree',
+    // An allowed fallback (base.fellBack was true but --allow-base-fallback was set)
+    // is disclosed structurally so the verdict never hides the base it actually used.
+    ...(base.fellBack ? { baseRefFallback: { requested: base.requested, resolved: resolvedBase } } : {}),
     ...diff,
     confidenceBoundary: assembleBoundary({ staleness: await computeStaleness(absDir), integrity: ctx?.integrity, extraCrossings }),
   };
@@ -630,7 +646,7 @@ export async function computeCertifyPublicSurface(input: CertifyPublicSurfaceInp
     return { error: 'No analysis found. Run analyze_codebase first.' };
   }
   if (input.baseRef && input.baseRef.trim().length > 0) {
-    return diffSurface(absDir, ctx, input.baseRef.trim());
+    return diffSurface(absDir, ctx, input.baseRef.trim(), input.allowBaseFallback ?? false);
   }
   return listSurface(absDir, ctx, input.maxResults ?? 200);
 }

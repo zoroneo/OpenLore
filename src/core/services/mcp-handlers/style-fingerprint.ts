@@ -17,9 +17,25 @@ import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, ARTIFACT_STYLE_FINGERPRINT } fr
 import {
   fileProfile,
   STYLE_SCHEMA_VERSION,
+  STYLE_FINGERPRINT_LANGUAGES,
   type StyleFingerprint,
   type LanguageProfile,
 } from '../../analyzer/style-fingerprint.js';
+
+/** The style-fingerprint-supported languages, canonical-cased and sorted, for disclosure. */
+const KNOWN_STYLE_LANGUAGES = [...STYLE_FINGERPRINT_LANGUAGES].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+/**
+ * Resolve a requested language name (case-insensitive) to its canonical style-fingerprint
+ * language, or null when it is not a language style fingerprints are computed for. Lets the
+ * handler reject an unrecognized `--language` with a not-found shape instead of a quiet empty —
+ * matching the honesty of the `--file` path and `get_language_support`.
+ */
+function resolveStyleLanguage(language: string): string | null {
+  const want = language.trim().toLowerCase();
+  for (const l of STYLE_FINGERPRINT_LANGUAGES) if (l.toLowerCase() === want) return l;
+  return null;
+}
 
 export interface GetStyleFingerprintInput {
   directory: string;
@@ -118,6 +134,19 @@ export async function handleGetStyleFingerprint(input: GetStyleFingerprintInput)
     };
   }
 
+  // An unrecognized `--language` is a not-found, never a quiet empty (fix-cli-conclusion-honesty):
+  // the tool family whose selling point is "a null signal, never a quiet empty" must not answer a
+  // typo'd language with `byLanguage: []`. A language that IS supported but absent from this repo
+  // is a legitimate empty (handled per-scope below with a note), so gate the error on the
+  // capability set, not on presence in this repo.
+  const requestedLanguage = input.language?.trim();
+  if (requestedLanguage && !resolveStyleLanguage(requestedLanguage)) {
+    return {
+      error: `No style fingerprint for language "${input.language}". Style fingerprints are computed only for: ${KNOWN_STYLE_LANGUAGES.join(', ')}.`,
+      knownLanguages: KNOWN_STYLE_LANGUAGES,
+    };
+  }
+
   // Single file.
   if (input.filePath) return resolveFileProfile(fp, input.filePath);
 
@@ -130,23 +159,36 @@ export async function handleGetStyleFingerprint(input: GetStyleFingerprintInput)
         availableRegions: fp.regions.slice(0, 25).map(r => ({ communityId: r.communityId, label: r.label })),
       };
     }
+    const byLanguage = filterByLanguage(region.byLanguage, input.language);
     return {
       scope: 'region',
       communityId: region.communityId,
       label: region.label,
       evidenceFloor: fp.evidenceFloor,
-      byLanguage: filterByLanguage(region.byLanguage, input.language),
-      note: DESCRIPTIVE_NOTE,
+      byLanguage,
+      note: emptyLanguageNote(requestedLanguage, byLanguage) ?? DESCRIPTIVE_NOTE,
     };
   }
 
   // Default: the whole repository, sliced per language.
+  const byLanguage = filterByLanguage(fp.byLanguage, input.language);
   return {
     scope: 'repository',
     evidenceFloor: fp.evidenceFloor,
     languagesAnalyzed: fp.generatedLanguages,
-    byLanguage: filterByLanguage(fp.byLanguage, input.language),
+    byLanguage,
     regionCount: fp.regions.length,
-    note: DESCRIPTIVE_NOTE,
+    note: emptyLanguageNote(requestedLanguage, byLanguage) ?? DESCRIPTIVE_NOTE,
   };
+}
+
+/**
+ * A supported language that produced no profile in this scope is a legitimate empty — but not a
+ * SILENT one. Return a note distinguishing "supported here, but no functions sampled" from the
+ * unrecognized-language error above; null when there is a profile (the descriptive note applies).
+ */
+function emptyLanguageNote(requestedLanguage: string | undefined, byLanguage: LanguageProfile[]): string | undefined {
+  if (!requestedLanguage || byLanguage.length > 0) return undefined;
+  const canonical = resolveStyleLanguage(requestedLanguage) ?? requestedLanguage;
+  return `${canonical} is a supported language but no functions were sampled in this scope (nothing above the evidence floor). ${DESCRIPTIVE_NOTE}`;
 }

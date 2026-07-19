@@ -185,16 +185,40 @@ describe('feature-inventory', () => {
     expect(ss.detail).toMatch(/2 target/);
   });
 
-  it('detects federation peers from .openlore/federation.json', async () => {
+  it('reports federation active when its peers are reachable', async () => {
     await mkdir(join(dir, '.openlore'), { recursive: true });
+    await mkdir(join(dir, 'peer-a'), { recursive: true });
+    await mkdir(join(dir, 'peer-b'), { recursive: true });
     await writeFile(
       join(dir, '.openlore', 'federation.json'),
-      JSON.stringify({ schemaVersion: 1, repos: [{ name: 'a' }, { name: 'b' }] })
+      JSON.stringify({ schemaVersion: 1, repos: [
+        { name: 'a', path: join(dir, 'peer-a') },
+        { name: 'b', path: join(dir, 'peer-b') },
+      ] })
     );
     const inv = await collectFeatureInventory(dir);
     const fed = byId(inv.features, 'federation');
     expect(fed.state).toBe('active');
     expect(fed.detail).toMatch(/2 peer/);
+    expect(fed.detail).toMatch(/reachable/);
+  });
+
+  it('reports federation as degraded (not active ✓) when its peers are unreachable (finding #4)', async () => {
+    // The old inventory counted registry ROWS as health, so a registry of missing peers
+    // showed as active ✓ while `federation list` reported every one "✗ missing path".
+    // Health now reflects resolvability: all-unreachable is inactive, and says why.
+    await mkdir(join(dir, '.openlore'), { recursive: true });
+    await writeFile(
+      join(dir, '.openlore', 'federation.json'),
+      JSON.stringify({ schemaVersion: 1, repos: [
+        { name: 'a', path: join(dir, 'no-such-peer-a') },
+        { name: 'b', path: join(dir, 'no-such-peer-b') },
+      ] })
+    );
+    const inv = await collectFeatureInventory(dir);
+    const fed = byId(inv.features, 'federation');
+    expect(fed.state).toBe('inactive');
+    expect(fed.detail).toMatch(/2 peer.*unreachable/i);
   });
 
   it('is fail-soft: malformed marker files degrade to inactive, never throw', async () => {
@@ -219,9 +243,10 @@ describe('feature-inventory', () => {
     await writeFile(join(dir, '.openlore', 'architecture.json'), '{}');
     await mkdir(join(dir, '.git', 'hooks'), { recursive: true });
     await writeFile(join(dir, '.git', 'hooks', 'pre-commit'), 'openlore enforce --hook');
+    await mkdir(join(dir, 'peer-a'), { recursive: true });
     await writeFile(
       join(dir, '.openlore', 'federation.json'),
-      JSON.stringify({ repos: [{ name: 'a' }] })
+      JSON.stringify({ repos: [{ name: 'a', path: join(dir, 'peer-a') }] })
     );
     const inv = await collectFeatureInventory(dir);
     // 10 opt-in features, all active (decision autopilot added the 10th).

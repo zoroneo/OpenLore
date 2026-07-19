@@ -1,5 +1,25 @@
-import { describe, it, expect } from 'vitest';
-import { assembleSurfaceDiff } from './public-surface.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { assembleSurfaceDiff, computeCertifyPublicSurface } from './public-surface.js';
+
+// Mock only the two utils the handler reads; the pure assembleSurfaceDiff core below
+// does not touch them, so the existing suite is unaffected. git-diff is imported
+// dynamically inside the handler, so vi.mock still intercepts it.
+vi.mock('./utils.js', () => ({
+  validateDirectory: vi.fn(async (d: string) => d),
+  readCachedContext: vi.fn(async () => ({ callGraph: { nodes: [] } })),
+}));
+vi.mock('../../drift/git-diff.js', () => ({
+  validateGitRef: vi.fn(() => {}),
+  getChangedFiles: vi.fn(async () => ({ files: [], resolvedBase: 'main' })),
+  resolveBaseRefDisclosed: vi.fn(async (_d: string, requested: string) => ({
+    requested,
+    resolved: 'main',
+    fellBack: requested === 'bogus-ref',
+  })),
+}));
 
 type File = { path: string; content: string; language: string };
 const ts = (path: string, content: string): File => ({ path, content, language: 'TypeScript' });
@@ -254,5 +274,32 @@ describe('assembleSurfaceDiff — breaking-change classification over file conte
     const r = await assembleSurfaceDiff(base, head, noRename);
     expect(r.extraCrossings.length).toBe(1);
     expect(r.extraCrossings[0].kind).toBe('unindexed-repo');
+  });
+});
+
+describe('handleCertifyPublicSurface — base-ref is fatal on non-resolution (fix-cli-conclusion-honesty)', () => {
+  let dir: string;
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'openlore-certbase-')); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it('a typo\'d --base cannot produce a clean certificate — it errors, no verdict', async () => {
+    const r = (await computeCertifyPublicSurface({ directory: dir, baseRef: 'bogus-ref' })) as Record<string, unknown>;
+    expect(r.error).toMatch(/base ref "bogus-ref" did not resolve/i);
+    expect(r.error).toMatch(/refusing to certify/i);
+    expect(r.mode).toBeUndefined(); // no diff verdict was produced
+  });
+
+  it('--allow-base-fallback opts back into the disclosed fallback (verdict against main, disclosed)', async () => {
+    const r = (await computeCertifyPublicSurface({ directory: dir, baseRef: 'bogus-ref', allowBaseFallback: true })) as Record<string, unknown>;
+    expect(r.error).toBeUndefined();
+    expect(r.mode).toBe('diff');
+    expect(r.baseRefFallback).toEqual({ requested: 'bogus-ref', resolved: 'main' });
+  });
+
+  it('a resolvable --base produces a verdict with no fallback disclosure', async () => {
+    const r = (await computeCertifyPublicSurface({ directory: dir, baseRef: 'HEAD' })) as Record<string, unknown>;
+    expect(r.error).toBeUndefined();
+    expect(r.mode).toBe('diff');
+    expect(r.baseRefFallback).toBeUndefined();
   });
 });

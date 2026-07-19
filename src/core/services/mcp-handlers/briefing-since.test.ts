@@ -16,8 +16,8 @@ vi.mock('./utils.js', () => ({
 
 vi.mock('../../drift/git-diff.js', () => ({
   getChangedFiles: vi.fn(),
-  // Default: any explicit ref resolves; individual tests override to force a fallback.
-  refExists: vi.fn(async () => true),
+  // The shared resolve-or-disclose helper; a per-test default is set in beforeEach.
+  resolveBaseRefDisclosed: vi.fn(),
 }));
 
 // Keep volatilityLevel real; stub only the git-history miner.
@@ -44,7 +44,7 @@ vi.mock('./confidence-boundary.js', () => ({
 
 import { handleBriefingSince } from './briefing-since.js';
 import { readCachedContext } from './utils.js';
-import { getChangedFiles, refExists } from '../../drift/git-diff.js';
+import { getChangedFiles, resolveBaseRefDisclosed } from '../../drift/git-diff.js';
 import { analyzeChangeCoupling } from '../../provenance/change-coupling.js';
 import type { FunctionNode, SerializedCallGraph, CallEdge } from '../../analyzer/call-graph.js';
 
@@ -95,7 +95,7 @@ interface BriefingResult {
 const mockedReadCtx = vi.mocked(readCachedContext);
 const mockedDiff = vi.mocked(getChangedFiles);
 const mockedCoupling = vi.mocked(analyzeChangeCoupling);
-const mockedRefExists = vi.mocked(refExists);
+const mockedResolve = vi.mocked(resolveBaseRefDisclosed);
 
 function diffFiles(paths: string[], resolvedBase = 'mainsha') {
   return {
@@ -116,7 +116,13 @@ function coupling(churn: Record<string, number>, commitsScanned: number) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockedReadCtx.mockResolvedValue({ callGraph: FIXTURE() } as unknown as Awaited<ReturnType<typeof readCachedContext>>);
-  mockedRefExists.mockResolvedValue(true); // explicit refs resolve unless a test overrides
+  // Default: the requested ref resolves as-is (explicit) or to 'mainsha' (auto), no fallback.
+  // Tests that exercise a fallback override this.
+  mockedResolve.mockImplementation(async (_dir: string, requested: string) => ({
+    requested,
+    resolved: !requested || requested === 'auto' ? 'mainsha' : requested,
+    fellBack: false,
+  }));
 });
 
 describe('handleBriefingSince', () => {
@@ -196,9 +202,12 @@ describe('handleBriefingSince', () => {
     expect(core(a)).toBe(core(b));
   });
 
-  it('discloses a SILENT base-ref fallback when an explicit ref cannot be resolved', async () => {
-    mockedRefExists.mockResolvedValue(false); // git can't resolve the requested ref
-    mockedDiff.mockResolvedValue(diffFiles(['src/core.ts'], 'main')); // resolveBaseRef fell back to main
+  it('surfaces the base-ref fallback the shared helper discloses', async () => {
+    // The fallback DETECTION is the helper's job (unit-tested in git-diff.test.ts); here we
+    // assert the briefing SURFACES it — structured field + leading caveat — so a typo'd
+    // --base never makes every number below authoritative-looking but wrong.
+    mockedResolve.mockResolvedValue({ requested: 'totally-bogus-ref', resolved: 'main', fellBack: true });
+    mockedDiff.mockResolvedValue(diffFiles(['src/core.ts'], 'main'));
     mockedCoupling.mockResolvedValue(coupling({ 'src/core.ts': 1 }, 40));
 
     const r = (await handleBriefingSince({ directory: '/repo', baseRef: 'totally-bogus-ref' })) as BriefingResult;
@@ -206,29 +215,12 @@ describe('handleBriefingSince', () => {
     expect(r.caveats[0]).toMatch(/could not be resolved.*briefed against "main"/i);
   });
 
-  it('does NOT report a fallback when the explicit ref resolves', async () => {
-    mockedRefExists.mockResolvedValue(true);
+  it('does NOT report a fallback when the helper resolves the ref as-is', async () => {
+    mockedResolve.mockResolvedValue({ requested: 'abc123', resolved: 'abc123', fellBack: false });
     mockedDiff.mockResolvedValue(diffFiles(['src/core.ts'], 'abc123'));
     mockedCoupling.mockResolvedValue(coupling({ 'src/core.ts': 1 }, 40));
 
     const r = (await handleBriefingSince({ directory: '/repo', baseRef: 'abc123' })) as BriefingResult;
-    expect(r.baseRefFallback).toBeUndefined();
-    // 'auto' base never triggers a resolve-check at all
-    mockedRefExists.mockClear();
-    await handleBriefingSince({ directory: '/repo' });
-    expect(mockedRefExists).not.toHaveBeenCalled();
-  });
-
-  it('does NOT false-flag a fallback for a usable base that resolves to itself (e.g. empty-tree SHA)', async () => {
-    // The empty-tree SHA is a valid git-diff base but is not a commit, so refExists
-    // (which peels ^{commit}) is false — yet resolveBaseRef returns it verbatim, so it
-    // is NOT a fallback. The resolvedBase===input short-circuit must suppress the flag.
-    const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf899d15f71049056';
-    mockedRefExists.mockResolvedValue(false);
-    mockedDiff.mockResolvedValue(diffFiles(['src/core.ts'], EMPTY_TREE)); // resolved === requested
-    mockedCoupling.mockResolvedValue(coupling({ 'src/core.ts': 1 }, 40));
-
-    const r = (await handleBriefingSince({ directory: '/repo', baseRef: EMPTY_TREE })) as BriefingResult;
     expect(r.baseRefFallback).toBeUndefined();
     expect(r.caveats.some(c => /could not be resolved/i.test(c))).toBe(false);
   });

@@ -143,6 +143,29 @@ describe('runImpactCertificateCli (advisory posture & exit codes)', () => {
     expect(await runImpactCertificateCli({ cwd: '/p', hook: true })).toBe(0);
   });
 
+  it('a DIRECT invocation fails non-zero on an unresolvable base (a typo cannot yield a clean cert)', async () => {
+    // computeImpactCertificate tags the fatal-base error so the CLI can distinguish it
+    // from infrastructure failure and exit non-zero (fix-cli-conclusion-honesty).
+    vi.mocked(computeImpactCertificate).mockResolvedValue({ error: 'base ref "bogus" did not resolve', baseUnresolved: true });
+    const code = await runImpactCertificateCli({ cwd: '/p', base: 'bogus', json: true });
+    expect(code).toBe(1);
+  });
+
+  it('the HOOK never blocks on a bad base: it passes allowBaseFallback and stays exit 0', async () => {
+    // In hook mode the CLI opts into the disclosed fallback, so compute never returns the
+    // fatal-base error; even if it did, the hook must not block. Assert both.
+    vi.mocked(computeImpactCertificate).mockResolvedValue(cert([]));
+    const code = await runImpactCertificateCli({ cwd: '/p', base: 'bogus', hook: true });
+    expect(code).toBe(0);
+    expect(vi.mocked(computeImpactCertificate).mock.calls[0][0]).toMatchObject({ allowBaseFallback: true });
+  });
+
+  it('--allow-base-fallback on a direct invocation is forwarded to compute', async () => {
+    vi.mocked(computeImpactCertificate).mockResolvedValue(cert([]));
+    await runImpactCertificateCli({ cwd: '/p', base: 'bogus', allowBaseFallback: true, json: true });
+    expect(vi.mocked(computeImpactCertificate).mock.calls[0][0]).toMatchObject({ allowBaseFallback: true });
+  });
+
   it('blocks (exit 1) in --hook mode only when a configured surface severity fires', async () => {
     vi.mocked(computeImpactCertificate).mockResolvedValue(cert([CRIT_PATH]));
     vi.mocked(readOpenLoreConfig).mockResolvedValue({ impactCertificate: { block: ['critical'] } } as never);

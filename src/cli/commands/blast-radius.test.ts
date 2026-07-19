@@ -165,9 +165,10 @@ describe('runBlastRadiusCli (advisory posture & exit codes)', () => {
     expect(await runBlastRadiusCli({ cwd: '/p', hook: true })).toBe(0);
   });
 
-  it('human render surfaces a silent base-ref fallback (resolvedBaseRef ≠ baseRef)', async () => {
+  it('human render surfaces a disclosed base-ref fallback (baseRefFallback set)', async () => {
     const fellBack = {
       headline: 'h', posture: 'advisory', baseRef: 'totally-bogus-ref', resolvedBaseRef: 'main',
+      baseRefFallback: { requested: 'totally-bogus-ref', resolved: 'main' },
       impact: { hubsTouched: [], layersCrossed: [], governingDecisions: [] },
       tests: { count: 0, toRun: [] },
       memory: { orphaned: 0, drifted: 0, willDrift: [] },

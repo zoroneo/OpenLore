@@ -121,8 +121,12 @@ function renderHuman(b: BlastRadiusBriefing): string {
   lines.push('   ' + b.headline);
   // Surface a silent base-ref fallback here too (not only in the JSON caveats), so a
   // typo'd --base never makes the human briefing misrepresent what it diffed.
-  if (b.resolvedBaseRef !== b.baseRef) {
-    lines.push(`   ⚠ base ref "${b.baseRef}" did not resolve — diffed against "${b.resolvedBaseRef}" instead.`);
+  if (b.baseRefFallback) {
+    lines.push(`   ⚠ base ref "${b.baseRefFallback.requested}" did not resolve — diffed against "${b.baseRefFallback.resolved}" instead.`);
+  }
+  // Index staleness: a risk headline over a graph that predates the working tree must say so.
+  if (b.confidenceBoundary?.staleness?.detail) {
+    lines.push(`   ⚠ ${b.confidenceBoundary.staleness.detail}`);
   }
   if (b.impact.hubsTouched.length > 0) {
     lines.push('   Hubs: ' + b.impact.hubsTouched.map(h => `${h.symbol} (${h.fanIn} callers)`).join(', '));

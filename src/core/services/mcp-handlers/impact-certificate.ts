@@ -110,6 +110,8 @@ export interface ImpactCertificate {
   /** The base ref the diff was computed against (post-fallback). */
   baseRef: string;
   resolvedBaseRef: string;
+  /** Present only when the requested base did not resolve and --allow-base-fallback accepted the fallback. */
+  baseRefFallback?: { requested: string; resolved: string };
   /** The change id, when assessed in a spec-store context; else 'working-tree'. */
   change: string;
   changed: { files: number; symbols: number };
@@ -141,6 +143,11 @@ export interface ImpactCertificateInput {
   change?: string;
   /** Persist the certificate under `.openlore/impact-certificates/` for later decay re-checks. */
   persist?: boolean;
+  /**
+   * Certification is fatal on an unresolvable base by default (fix-cli-conclusion-honesty).
+   * Set this to accept the disclosed main → master → HEAD~1 fallback instead.
+   */
+  allowBaseFallback?: boolean;
 }
 
 const SEVERITY_RANK: Record<CoveringSurfaceSeverity, number> = { info: 1, warn: 2, critical: 3 };
@@ -251,12 +258,6 @@ async function fileAtRef(rootPath: string, ref: string, path: string): Promise<s
   } catch {
     return '';
   }
-}
-
-/** The ref git actually diffs against once `baseRef` is resolved (main → master → HEAD~1 fallback). */
-async function resolveDiffBase(rootPath: string, baseRef: string): Promise<string | undefined> {
-  const { resolveBaseRef } = await import('../../drift/git-diff.js');
-  try { return await resolveBaseRef(rootPath, baseRef); } catch { return undefined; }
 }
 
 /**
@@ -781,7 +782,7 @@ function renderHeadline(cert: ImpactCertificate): string {
  */
 export async function computeImpactCertificate(
   input: ImpactCertificateInput,
-): Promise<ImpactCertificate | { error: string }> {
+): Promise<ImpactCertificate | { error: string; baseUnresolved?: boolean }> {
   const absDir = await validateDirectory(input.directory);
   const ctx = await readCachedContext(absDir);
   if (!ctx) return { error: 'No analysis found. Run analyze_codebase first.' };
@@ -789,6 +790,16 @@ export async function computeImpactCertificate(
   const cg = ctx.callGraph as SerializedCallGraph;
   const baseRef = input.baseRef && input.baseRef.length > 0 ? input.baseRef : 'HEAD';
   const change = input.change && input.change.trim() ? input.change.trim() : 'working-tree';
+
+  // Certification is fatal on an unresolvable base (fix-cli-conclusion-honesty): a
+  // certificate against a base the caller did not ask for is not a certificate.
+  const { resolveBaseRefDisclosed } = await import('../../drift/git-diff.js');
+  let baseResolution: Awaited<ReturnType<typeof resolveBaseRefDisclosed>>;
+  try { baseResolution = await resolveBaseRefDisclosed(absDir, baseRef); }
+  catch (e) { return { error: `cannot resolve base ref: ${e instanceof Error ? e.message : String(e)}` }; }
+  if (baseResolution.fellBack && !input.allowBaseFallback) {
+    return { error: `base ref "${baseResolution.requested}" did not resolve — refusing to certify against a fallback base ("${baseResolution.resolved}"). Pass an existing ref, or --allow-base-fallback to accept the disclosed fallback.`, baseUnresolved: true };
+  }
 
   // ── 1. Declared surfaces config (additive; absent = nothing to assess against) ─
   let surfaceCfg: CoveringSurfaceConfig[] = [];
@@ -802,11 +813,11 @@ export async function computeImpactCertificate(
 
   // ── 3. Changed files → edge delta (the differential's authoritative input) ───
   let changedEntries: ChangedFileEntry[] = [];
-  let resolvedBaseRef = baseRef;
+  let resolvedBaseRef = baseResolution.resolved;
   let diffError: string | null = null;
   try {
     changedEntries = await collectChangedFiles(absDir, baseRef);
-    resolvedBaseRef = (await resolveDiffBase(absDir, baseRef)) ?? baseRef;
+    resolvedBaseRef = baseResolution.resolved;
   } catch (err) {
     diffError = err instanceof Error ? err.message : String(err);
   }
@@ -895,7 +906,8 @@ export async function computeImpactCertificate(
     'A surface is the declared boundary; symbols outside every declared surface are not assessed.',
   ];
   if (diffError) caveats.push(`The change diff could not be read (base ${baseRef}): ${diffError}. Newly-opened paths were not computed.`);
-  if (resolvedBaseRef !== baseRef) caveats.push(`Requested base ref "${baseRef}" did not resolve; diffed against "${resolvedBaseRef}".`);
+  // Only reachable when --allow-base-fallback was set (an unresolvable base is otherwise fatal).
+  if (baseResolution.fellBack) caveats.push(`Requested base ref "${baseResolution.requested}" did not resolve; certified against "${resolvedBaseRef}" (--allow-base-fallback).`);
   if (unresolvedAdded.length > 10) caveats.push(`${unresolvedAdded.length} added calls had ambiguous callees and were not assessed (first 10 listed as findings).`);
   for (const t of truncatedSurfaces) {
     caveats.push(`Surface "${t.surface}" had ${t.total} newly-opened paths; the certificate lists the ${t.shown} shortest (count is authoritative in the finding).`);
@@ -911,6 +923,7 @@ export async function computeImpactCertificate(
   const cert: ImpactCertificate = {
     kind: 'impact-certificate', version: 1,
     baseRef, resolvedBaseRef, change,
+    ...(baseResolution.fellBack ? { baseRefFallback: { requested: baseResolution.requested, resolved: resolvedBaseRef } } : {}),
     changed: { files: changedFiles.length, symbols: symbolCount },
     surfaces: surfaceViews,
     newlyOpenedPaths,

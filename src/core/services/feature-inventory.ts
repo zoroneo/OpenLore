@@ -94,12 +94,22 @@ async function detectWiredPreset(rootPath: string): Promise<string | null> {
   return null;
 }
 
-/** Count federation-registered peer repos in `.openlore/federation.json`. */
-async function countFederationRepos(rootPath: string): Promise<number> {
-  const fed = (await readJsonSoft(join(rootPath, '.openlore', 'federation.json'))) as
-    | { repos?: unknown[] }
-    | null;
-  return Array.isArray(fed?.repos) ? fed!.repos!.length : 0;
+/**
+ * Federation health, not a registry row count (fix-cli-conclusion-honesty). Reuses the SAME
+ * `evaluateRepoState` verdicts `federation list` shows, so `features` and `federation list` can
+ * never disagree: a peer whose path no longer exists is `missing` (unreachable), not "registered
+ * and healthy". Fail-soft — a corrupt/absent registry reports zero peers rather than throwing.
+ */
+async function federationHealth(rootPath: string): Promise<{ registered: number; reachable: number; unreachable: number }> {
+  try {
+    const { listRepos, evaluateRepoState } = await import('../federation/registry.js');
+    const repos = listRepos(rootPath);
+    let reachable = 0;
+    for (const r of repos) if (evaluateRepoState(r) !== 'missing') reachable++;
+    return { registered: repos.length, reachable, unreachable: repos.length - reachable };
+  } catch {
+    return { registered: 0, reachable: 0, unreachable: 0 };
+  }
 }
 
 /** Detect whether a git pre-commit hook wired to OpenLore is installed. */
@@ -309,19 +319,31 @@ export async function collectFeatureInventory(rootPath: string): Promise<Feature
     docs: 'docs/federation.md',
   });
 
-  // Federation registry.
-  const repoCount = await countFederationRepos(rootPath);
+  // Federation registry — reported by peer RESOLVABILITY, not registry row count. A registry with
+  // peers but none reachable is degraded, not active: it counts as inactive (no ✓) and says why, so
+  // `features` never disagrees with `federation list` (fix-cli-conclusion-honesty).
+  const fed = await federationHealth(rootPath);
+  const anyReachable = fed.reachable > 0;
   features.push({
     id: 'federation',
     title: 'Federation registry',
     group: 'Multi-repo',
-    state: repoCount > 0 ? 'active' : 'inactive',
+    // Active only when at least one peer is actually reachable; a registry whose peers are all
+    // missing provides no cross-repo value, so it is not shown as on.
+    state: anyReachable ? 'active' : 'inactive',
     optIn: true,
     detail:
-      repoCount > 0
-        ? `${repoCount} peer repo(s) registered`
-        : 'single-repository mode — no peers registered',
-    activate: repoCount > 0 ? '' : 'openlore federation add <path> --name <name>',
+      fed.registered === 0
+        ? 'single-repository mode — no peers registered'
+        : fed.unreachable === 0
+          ? `${fed.registered} peer repo(s) registered, all reachable`
+          : `${fed.registered} peer(s) registered, ${fed.unreachable} unreachable (✗ missing path)`,
+    activate:
+      fed.registered === 0
+        ? 'openlore federation add <path> --name <name>'
+        : anyReachable
+          ? ''
+          : 'openlore federation list  # then fix or re-add the unreachable peer path(s)',
     docs: 'docs/federation.md',
   });
 

@@ -1,10 +1,13 @@
 # Uniform conclusion honesty across CLI commands: base-ref fallback, staleness, unknown inputs
 
-> Status: PROPOSED (2026-07-03, e2e audit). The honesty disciplines exist — some commands apply
+> Status: SHIPPED (2026-07-18). The honesty disciplines exist — some commands apply
 > them, siblings don't. A live dogfood of all ~50 CLI commands found four places where a
 > conclusion-shaped command answers confidently over an undisclosed defect in its own inputs,
 > while a sibling command discloses the identical defect. This change makes the disciplines
 > uniform and adds the guard that keeps a new conclusion command from shipping without them.
+> Shipped as one shared `resolveBaseRefDisclosed` helper + the existing staleness boundary,
+> adopted across certify-public-surface, impact-certificate, blast-radius, briefing-since, and
+> coverage-gaps, plus the style-fingerprint and features fixes and a source-level parity guard.
 
 ## The gap (all live-reproduced on this repo, v2.1.5)
 

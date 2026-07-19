@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { classifyFile, isSkippableFile, validateGitRef,
   isGitRepository, getCurrentBranch, resolveBaseRef, refExists,
-  getFileDiff, getChangedFiles } from './git-diff.js';
+  resolveBaseRefDisclosed, getFileDiff, getChangedFiles } from './git-diff.js';
 import { execFile } from 'node:child_process';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -369,6 +369,56 @@ describe('refExists', () => {
     } finally {
       await rm(nonRepo, { recursive: true, force: true });
     }
+  });
+});
+
+// ============================================================================
+// resolveBaseRefDisclosed — the shared resolve-or-disclose helper every --base
+// command routes through (fix-cli-conclusion-honesty). This is the ONE home of
+// the fallback-detection logic; the commands only surface/act on its verdict.
+// ============================================================================
+
+describe('resolveBaseRefDisclosed', () => {
+  const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf899d15f71049056';
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'openlore-disclosed-'));
+    await initRepo(tmpDir);
+    await writeFile(join(tmpDir, 'a.ts'), 'v1', 'utf-8');
+    await commit(tmpDir, 'initial');
+  });
+  afterEach(async () => { await rm(tmpDir, { recursive: true, force: true }); });
+
+  it('an explicit ref that resolves is NOT a fallback', async () => {
+    const r = await resolveBaseRefDisclosed(tmpDir, 'HEAD');
+    expect(r).toEqual({ requested: 'HEAD', resolved: 'HEAD', fellBack: false });
+  });
+
+  it('an explicit ref that does NOT resolve falls back and discloses both refs', async () => {
+    const r = await resolveBaseRefDisclosed(tmpDir, 'totally-bogus-ref-xyz');
+    expect(r.requested).toBe('totally-bogus-ref-xyz');
+    expect(r.resolved).toBe('main'); // main → master → HEAD~1 fallback
+    expect(r.fellBack).toBe(true);
+  });
+
+  it('the "auto" default explicitly requests the fallback chain and is never a fallback', async () => {
+    const r = await resolveBaseRefDisclosed(tmpDir, 'auto');
+    expect(r.resolved).toBe('main');
+    expect(r.fellBack).toBe(false);
+  });
+
+  it('an empty request is treated as auto (no fallback flag)', async () => {
+    const r = await resolveBaseRefDisclosed(tmpDir, '');
+    expect(r.fellBack).toBe(false);
+  });
+
+  it('does NOT false-flag a usable base that resolves to itself but is not a commit (empty-tree SHA)', async () => {
+    // resolveBaseRef returns the empty-tree SHA verbatim (it is a valid diff base), so the
+    // helper must NOT call it a fallback even though refExists (which peels ^{commit}) is false.
+    const r = await resolveBaseRefDisclosed(tmpDir, EMPTY_TREE);
+    expect(r.resolved).toBe(EMPTY_TREE);
+    expect(r.fellBack).toBe(false);
   });
 });
 
