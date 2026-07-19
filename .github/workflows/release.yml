@@ -87,9 +87,14 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      # Create the Release for this tag with auto-generated notes, unless one
-      # already exists (idempotent — safe to re-run). Created with GITHUB_TOKEN,
-      # so it deliberately does NOT fire another `release: published` run.
+      # Create the Release for this tag, unless one already exists (idempotent —
+      # safe to re-run). Created with GITHUB_TOKEN, so it deliberately does NOT
+      # fire another `release: published` run.
+      #
+      # Notes source: prefer the hand-written CHANGELOG.md section for this
+      # version (the tasteful, user-facing notes), and fall back to GitHub's
+      # auto-generated notes only if that section is missing or empty — so a
+      # forgotten changelog entry degrades to a PR list rather than blocking.
       - name: Create release if missing
         env:
           GH_TOKEN: ${{ github.token }}
@@ -97,7 +102,20 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists — skipping creation."
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          NOTES_FILE="$(mktemp)"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" {grab=1; next}
+            grab && /^## \[/ {exit}
+            grab {print}
+          ' CHANGELOG.md > "$NOTES_FILE"
+          if [ -s "$NOTES_FILE" ]; then
+            echo "Using CHANGELOG.md section for $VERSION as release notes."
+            gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --verify-tag
           else
+            echo "No CHANGELOG.md section for $VERSION — falling back to auto-generated notes."
             gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
           fi
 

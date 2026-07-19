@@ -5,26 +5,112 @@ All notable changes to OpenLore are documented here. This project adheres to
 
 ## [Unreleased]
 
-### Changed
+## [2.1.6] - 2026-07-19
 
-- **`openlore serve` now defaults to the `substrate` preset (13 tools), matching `openlore mcp`**
-  (change `fix-default-preset-claims`). The ADR-0023 default flip moved `openlore mcp` to
-  `substrate` but left `openlore serve` hardcoded to the old `navigation` surface (10 tools), so the
-  two entry points reported different default surfaces on `/health`. Both now resolve the no-selector
-  default through the single `LEAN_DEFAULT_PRESET` constant. The daemon already dispatches any known
-  tool regardless of preset (the preset is advisory, reported by `/health` for clients that curate
-  their own surface), so the only observable change is that a bare `openlore serve` reports 13 tools
-  instead of 10. Pass `--preset navigation` for the prior surface.
+**The boring release. We mean that as the highest compliment.**
 
-### Fixed
+v2.1.5 made OpenLore pleasant to start using. This one makes it hard to break. Forty-five
+changes, and not one of them adds a knob you have to turn: no new required config, no tool or
+command or language removed, no LLM anywhere in the serving path. What changed is that the
+substrate now tells the truth more stubbornly and falls over less often — the same answers, the
+same speed, fewer surprises at 2am.
 
-- **Every surface now names the same default preset.** Help strings (`mcp`/`install`/`connect`
-  `--preset`, the top-level `mcp` blurb, `serve` examples), one install-adapter comment, several
-  docstrings, and two reference-doc entries still said or implemented the pre-ADR-0023 `navigation`
-  default. All now derive the default's name from `LEAN_DEFAULT_PRESET`, and a drift-guard test
-  (`default-preset-single-source.test.ts`, cli spec `DefaultPresetHasOneSource`) fails if any entry
-  point reintroduces a hardcoded preset-name fallback or if help text names a default other than the
-  constant's value. No behavior change beyond the `serve` default above.
+A good memory is one you stop thinking about. That was the whole goal here.
+
+Everything below is **additive and backward-compatible**. If OpenLore has been quietly working
+for you, upgrade and it will keep quietly working — just with fewer sharp edges you were never
+supposed to touch.
+
+### The index looks after itself now
+
+- **Reads can no longer destroy your index.** Opening the graph store for a read used to be able
+  to drop tables on a schema mismatch; now a read is a read. A version bump rebuilds through the
+  one path that owns rebuilds, a schema mismatch reports "not ready" instead of nuking your data,
+  and a genuinely corrupt store gets quarantined as `*.corrupt-N` rather than silently reused.
+- **Staleness heals itself.** When the read path notices the index has drifted from the code, it
+  kicks off an at-most-once background repair and tells you it's doing so — instead of handing you
+  stale answers with a straight face. `openlore doctor --fix` covers the rest.
+- **Analysis is now deterministic.** Analyze the same commit twice and you get byte-identical
+  artifacts — sampling is seeded, aggregation is order-stable. No more phantom diffs from a graph
+  that couldn't make up its mind.
+- **Artifact writes are atomic and locked.** Every analysis artifact is written all-or-nothing
+  behind a single lock, so a crash mid-write leaves you with the old good file, never half a new
+  broken one.
+- **A crashing event no longer takes the daemon with it.** An async watcher/stream error is caught
+  and logged instead of felling a long-lived process — the watcher survives the day.
+
+### The graph stops fibbing about your code
+
+A pile of parser-fidelity fixes, all in service of one thing: the call graph should describe the
+code you actually wrote.
+
+- **Route handlers stay connected.** TS/JS route lines are now masked length-preservingly instead
+  of skeletonized, so route→handler edges stop drifting and handlers stop being mislabeled dead.
+- **More exports are seen.** `async`, generator, `abstract`, `default async`, and `const enum`
+  exports are recognized, and comment-shifted line numbers are corrected.
+- **Clone detection stops crying wolf.** String-literal-aware normalization means a truncated
+  literal no longer produces a false "100% identical" verdict.
+- **Ambiguous calls are disclosed, not guessed.** When the resolver can't be sure which function a
+  call reaches, it says so instead of confidently binding to the first match.
+- **Non-ASCII filenames stop vanishing.** Every git path-listing spawn now runs with quoting off,
+  so files with accents or CJK names stay in the graph.
+- **Sub-word search actually matches.** Identifier-aware BM25 tokenization means searching `parse`
+  finds `parseConfig`; the tokenized corpus is persisted, so cold starts are ~90% faster and the
+  tokenizer stamp guards serving end-to-end. Parse-health is disclosed rather than silently
+  swallowed, and language detection runs through one guarded detector.
+
+### Secrets stay secret, servers stay closed
+
+- **Authorization headers are fully redacted** — including the credential half of `Basic` auth —
+  and a redaction cycle returns a redacted twin, never the original value it was trying to hide.
+- **`serve.json` is validated at every reader** through one shared validator, with an outbound
+  SSRF guard, so an untrusted descriptor can't point the daemon somewhere it shouldn't go.
+- **The view server now sits behind the serve daemon's request guard**, closing the last local
+  HTTP surface that wasn't protected against DNS-rebinding.
+- **Node floor raised to where `node:sqlite` actually exists** — and OpenLore probes for the
+  capability rather than trusting the version string.
+
+### Governance you can trust
+
+- **A rejected decision stays rejected.** One shared status-transition table locks every promotion
+  door (MCP, API, CLI), so `sync` or `approve` can't quietly resurrect a verdict you turned down.
+- **Decision autopilot** (opt-in): auto-accept governance with an append-only audit ledger, for
+  teams who've decided they trust the gate.
+- **The conclusion contract is enforced at dispatch** — a tool that's supposed to return an answer
+  can't accidentally hand back a graph to traverse — and MCP↔Pi tool parity is guarded in both
+  directions, so the two surfaces can't drift apart.
+- **Federation degrades gracefully:** an empty fingerprint is baselined at first sight and a
+  corrupt registry degrades instead of blocking, so a half-set-up peer never wedges the fleet.
+
+### CLI & config, cleaned up
+
+- **`--config` is finally honored** — an explicit config path is actually read, and it's fatal if
+  it's wrong rather than silently ignored.
+- **`.openlore/config.json` is validated:** typo'd keys get a did-you-mean, type mismatches and
+  version skew are disclosed (diagnostics go to stderr, so machine-readable output stays clean).
+- **Uniform output across every command:** one color layer, honest summaries, one vocabulary, and
+  base-refs that resolve-or-disclose instead of silently falling back to `main`.
+- **Install detection is evidence-based** — OpenLore figures out how it was installed and never
+  mutates the wrong (e.g. global vs local) install.
+- **`openlore serve` now reports the same `substrate` default (13 tools) as `openlore mcp`**, and
+  every help string, docstring, and doc entry names that one default through a single constant
+  (change `fix-default-preset-claims`). Pass `--preset navigation` for the lean 10-tool surface.
+
+### New this release
+
+- **`locate_symbol_span`** — a read-only, staleness-checked "where does this symbol live right
+  now" lookup a host can trust before it edits (fresh / stale / ambiguous / not-found, never a
+  confident wrong line).
+
+### Under the hood
+
+- Specs refreshed to match the current architecture; shipped-change statuses reconciled with git
+  reality; quantitative doc claims (language counts, the test floor) are now pinned to code by a
+  guard test. The epistemic-lease weight table is complete and bound to the registry. `tree-sitter-c-sharp`
+  is pinned to the ABI-matching `^0.21.3`. Assorted test-suite flakes defused.
+
+The version is read from `package.json`, so `--version` and the `tools/list` banner track this
+bump automatically — nothing to configure.
 
 ## [2.1.5] - 2026-06-28
 
