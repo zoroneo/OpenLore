@@ -177,6 +177,107 @@ describe('Secret Confinement (mcp-security)', () => {
     expect(redactSecretString('GET https://x/v1?key=AbCdEf0123456789')).not.toContain('AbCdEf0123456789');
   });
 
+  // ── AuthorizationHeaderRedactionConsumesTheFullValue (mcp-security) ──────────
+
+  it('redacts the FULL Authorization value for spaced-credential schemes', () => {
+    // Basic: the base64 credential pair is a second token past the scheme — `\S+` would
+    // have left it behind.
+    const basic = redactSecretString('Authorization: Basic dXNlcjpzZWNyZXQ=');
+    expect(basic).toContain('Authorization: [REDACTED]');
+    expect(basic).not.toContain('dXNlcjpzZWNyZXQ=');
+    // Digest carries multiple parameters after the scheme; none may survive.
+    const digest = redactSecretString(
+      'Authorization: Digest username="bob", nonce="abc123", response="deadbeef"',
+    );
+    expect(digest).toContain('Authorization: [REDACTED]');
+    expect(digest).not.toContain('deadbeef');
+    expect(digest).not.toContain('bob');
+    // A custom scheme with a spaced credential redacts identically.
+    const custom = redactSecretString('Authorization: MyScheme sig=abc secret=xyz');
+    expect(custom).toContain('Authorization: [REDACTED]');
+    expect(custom).not.toContain('secret=xyz');
+    // Bearer behavior is unchanged.
+    expect(redactSecretString('Authorization: Bearer abcdefghijklmnop')).toContain('[REDACTED]');
+  });
+
+  it('Authorization redaction consumes only the header line, not the following lines', () => {
+    const text = [
+      'GET /v1/models HTTP/1.1',
+      'Authorization: Basic dXNlcjpzZWNyZXQ=',
+      'Accept: application/json',
+    ].join('\n');
+    const out = redactSecretString(text);
+    expect(out).not.toContain('dXNlcjpzZWNyZXQ=');
+    expect(out).toContain('Authorization: [REDACTED]');
+    // Neighboring lines are intact.
+    expect(out).toContain('GET /v1/models HTTP/1.1');
+    expect(out).toContain('Accept: application/json');
+  });
+
+  // ── CycleSafeRedactionNeverReturnsUnredactedInput (mcp-security) ─────────────
+
+  // Cycle-safe object collection and serialization for asserting the invariant on a graph
+  // that redactSecrets must handle without ever embedding an original node.
+  function collectObjects(root: unknown): Set<object> {
+    const found = new Set<object>();
+    const stack: unknown[] = [root];
+    while (stack.length) {
+      const v = stack.pop();
+      if (v === null || typeof v !== 'object' || found.has(v as object)) continue;
+      found.add(v as object);
+      for (const child of Object.values(v as Record<string, unknown>)) stack.push(child);
+    }
+    return found;
+  }
+  function cycleSafeStringify(root: unknown): string {
+    const seen = new WeakSet<object>();
+    return JSON.stringify(root, (_k, v) => {
+      if (v !== null && typeof v === 'object') {
+        if (seen.has(v as object)) return '[Circular]';
+        seen.add(v as object);
+      }
+      return v;
+    });
+  }
+
+  it('deep-redacts a cyclic graph, leaking no original node and no secret', () => {
+    const SECRET = 'sk-ant-api03-CyClicSecret0123456789abcdef';
+    const a: Record<string, unknown> = { name: 'a' };
+    const b: Record<string, unknown> = { name: 'b', apiKey: SECRET, back: a };
+    a.b = b; // a → b → a
+
+    const out = redactSecrets(a) as Record<string, any>;
+
+    // Terminated (we're here), the secret is gone, the secret-named field is scrubbed.
+    expect(cycleSafeStringify(out)).not.toContain(SECRET);
+    expect(out.b.apiKey).toBe('[REDACTED]');
+    // No output node is reference-identical to any input node.
+    const inputIds = collectObjects(a);
+    for (const node of collectObjects(out)) {
+      expect(inputIds.has(node)).toBe(false);
+    }
+    // The cycle is preserved as the redacted twin, not the original object.
+    expect(out.b.back).toBe(out);
+  });
+
+  it('self-referencing array and a cause-cycle object both terminate and redact', () => {
+    const SECRET = 'sk-ant-api03-ArraySecret0123456789abcdef';
+
+    const arr: unknown[] = [{ token: SECRET }];
+    arr.push(arr); // self-reference
+    const outArr = redactSecrets(arr) as any[];
+    expect((outArr[0] as Record<string, unknown>).token).toBe('[REDACTED]');
+    expect(outArr[1]).toBe(outArr); // twin, not the original
+    expect(cycleSafeStringify(outArr)).not.toContain(SECRET);
+
+    const err: Record<string, unknown> = { message: 'boom', password: SECRET };
+    err.cause = err; // cause cycle
+    const outErr = redactSecrets(err) as Record<string, any>;
+    expect(outErr.password).toBe('[REDACTED]');
+    expect(outErr.cause).toBe(outErr);
+    expect(cycleSafeStringify(outErr)).not.toContain(SECRET);
+  });
+
   it('sanitizeMcpError redacts a key embedded in an error message', () => {
     const msg = sanitizeMcpError(new Error(`401 from provider using ${KEY}`)) as string;
     expect(msg).not.toContain(KEY);
