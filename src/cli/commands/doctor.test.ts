@@ -90,6 +90,11 @@ describe('doctor command', () => {
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     mockExecSuccess();
+    // Restore readFile's documented default ("absent") — clearAllMocks resets call
+    // history but NOT implementations, so a test that pointed readFile at a config
+    // would otherwise leak that resolution into later tests (Config schema check).
+    const { readFile } = await import('node:fs/promises');
+    vi.mocked(readFile).mockRejectedValue(new Error('ENOENT'));
     // Restore default LLM mock after clearAllMocks
     const llmService = await import('../../core/services/llm-service.js');
     vi.mocked(llmService.createLLMService).mockReturnValue({
@@ -126,9 +131,14 @@ describe('doctor command', () => {
       expect(Array.isArray(checks)).toBe(true);
     });
 
-    it('should include exactly 9 checks', async () => {
+    it('should include exactly 10 checks', async () => {
       const checks = await runDoctorJson();
-      expect(checks).toHaveLength(9);
+      expect(checks).toHaveLength(10);
+    });
+
+    it('should include a Config schema check', async () => {
+      const checks = await runDoctorJson();
+      expect(checks.find(c => c.name === 'Config schema')).toBeDefined();
     });
 
     it('should include a Parse health check', async () => {
@@ -333,6 +343,56 @@ describe('doctor command', () => {
       const configCheck = checks.find(c => c.name === 'openlore config')!;
       expect(configCheck.status).toBe('fail');
       expect(configCheck.fix).toContain('openlore init');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  describe('config schema check (add-config-schema-validation)', () => {
+    it('shows ok when there is no config file to validate', async () => {
+      // Default readFile mock rejects (ENOENT) — nothing to validate.
+      const checks = await runDoctorJson();
+      const schemaCheck = checks.find(c => c.name === 'Config schema')!;
+      expect(schemaCheck.status).toBe('ok');
+    });
+
+    it('shows ok for a config with only known, well-typed keys', async () => {
+      const { readFile } = await import('node:fs/promises');
+      vi.mocked(readFile).mockResolvedValue(
+        JSON.stringify({
+          version: '1.0.0',
+          projectType: 'nodejs',
+          openspecPath: 'openspec',
+          analysis: { maxFiles: 1, includePatterns: [], excludePatterns: [] },
+          generation: { domains: 'auto' },
+          createdAt: '2026-01-01T00:00:00Z',
+          lastRun: null,
+        }) as never
+      );
+      const checks = await runDoctorJson();
+      const schemaCheck = checks.find(c => c.name === 'Config schema')!;
+      expect(schemaCheck.status).toBe('ok');
+    });
+
+    it('warns and names an unknown (typo\'d) key with a suggestion', async () => {
+      const { readFile } = await import('node:fs/promises');
+      vi.mocked(readFile).mockResolvedValue(
+        JSON.stringify({
+          version: '1.0.0',
+          projectType: 'nodejs',
+          openspecPath: 'openspec',
+          analysis: { maxFiles: 1, includePatterns: [], excludePatterns: [] },
+          generation: { domains: 'auto' },
+          createdAt: '2026-01-01T00:00:00Z',
+          lastRun: null,
+          pancResponse: { mode: 'off' },
+        }) as never
+      );
+      const checks = await runDoctorJson();
+      const schemaCheck = checks.find(c => c.name === 'Config schema')!;
+      expect(schemaCheck.status).toBe('warn');
+      expect(schemaCheck.detail).toContain('pancResponse');
+      expect(schemaCheck.detail).toContain('panicResponse');
+      expect(schemaCheck.fix).toContain('openlore init');
     });
   });
 
