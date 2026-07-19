@@ -1,6 +1,6 @@
 # One default, said once: align every surface with the substrate default (ADR-0023)
 
-> Status: PROPOSED (2026-07-03, e2e audit). The ADR-0023 flip made `substrate` (13 tools) the
+> Status: SHIPPED (2026-07-18, PR #229; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). The ADR-0023 flip made `substrate` (13 tools) the
 > out-of-box default, but the flip's blast radius was under-applied: user-facing help strings,
 > one doc page, several docstrings — and one real code path (`openlore serve`) — still say or
 > implement `navigation`. This change fixes every stragglers and adds the guard that keeps the

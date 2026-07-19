@@ -1,6 +1,6 @@
 # Fix `openlore update` install-method detection: never mutate the wrong install
 
-> Status: PROPOSED (2026-07-03, e2e audit). `detectInstallMethod` classifies ANY path containing
+> Status: SHIPPED (2026-07-18, PR #237; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). `detectInstallMethod` classifies ANY path containing
 > `/node_modules/openlore/` as a global npm install, so `openlore update` run from a project-local
 > dependency executes `npm install -g openlore@latest` — mutating global state the user never asked
 > to touch — and Windows global installs fall through to `unknown`. Deterministic detection with an

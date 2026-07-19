@@ -1,6 +1,6 @@
 # Identifier-aware BM25 tokenization: `getUserById` must match a query for `user`
 
-> Status: PROPOSED (2026-07-03, e2e audit). BM25 keyword search is the zero-config DEFAULT
+> Status: SHIPPED (2026-07-18, PR #221; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). BM25 keyword search is the zero-config DEFAULT
 > retrieval mode, but its tokenizer lowercases and splits only on non-alphanumerics — an
 > identifier like `getUserById` becomes the single token `getuserbyid`, so the most common
 > identifier-shaped queries (`user`, `getUser`) miss entirely. Split compound identifiers into

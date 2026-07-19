@@ -1,6 +1,6 @@
 # Reconcile the substrate preset's "both faces" copy with its read-only contents
 
-> Status: PROPOSED (2026-07-03, e2e audit). The default `substrate` preset is billed everywhere as
+> Status: SHIPPED (2026-07-18, PR #234; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). The default `substrate` preset is billed everywhere as
 > "both faces of the substrate," but it contains only governance *reads* — an agent on the default
 > surface can `recall` a memory it can never `remember`, and cannot `record_decision`, while the
 > *narrower* `minimal` preset does carry `record_decision`. Two steps: fix the outward copy now

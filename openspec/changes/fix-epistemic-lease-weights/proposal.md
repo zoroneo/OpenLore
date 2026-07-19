@@ -1,6 +1,6 @@
 # Complete the epistemic-lease weight table and bind it to the tool registry
 
-> Status: PROPOSED (2026-07-03, e2e audit). The lease's cognitive-load accounting silently
+> Status: SHIPPED (2026-07-18, PR #232; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). The lease's cognitive-load accounting silently
 > under-counts 27 of 72 tools — every unlisted tool falls to the minimum weight via a `?? 1`
 > fallback, including deep graph traversals on the *default* surface. Weights are assigned by
 > analogy to existing entries (no new constants), and a completeness test binds the table to

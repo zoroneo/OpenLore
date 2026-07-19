@@ -1,6 +1,6 @@
 # Make the index self-healing: staleness triggers repair, not just disclosure
 
-> Status: PROPOSED (2026-07-18). The substrate is excellent at *detecting* a bad index —
+> Status: SHIPPED (2026-07-18, PR #225; status reconciled 2026-07-19). Originally proposed (2026-07-18). The substrate is excellent at *detecting* a bad index —
 > attestation verdicts, an explicit stale region, tokenizer/schema stamps, doctor's age
 > warning — and then it stops. Repair is always a human running `openlore analyze`, or a
 > post-commit hook they may never have installed. For a tool whose promise is "background

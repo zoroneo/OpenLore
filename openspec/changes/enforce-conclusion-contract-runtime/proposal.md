@@ -1,6 +1,6 @@
 # Enforce the conclusion contract at dispatch and close the adjacency-group gaps
 
-> Status: PROPOSED (2026-07-03, e2e audit). The conclusion-over-graph contract's runtime check
+> Status: SHIPPED (2026-07-18, PR #233; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). The conclusion-over-graph contract's runtime check
 > exists but is never called in production, and the NoRedundantConclusions adjacency table misses
 > two genuinely-adjacent pairs — including one on the default surface. Wires the existing check
 > into the dispatch path (advisory by default, strict in CI) and completes the table. No new

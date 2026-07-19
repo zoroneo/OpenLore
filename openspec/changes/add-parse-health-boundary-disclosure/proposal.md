@@ -1,6 +1,6 @@
 # Parse-health disclosure: no silent under-extraction from parse errors, grammar drift, or unreadable files
 
-> Status: PROPOSED (2026-07-03, e2e audit). The honesty contract covers *named languages* (the
+> Status: SHIPPED (2026-07-18, PR #227; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). The honesty contract covers *named languages* (the
 > registry can't over-claim a language) but not *failed extraction inside a supported language*:
 > a file that parses badly, a grammar whose node types drifted, or a non-UTF-8/oversized file today
 > yields a silently smaller graph indistinguishable from "there is genuinely nothing there." This

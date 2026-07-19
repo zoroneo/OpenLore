@@ -1,6 +1,6 @@
 # Harden the view server to the serve daemon's security model
 
-> Status: PROPOSED (2026-07-03, e2e audit). OpenLore runs two local HTTP surfaces with two
+> Status: SHIPPED (2026-07-18, PR #235; status reconciled 2026-07-19). Originally proposed (2026-07-03, e2e audit). OpenLore runs two local HTTP surfaces with two
 > different security postures. The `serve` daemon has the right one — loopback default,
 > Host/Origin DNS-rebinding guard, constant-time token comparison, non-loopback-requires-token
 > (`serve.ts:20-24`, `:178-192`, `:239-258`). The `view` graph server has none of it, while
