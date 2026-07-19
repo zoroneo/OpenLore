@@ -171,9 +171,15 @@ export async function extractEnvVars(
     }
   }
 
-  await Promise.all(
-    filePaths.map(async fp => {
-      if (SKIP_DIRS.some(d => fp.replace(/\\/g, '/').includes(d))) return;
+  // Collect per-file upsert ops concurrently, then apply them sequentially in
+  // filePaths order. `Promise.all` resolves in INPUT order regardless of I/O
+  // completion, so a var's `files[]` order and its first-wins `description` are a
+  // pure function of the file list — upserting from inside the callbacks would make
+  // both depend on read-completion timing (decision c6d1ad07).
+  type UpsertOp = { name: string; rel: string; patch: Partial<EnvVar> };
+  const perFileOps = await Promise.all(
+    filePaths.map(async (fp): Promise<UpsertOp[]> => {
+      if (SKIP_DIRS.some(d => fp.replace(/\\/g, '/').includes(d))) return [];
 
       const name = basename(fp);
       const ext = extname(fp).toLowerCase();
@@ -183,27 +189,34 @@ export async function extractEnvVars(
       try {
         source = await readFile(fp, 'utf-8');
       } catch {
-        return;
+        return [];
       }
 
       // Env declaration files
       if (ENV_DECLARATION_FILES.has(name)) {
-        for (const v of parseEnvFile(source, rel)) {
-          upsert(v.name, rel, { hasDefault: v.hasDefault, description: v.description });
-        }
-        return;
+        return parseEnvFile(source, rel).map(v => ({
+          name: v.name,
+          rel,
+          patch: { hasDefault: v.hasDefault, description: v.description },
+        }));
       }
 
       // Source files
-      if (!SOURCE_EXTENSIONS.has(ext)) return;
+      if (!SOURCE_EXTENSIONS.has(ext)) return [];
       // Skip test files
-      if (fp.includes('.test.') || fp.includes('.spec.') || fp.includes('_test.') || fp.includes('_spec.')) return;
+      if (fp.includes('.test.') || fp.includes('.spec.') || fp.includes('_test.') || fp.includes('_spec.')) return [];
 
-      for (const { name: varName, required } of extractFromSource(source, rel, ext)) {
-        upsert(varName, rel, { required });
-      }
+      return extractFromSource(source, rel, ext).map(({ name: varName, required }) => ({
+        name: varName,
+        rel,
+        patch: { required },
+      }));
     })
   );
+
+  for (const op of perFileOps.flat()) {
+    upsert(op.name, op.rel, op.patch);
+  }
 
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
 }

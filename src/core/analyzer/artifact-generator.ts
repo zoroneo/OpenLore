@@ -7,6 +7,7 @@
 
 import { mkdir, readFile } from 'node:fs/promises';
 import { join, basename, isAbsolute } from 'node:path';
+import { createHash } from 'node:crypto';
 import { atomicWriteFile } from '../decisions/atomic-store.js';
 import { withAnalysisLock } from '../decisions/lock.js';
 import {
@@ -42,6 +43,38 @@ import type { EnvVar } from './env-extractor.js';
 // same shared definition so the two can no longer drift.
 export { isTestFile } from './test-file.js';
 import { isTestFile } from './test-file.js';
+
+/**
+ * Deterministically shuffle `items`, seeded from a hash of the sorted string keys.
+ *
+ * Artifact bytes must be a pure function of the input (decision c6d1ad07): the
+ * phase-3 validation sample embedded in llm-context.json needs the "spread across
+ * leaves" intent WITHOUT the non-determinism of `Math.random()`. The seed is
+ * DERIVED from the candidate set (not a chosen constant), so identical input trees
+ * shuffle identically on every machine, and a different candidate set reshuffles.
+ * mulberry32 is a small, well-distributed PRNG; the Fisher-Yates itself is unchanged.
+ */
+function seededShuffle<T>(items: readonly T[], keyOf: (item: T) => string): T[] {
+  const seedHex = createHash('sha1')
+    .update([...items].map(keyOf).sort().join('\n'))
+    .digest('hex')
+    .slice(0, 8);
+  let state = parseInt(seedHex, 16) >>> 0;
+  // mulberry32
+  const next = (): number => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const shuffled = [...items];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(next() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
 
 // ============================================================================
 // TYPES
@@ -1132,13 +1165,14 @@ export class AnalysisArtifactGenerator {
       .filter(f => !phase2Paths.has(f.path))
       .filter(f => !isTestFile(f.path));
 
-    // FIX 3: Fisher-Yates shuffle (sort(() => Math.random()) est biaisé + mute le tableau original)
-    const shuffled = [...leafFiles];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    const validationFiles = shuffled.slice(0, this.options.maxValidationFiles);
+    // Seeded Fisher-Yates: spread the sample across leaves deterministically. The
+    // seed is derived from the sorted candidate paths, so two analyzes of an
+    // identical tree embed the SAME validation files in the SAME order — the
+    // artifact stays a pure function of the input (decision c6d1ad07).
+    const validationFiles = seededShuffle(leafFiles, f => f.path).slice(
+      0,
+      this.options.maxValidationFiles
+    );
 
     const phase3Files: LLMContextPhase['files'] = [];
     for (const file of validationFiles) {
