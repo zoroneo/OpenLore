@@ -278,14 +278,17 @@ export const DEFAULT_CHAT_OPENAI_MODEL = 'gpt-4o-mini';
 // ============================================================================
 
 /**
- * Minimum Node.js version required. The floor is 22.5, not 20: the EdgeStore
- * refactor moved onto `node:sqlite` / `DatabaseSync`, which is unavailable
- * before Node 22.5 (and matches `engines.node` in package.json). doctor checks
- * the minor version so a `.nvmrc`-pinned Node 20 shell fails fast with a clear
- * `nvm use` remediation instead of a cryptic module-load crash (Spec 26 B7).
+ * Minimum Node.js version required. The floor is 22.13, not 20: the EdgeStore
+ * refactor moved onto `node:sqlite` / `DatabaseSync`, which was available only
+ * behind `--experimental-sqlite` until Node 22.13.0 / 23.4.0 (unflagged in
+ * nodejs/node#55854) — and nothing in the tree passes that flag. Must equal
+ * `engines.node` in package.json and `MIN_NODE` in node-version-guard.ts (a test
+ * asserts all three). doctor checks the minor version AND probes `node:sqlite`
+ * so an unsupported Node fails fast with a clear `nvm use` remediation instead of
+ * a cryptic module-load crash (Spec 26 B7).
  */
 export const MIN_NODE_MAJOR_VERSION = 22;
-export const MIN_NODE_MINOR_VERSION = 5;
+export const MIN_NODE_MINOR_VERSION = 13;
 
 /** Analysis age (hours) beyond which doctor warns it may be stale */
 export const ANALYSIS_AGE_WARNING_HOURS = 24;

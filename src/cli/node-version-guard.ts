@@ -1,7 +1,7 @@
 /**
  * Fail-fast Node-version guard for the OpenLore CLI.
  *
- * Why this exists: OpenLore requires Node >=22.5, but OpenSpec requires only
+ * Why this exists: OpenLore requires Node >=22.13, but OpenSpec requires only
  * >=20.19. When OpenLore runs as an OpenSpec plugin, a user on Node 20/21 can run
  * `openspec lore generate`, which spawns `openlore` under a Node OpenLore does not
  * support. `engines` in package.json is advisory at install time and does NOT
@@ -14,30 +14,75 @@
  * commander and the heavy command modules. Keep it dependency-free.
  */
 
-/** Minimum supported Node. MUST stay in sync with package.json `engines.node`
- * (a test asserts this). */
-export const MIN_NODE = { major: 22, minor: 5 } as const;
+/** Minimum supported Node. This is the first line where `node:sqlite` — imported
+ * at module load by EdgeStore, the epistemic lease, and preflight scoring — is
+ * available WITHOUT `--experimental-sqlite` (unflagged in Node 22.13.0 / 23.4.0,
+ * nodejs/node#55854). MUST stay in sync with package.json `engines.node` and
+ * constants.ts's `MIN_NODE_*` (a test asserts all three). */
+export const MIN_NODE = { major: 22, minor: 13 } as const;
 
 /** Stable, dedicated exit code for "unsupported Node" (documented contract). */
 export const EXIT_UNSUPPORTED_NODE = 78;
+
+/** The builtin whose availability the runtime actually depends on. Version
+ * arithmetic is a proxy for this; the probe below asserts the real thing. */
+const REQUIRED_BUILTIN = 'node:sqlite';
 
 export interface NodeVersionCheck {
   ok: boolean;
   message?: string;
 }
 
-/** Pure version check — no side effects, so it is unit-testable. */
-export function checkNodeVersion(versionString: string = process.versions.node): NodeVersionCheck {
+/**
+ * Probe whether `node:sqlite` is actually loadable in THIS runtime, rather than
+ * inferring it from the version number. `process.getBuiltinModule` exists since
+ * Node 22.3 (below our floor), returns the builtin when available and `undefined`
+ * when it is not (e.g. still behind a flag on 23.0–23.3, or stripped from a distro
+ * build). Injectable so the capability path is unit-testable without a second Node. */
+export function isSqliteAvailable(
+  getBuiltinModule: (id: string) => unknown =
+    (process as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule?.bind(process) ??
+    (() => undefined),
+): boolean {
+  try {
+    return getBuiltinModule(REQUIRED_BUILTIN) != null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Version + capability check — no exit side effect, so it is unit-testable.
+ * Version arithmetic gates first (a clear "upgrade Node" message), then the
+ * capability probe has the final word: a version number that satisfies the floor
+ * but on which `node:sqlite` is not loadable still fails, naming the missing
+ * builtin. `probe` is injectable so both branches are testable on a capable host. */
+export function checkNodeVersion(
+  versionString: string = process.versions.node,
+  probe: () => boolean = () => isSqliteAvailable(),
+): NodeVersionCheck {
   const [major = 0, minor = 0] = versionString.split('.').map((p) => parseInt(p, 10));
-  const ok = major > MIN_NODE.major || (major === MIN_NODE.major && minor >= MIN_NODE.minor);
-  if (ok) return { ok: true };
-  return {
-    ok: false,
-    message:
-      `openlore requires Node >=${MIN_NODE.major}.${MIN_NODE.minor} but is running on Node ${versionString}. ` +
-      `Upgrade Node (e.g. via nvm or your package manager) and retry. ` +
-      `See https://github.com/clay-good/openlore#requirements`,
-  };
+  const versionOk = major > MIN_NODE.major || (major === MIN_NODE.major && minor >= MIN_NODE.minor);
+  if (!versionOk) {
+    return {
+      ok: false,
+      message:
+        `openlore requires Node >=${MIN_NODE.major}.${MIN_NODE.minor} but is running on Node ${versionString}. ` +
+        `Upgrade Node (e.g. via nvm or your package manager) and retry. ` +
+        `See https://github.com/clay-good/openlore#requirements`,
+    };
+  }
+  if (!probe()) {
+    return {
+      ok: false,
+      message:
+        `openlore requires the built-in ${REQUIRED_BUILTIN} module, which is unavailable on this Node ` +
+        `(${versionString}). Upgrade to Node >=${MIN_NODE.major}.${MIN_NODE.minor} where ${REQUIRED_BUILTIN} ` +
+        `is available without runtime flags, and retry. ` +
+        `See https://github.com/clay-good/openlore#requirements`,
+    };
+  }
+  return { ok: true };
 }
 
 /** Side-effecting guard: writes one stderr line and exits when Node is too old. */

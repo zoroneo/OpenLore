@@ -345,7 +345,7 @@ Checks performed:
 
 | Check | What it looks for |
 |-------|------------------|
-| Node.js version | ≥ 22.5 required (`node:sqlite`) |
+| Node.js version | ≥ 22.13 required, and `node:sqlite` probed as loadable |
 | Git repository | `.git` directory and `git` binary on PATH |
 | openlore config | `.openlore/config.json` exists and is parseable |
 | Analysis artifacts | `repo-structure.json` freshness (warns if >24h old) |
@@ -591,7 +591,8 @@ coherent with the `@fission-ai/openspec` peer-dep range), the help-only surfaced
 commands, the contributed skill, and `ownsConfigKeys: ["openlore"]`. See
 [OPENSPEC-INTEGRATION.md](OPENSPEC-INTEGRATION.md) for the full marketplace contract.
 
-> **Node-version guard.** OpenLore requires Node ≥22.5. The CLI checks this before
+> **Node-version guard.** OpenLore requires Node ≥22.13 (the first line where the
+> built-in `node:sqlite` is available without runtime flags). The CLI checks this before
 > any command runs; under an older Node it prints one stderr line naming the
 > required and actual versions and exits with the stable code **78** — never a
 > stack trace — so a host delegating to OpenLore (e.g. `openspec lore generate` on

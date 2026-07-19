@@ -16,6 +16,7 @@ import { readOpenLoreConfig, resolveOpenLoreConfigPath } from '../../core/servic
 import { validateOpenLoreConfig } from '../../core/services/config-schema.js';
 import { EdgeStore } from '../../core/services/edge-store.js';
 import { createLLMService, ProviderName } from '../../core/services/llm-service.js';
+import { isSqliteAvailable } from '../node-version-guard.js';
 import {
   MIN_NODE_MAJOR_VERSION,
   MIN_NODE_MINOR_VERSION,
@@ -70,11 +71,23 @@ interface CheckResult {
 async function checkNodeVersion(): Promise<CheckResult> {
   const [major, minor] = process.versions.node.split('.').map(Number);
   const min = `${MIN_NODE_MAJOR_VERSION}.${MIN_NODE_MINOR_VERSION}`;
-  const ok =
+  const versionOk =
     major > MIN_NODE_MAJOR_VERSION ||
     (major === MIN_NODE_MAJOR_VERSION && minor >= MIN_NODE_MINOR_VERSION);
-  if (ok) {
+  // Probe the capability itself, not just the version number: a Node whose version
+  // satisfies the floor but on which `node:sqlite` is not loadable (e.g. 23.0–23.3,
+  // or a stripped distro build) must not be blessed as `ok`.
+  const sqliteOk = isSqliteAvailable();
+  if (versionOk && sqliteOk) {
     return { name: 'Node.js version', status: 'ok', detail: `v${process.versions.node}` };
+  }
+  if (!sqliteOk) {
+    return {
+      name: 'Node.js version',
+      status: 'fail',
+      detail: `v${process.versions.node} — node:sqlite unavailable on this Node`,
+      fix: `Switch to Node ${min}+ (\`nvm use ${MIN_NODE_MAJOR_VERSION}\`) or install from https://nodejs.org/ — node:sqlite must be available without runtime flags or the MCP server will crash at first import`,
+    };
   }
   return {
     name: 'Node.js version',
