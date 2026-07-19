@@ -578,8 +578,15 @@ describe('tools/list payload budget (spec-28)', () => {
   // list tools (get_duplicate_report + the four list inventories). The opt-in
   // `detailed` escape is what lets the concise default be safe — a conscious
   // budget decision, not silent drift.
+  // Bumped 88_000 → 90_000 when the `locate_symbol_span` tool was added to the full
+  // surface (change: add-symbol-span-locator) — a read-only conclusion tool that
+  // returns a symbol's byte-exact edit span + a fresh/stale freshness verdict so the
+  // host applies an edit at offsets the substrate can vouch for. It joins ONLY the
+  // opt-in `full` surface; it stays OUT of the lean substrate/navigation default, so
+  // the lean prefix is unchanged. The residual is the genuine cost of its schema — a
+  // conscious budget decision, not silent drift.
   it('full surface stays within its prefix budget', () => {
-    expect(payloadBytes({ preset: 'full' })).toBeLessThan(88_000);
+    expect(payloadBytes({ preset: 'full' })).toBeLessThan(90_000);
   });
 
   it('the DEFAULT surface (no selector) is the substrate payload, well under the full one', () => {

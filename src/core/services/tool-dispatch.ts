@@ -31,6 +31,7 @@ import { handleCertifyPublicSurface } from './mcp-handlers/public-surface.js';
 import { handleGetStyleFingerprint } from './mcp-handlers/style-fingerprint.js';
 import { handleBriefingSince } from './mcp-handlers/briefing-since.js';
 import { handleFindClones } from './mcp-handlers/clone-query.js';
+import { handleLocateSymbolSpan } from './mcp-handlers/symbol-span.js';
 import { handleAnalyzeErrorPropagation } from './mcp-handlers/error-propagation.js';
 import { handleAnalyzeEnvImpact } from './mcp-handlers/env-impact.js';
 import type { TaskDescriptor } from './mcp-handlers/change-footprint.js';
@@ -414,6 +415,9 @@ async function dispatchToolImpl(
     const { directory, name: varName, maxDepth } =
       args as { directory: string; name?: string; maxDepth?: number };
     return handleAnalyzeEnvImpact({ directory, name: varName, maxDepth });
+  } else if (name === 'locate_symbol_span') {
+    const { directory, symbol } = args as { directory: string; symbol?: string };
+    return handleLocateSymbolSpan({ directory, symbol });
   }
   throw new UnknownToolError(name);
 }

@@ -241,7 +241,7 @@ A reviewer doesn't even need an agent: **`openlore review --base main`** compose
 
 ## Agent Cheat Sheet
 
-The default MCP surface is the **`substrate`** preset — 13 tools: the navigation graph-traversal core plus the three highest-value governance reads (`recall`, `verify_claim`, `blast_radius`), so an out-of-box agent gets the read face on top of navigation (the write face — `remember`, `record_decision` — stays opt-in via `--preset memory`/`minimal`/`full`). It cleared the DefaultSurfaceRevealsAllFaces benchmark — no task-completion or tool-selection regression vs. the lean core across two models and both repo tiers. The lean navigate-only **`navigation`** preset (10 tools) stays a one-flag escape (`--preset navigation`), and the full surface of **72 tools** is opt-in via `--preset full`. Every tool declares one of six **capability families** — `navigate` · `change` · `remember` · `verify` · `coordinate` · `federate` — surfaced in its MCP `annotations.family`, so a wide surface stays discoverable by family rather than as a flat list. Reach for the right tool by situation:
+The default MCP surface is the **`substrate`** preset — 13 tools: the navigation graph-traversal core plus the three highest-value governance reads (`recall`, `verify_claim`, `blast_radius`), so an out-of-box agent gets the read face on top of navigation (the write face — `remember`, `record_decision` — stays opt-in via `--preset memory`/`minimal`/`full`). It cleared the DefaultSurfaceRevealsAllFaces benchmark — no task-completion or tool-selection regression vs. the lean core across two models and both repo tiers. The lean navigate-only **`navigation`** preset (10 tools) stays a one-flag escape (`--preset navigation`), and the full surface of **73 tools** is opt-in via `--preset full`. Every tool declares one of six **capability families** — `navigate` · `change` · `remember` · `verify` · `coordinate` · `federate` — surfaced in its MCP `annotations.family`, so a wide surface stays discoverable by family rather than as a flat list. Reach for the right tool by situation:
 
 | Situation | Tool |
 |-----------|------|
@@ -264,7 +264,7 @@ The default MCP surface is the **`substrate`** preset — 13 tools: the navigati
 | "A lot changed since I last looked — what matters?" | `briefing_since` — changed symbols ranked by structural significance |
 | "Does a near-duplicate of this already exist to reuse?" | `find_clones` — edit-time, scoped clone query |
 
-Everything else (read a file, grep, list files) uses your native tools. Full reference — all 72 tools and parameters: [docs/mcp-tools.md](docs/mcp-tools.md).
+Everything else (read a file, grep, list files) uses your native tools. Full reference — all 73 tools and parameters: [docs/mcp-tools.md](docs/mcp-tools.md).
 
 ### Use OpenLore as a Claude Code Skill
 
@@ -306,7 +306,7 @@ Three layers, each usable independently:
 |-------|-------------|----------|
 | **1. Static Analysis** | Call graph, clusters, McCabe CC, IaC, external deps → `CODEBASE.md` digest | No |
 | **2. Spec & Governance** | Living specs, ADRs, drift detection, change certificates, decision & finding gates | For spec *generation* only |
-| **3. Agent Runtime** | 72 MCP tools — `orient()`, graph traversal, semantic search, verdicts & gates | No |
+| **3. Agent Runtime** | 73 MCP tools — `orient()`, graph traversal, semantic search, verdicts & gates | No |
 
 Use layer 1 alone for structural context. Add layer 2 for semantic intent and governance. Layer 3 keeps it all continuously accessible through graph-native MCP tools once `openlore mcp` is running.
 
@@ -329,7 +329,7 @@ flowchart TD
     Iac --> DB
     Dec --> DB
 
-    DB --> MCP[72 MCP tools<br/>orient · analyze_impact · certify · verify · enforce]
+    DB --> MCP[73 MCP tools<br/>orient · analyze_impact · certify · verify · enforce]
     MCP --> Agent((Coding Agent))
 
     Code -. optional, API key .-> Gen[openlore generate]
@@ -497,7 +497,7 @@ We'd rather you know these up front than discover them mid-task.
 | Topic | Doc |
 |-------|-----|
 | Full documentation index (task → canonical page) | [docs/README.md](docs/README.md) |
-| MCP tools reference (72 tools + parameters) | [docs/mcp-tools.md](docs/mcp-tools.md) |
+| MCP tools reference (73 tools + parameters) | [docs/mcp-tools.md](docs/mcp-tools.md) |
 | `openlore install` — auto-configure agent surfaces | [docs/install.md](docs/install.md) |
 | Agent setup (Claude Code, Cline, OpenCode, Vibe…) | [docs/agent-setup.md](docs/agent-setup.md) |
 | Agent benchmarks (methodology + per-task numbers) | [docs/AGENT-BENCHMARKS.md](docs/AGENT-BENCHMARKS.md) |
