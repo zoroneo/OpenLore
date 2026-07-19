@@ -1,10 +1,18 @@
 # Fix drift-gate blindness: uncommitted work always counts +0/-0, and ADR updates never suppress adr-gap
 
-> Status: PROPOSED (2026-07-08, e2e audit fifth pass). Two live-reproduced correctness holes
-> that make the drift gate blind exactly when it matters: line counts for staged/uncommitted
-> changes are always zero (so gap severity can never reach the hook's own threshold), and the
-> ADR-updated suppression compares two id formats that never match (so updating an ADR alongside
-> governed code still reports adr-gap).
+> Status: SHIPPED (2026-07-19, PR fix-drift-gate-blindness). Both holes closed: (a) `getChangedFiles`
+> now gathers `git diff --cached --numstat` and `git diff --numstat` and merges them per path (summed)
+> into the range numstat when `includeUnstaged` is set, so staged/working-tree changes carry real line
+> counts into `computeSeverity` and messages — no more forced +0/-0 → info; (b) a single exported
+> `normalizeADRId` helper is applied to both the extracted changed-ADR ids and the map-key comparison
+> in `detectADRGaps`, so "ADR-23"/"ADR-023"/"ADR-0023" resolve equal and updating a zero-padded ADR
+> suppresses its `adr-gap`. Both fixes live-dogfooded on this repo (a real working-tree change reported
+> `+46/-0` at `warning`; touching zero-padded ADR-0003 suppressed only its gap). Full suite green.
+>
+> Original defect summary (as PROPOSED, 2026-07-08, e2e audit fifth pass): two live-reproduced
+> correctness holes that made the drift gate blind exactly when it matters — line counts for
+> staged/uncommitted changes were always zero (so gap severity could never reach the hook's own
+> threshold), and the ADR-updated suppression compared two id formats that never matched.
 
 ## The defects
 

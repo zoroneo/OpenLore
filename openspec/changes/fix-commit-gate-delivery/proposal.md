@@ -9,6 +9,12 @@
 
 ## The gap
 
+> **Coordination note from `fix-drift-gate-blindness` (shipped):** there is a THIRD hooksPath-ignoring
+> installer this change's "both installers" wording does not name — the drift-hook installer in
+> `src/cli/commands/drift.ts:173-207` also hard-codes `<root>/.git/hooks/pre-commit`. The
+> `git rev-parse --git-path hooks` resolution below must extend to `drift.ts` as well, or the drift
+> gate stays inert under husky/lefthook after enforce/decisions are fixed.
+
 - **The gate can be silently inert.** `installEnforcementHook` joins `rootPath, '.git', 'hooks'`
   unconditionally (`enforce.ts:71-98`) and prints "installed at .git/hooks/pre-commit"
   (`enforce.ts:96`); the decisions-gate `installPreCommitHook` does the same

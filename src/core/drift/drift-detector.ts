@@ -337,6 +337,18 @@ export async function detectOrphanedSpecs(specMap: SpecMap, rootPath: string): P
 // ============================================================================
 
 /**
+ * Canonical ADR id form so that zero-padded and unpadded spellings of the same
+ * decision ("ADR-23", "ADR-023", "ADR-0023") compare equal. Applied on BOTH sides
+ * of ADR drift detection — the ids extracted from changed files and the ids keyed
+ * in the ADR map — so a padding mismatch can never defeat adr-gap suppression.
+ */
+export function normalizeADRId(id: string): string {
+  const match = id.match(/ADR-0*(\d+)/i);
+  if (!match) return id;
+  return `ADR-${match[1]}`;
+}
+
+/**
  * Extract ADR IDs that were changed in this changeset.
  * Matches files like: openspec/decisions/adr-0001-foo.md
  */
@@ -347,7 +359,7 @@ export function extractChangedADRIds(changedFiles: ChangedFile[], openspecRelPat
   for (const file of changedFiles) {
     const match = file.path.match(pattern);
     if (match) {
-      ids.add(`ADR-${match[1].replace(/^0+/, '') || '0'}`);
+      ids.add(normalizeADRId(`ADR-${match[1]}`));
     }
   }
   return ids;
@@ -368,6 +380,12 @@ export function detectADRGaps(
   const issues: DriftIssue[] = [];
   const reportedADRs = new Set<string>();
 
+  // Normalize the changed-ADR ids so suppression compares canonical forms on both
+  // sides — a zero-padding mismatch (map key "ADR-0023" vs extracted "ADR-23") must
+  // not defeat the "you updated the ADR" suppression below.
+  const changedADRIdsNormalized = new Set<string>();
+  for (const cid of changedADRIds) changedADRIdsNormalized.add(normalizeADRId(cid));
+
   // Collect all domains that have changed code
   const changedDomains = new Set<string>();
   for (const file of changedFiles) {
@@ -379,7 +397,7 @@ export function detectADRGaps(
 
   // For each ADR, check if any of its related domains had code changes
   for (const [id, mapping] of adrMap.byId) {
-    if (changedADRIds.has(id)) continue;
+    if (changedADRIdsNormalized.has(normalizeADRId(id))) continue;
     if (reportedADRs.has(id)) continue;
 
     const affectedDomains = mapping.relatedDomains.filter(d => changedDomains.has(d));

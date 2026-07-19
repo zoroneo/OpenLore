@@ -543,4 +543,37 @@ describe('getChangedFiles', () => {
     const testFile = result.files.find(f => f.path === 'a.test.ts');
     expect(testFile?.isTest).toBe(true);
   });
+
+  // Regression: uncommitted (staged/working-tree) changes must carry real line
+  // counts — before the fix they always fell through to +0/-0, so gap severity
+  // could never cross the pre-commit hook's threshold (drift-gate blindness).
+  it('carries real line counts for a staged-only change (not +0/-0)', async () => {
+    const big = Array.from({ length: 40 }, (_, i) => `const x${i} = ${i};`).join('\n') + '\n';
+    await writeFile(join(tmpDir, 'a.ts'), big, 'utf-8');
+    await execFileAsync('git', ['add', 'a.ts'], { cwd: tmpDir });
+    const result = await getChangedFiles({ rootPath: tmpDir, baseRef: 'HEAD', includeUnstaged: true });
+    const file = result.files.find(f => f.path === 'a.ts');
+    expect(file).toBeDefined();
+    expect(file!.additions).toBeGreaterThan(30);
+  });
+
+  it('carries real line counts for a working-tree-only change (not +0/-0)', async () => {
+    await writeFile(join(tmpDir, 'a.ts'), 'const a = 1;\nconst b = 2;\nconst c = 3;\n', 'utf-8');
+    const result = await getChangedFiles({ rootPath: tmpDir, baseRef: 'HEAD', includeUnstaged: true });
+    const file = result.files.find(f => f.path === 'a.ts');
+    expect(file).toBeDefined();
+    expect(file!.additions).toBeGreaterThan(0);
+  });
+
+  it('merges (sums) counts for a file both staged and modified in the working tree', async () => {
+    // Stage two added lines, then add two more unstaged lines to the same file.
+    await writeFile(join(tmpDir, 'a.ts'), 'const a = 1;\nconst b = 2;\nconst c = 3;\n', 'utf-8');
+    await execFileAsync('git', ['add', 'a.ts'], { cwd: tmpDir });
+    await writeFile(join(tmpDir, 'a.ts'), 'const a = 1;\nconst b = 2;\nconst c = 3;\nconst d = 4;\nconst e = 5;\n', 'utf-8');
+    const result = await getChangedFiles({ rootPath: tmpDir, baseRef: 'HEAD', includeUnstaged: true });
+    const file = result.files.find(f => f.path === 'a.ts');
+    expect(file).toBeDefined();
+    // staged diff (2 added) + working-tree diff (2 added) merged; never zero.
+    expect(file!.additions).toBeGreaterThanOrEqual(4);
+  });
 });
