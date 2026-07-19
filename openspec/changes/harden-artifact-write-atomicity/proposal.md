@@ -1,6 +1,12 @@
 # Harden JSON-artifact writes: atomic rename everywhere, one lock for concurrent writers
 
-> Status: PROPOSED (2026-07-03, e2e audit follow-up). `llm-context.json` and its sibling analysis
+> Status: IMPLEMENTED (2026-07-19). Both writers adopt the tree's existing `atomicWriteFile`
+> (temp + fsync + rename, `src/core/decisions/atomic-store.ts`) — the bare `writeFile`s and the
+> per-site inline `tmp + rename` sites are gone — and each writer's artifact-mutation section is
+> fenced by a new `withAnalysisLock` (a thin analysis-directory binding of the decision store's
+> lock shape in `lock.ts`, same constants). Guarded by `artifact-write-atomicity.test.ts` and the
+> analysis-lock cases in `lock.test.ts`. Originally proposed:
+> PROPOSED (2026-07-03, e2e audit follow-up). `llm-context.json` and its sibling analysis
 > artifacts are written with plain `writeFile` — no temp-file + atomic rename — by BOTH writers
 > (analyze's artifact generator and the watcher's read-patch-write persist), and the watcher can
 > spawn a concurrent full `analyze --force` against the same files. A crash or overlap yields a
