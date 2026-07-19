@@ -1,11 +1,21 @@
 # Guard decision status transitions: sync must never resurrect a rejected decision
 
-> Status: PROPOSED (2026-07-03, e2e audit follow-up). `sync_decisions` with an explicit `id`
-> promotes ANY decision to `approved` — including one a human explicitly rejected — and writes it
-> into the specs, defeating the approve/reject governance gate through its own sync tool. Add the
-> missing status-transition guard: a small explicit state machine over the decision lifecycle,
-> where `rejected → approved` requires an explicit human `approve_decision`, never a sync
-> side-effect.
+> Status: SHIPPED (2026-07-19). Implemented as one shared status-transition table
+> (`PROMOTABLE_TO_APPROVED` + `illegalPromotionToApproved()`) in `src/core/decisions/store.ts`,
+> adopted at ALL FOUR promotion-to-`approved` doors — the two MCP handlers (`handleApproveDecision`,
+> `handleSyncDecisions` id path), the embeddable API (`openloreSyncDecisions` ids path), and the CLI
+> `--approve`. A `rejected` decision now yields an honest error naming its status and the explicit
+> `re-record` reversal step (disclosing the prior review note); an already-`synced` decision is not
+> re-promoted; illegal transitions leave the store and spec files untouched. The scope was widened
+> beyond the proposal's original single-file target because the API and CLI carried the identical
+> resurrection hole — locking one of four doors would have been the exact silent-degradation
+> anti-pattern this audit exists to close. Legal lifecycle paths are byte-identical. Tests:
+> `store.test.ts` (the table), `decisions.test.ts` (MCP approve + sync), `api/decisions.test.ts`
+> (API door). Composes with `harden-decision-consolidation`'s CAS change at the same site (guard
+> decides legality; CAS commits). Originally proposed 2026-07-03 (e2e audit follow-up):
+> `sync_decisions` with an explicit `id` promoted ANY decision to `approved` — including one a
+> human explicitly rejected — and wrote it into the specs, defeating the approve/reject governance
+> gate through its own sync tool.
 
 ## The gap
 

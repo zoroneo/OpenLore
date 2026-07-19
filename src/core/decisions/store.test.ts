@@ -18,6 +18,8 @@ import {
   loadDecisionStore,
   saveDecisionStore,
   decisionsDir,
+  illegalPromotionToApproved,
+  PROMOTABLE_TO_APPROVED,
 } from './store.js';
 import type { PendingDecision, DecisionStore } from '../../types/index.js';
 
@@ -418,5 +420,38 @@ describe('saveDecisionStore', () => {
     await saveDecisionStore(tmpDir, store);
     const loaded = await loadDecisionStore(tmpDir);
     expect(loaded.updatedAt).not.toBe('2000-01-01T00:00:00.000Z');
+  });
+});
+
+// ── illegalPromotionToApproved (the status-transition table) ──────────────────
+// fix-decision-status-transitions: one explicit table over the full status
+// vocabulary decides which statuses may be promoted to `approved`.
+describe('illegalPromotionToApproved', () => {
+  it('allows every promotable status (legal lifecycle is unchanged)', () => {
+    for (const status of ['draft', 'consolidated', 'verified', 'phantom', 'approved', 'auto-approved'] as const) {
+      expect(PROMOTABLE_TO_APPROVED.has(status)).toBe(true);
+      expect(illegalPromotionToApproved('abc12345', status)).toBeNull();
+    }
+  });
+
+  it('refuses a rejected decision and names the required human step', () => {
+    const err = illegalPromotionToApproved('abc12345', 'rejected', 'not worth the infra');
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/rejected by a human/);
+    expect(err).toMatch(/not worth the infra/); // discloses the recorded verdict
+    expect(err).toMatch(/re-record/);           // the explicit reversal path
+    expect(PROMOTABLE_TO_APPROVED.has('rejected')).toBe(false);
+  });
+
+  it('refuses an already-synced decision', () => {
+    const err = illegalPromotionToApproved('abc12345', 'synced');
+    expect(err).toMatch(/already synced/);
+    expect(PROMOTABLE_TO_APPROVED.has('synced')).toBe(false);
+  });
+
+  it('omits the note clause when a rejected decision has no review note', () => {
+    const err = illegalPromotionToApproved('abc12345', 'rejected');
+    expect(err).toMatch(/rejected by a human and will not/);
+    expect(err).not.toMatch(/rejection note/);
   });
 });

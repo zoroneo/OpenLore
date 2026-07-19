@@ -406,6 +406,21 @@ describe('handleApproveDecision', () => {
     expect(store.decisions[0].status).toBe('synced');
   });
 
+  it('refuses to approve a rejected decision, surfacing the rejection note; store unchanged', async () => {
+    // fix-decision-status-transitions: approve_decision must never silently
+    // reverse a recorded human rejection. The reversal path is an explicit
+    // re-record, disclosed in the error.
+    const decision = makeDecision({ id: 'abc12345', status: 'rejected', reviewNote: 'Adds infra we do not want' });
+    await writeStore(tmpDir, makeStore({ decisions: [decision] }));
+
+    const result = await handleApproveDecision(tmpDir, 'abc12345') as { error: string };
+    expect(result.error).toMatch(/rejected by a human/);
+    expect(result.error).toMatch(/Adds infra we do not want/); // discloses the prior verdict
+    expect(result.error).toMatch(/re-record/);                 // names the explicit reversal step
+    const store = await readStore(tmpDir);
+    expect(store.decisions[0].status).toBe('rejected');        // verdict intact
+  });
+
   it('reports honestly (no false success) when the decision is removed during approval', async () => {
     // C9: the decision passes the pre-check, then a concurrent writer removes it
     // before the CAS commit. The handler must NOT claim success for a no-op patch.
@@ -564,5 +579,35 @@ describe('handleSyncDecisions', () => {
     const b = store.decisions.find((d) => d.id === 'bbbb2222');
     expect(a?.status).toBe('approved');
     expect(b?.status).toBe('draft');
+  });
+
+  it('cannot resurrect a rejected decision: sync(id) errors, store unchanged, no spec write', async () => {
+    // fix-decision-status-transitions: the sharpest instance — sync_decisions
+    // with an explicit id must not launder a human rejection into the specs.
+    vi.mocked(readOpenLoreConfig).mockResolvedValue({ openspecPath: 'openspec' } as never);
+    vi.mocked(syncApprovedDecisions).mockClear();
+    const decision = makeDecision({ id: 'abc12345', status: 'rejected', reviewNote: 'Rejected on review' });
+    await writeStore(tmpDir, makeStore({ decisions: [decision] }));
+
+    const result = await handleSyncDecisions(tmpDir, false, 'abc12345') as { error: string };
+    expect(result.error).toMatch(/rejected by a human/);       // names the current status
+    expect(result.error).toMatch(/re-record/);                 // names the required human step
+    // No promotion committed, and the sync/spec-write path never ran.
+    const store = await readStore(tmpDir);
+    expect(store.decisions[0].status).toBe('rejected');
+    expect(syncApprovedDecisions).not.toHaveBeenCalled();
+  });
+
+  it('does not re-promote an already-synced decision via sync(id)', async () => {
+    vi.mocked(readOpenLoreConfig).mockResolvedValue({ openspecPath: 'openspec' } as never);
+    vi.mocked(syncApprovedDecisions).mockClear();
+    const decision = makeDecision({ id: 'abc12345', status: 'synced' });
+    await writeStore(tmpDir, makeStore({ decisions: [decision] }));
+
+    const result = await handleSyncDecisions(tmpDir, false, 'abc12345') as { error: string };
+    expect(result.error).toMatch(/already synced/);
+    const store = await readStore(tmpDir);
+    expect(store.decisions[0].status).toBe('synced');
+    expect(syncApprovedDecisions).not.toHaveBeenCalled();
   });
 });

@@ -24,6 +24,7 @@ import {
   upsertDecisions,
   applyConsolidationResult,
   makeDecisionId,
+  illegalPromotionToApproved,
 } from '../core/decisions/store.js';
 import { consolidateDrafts } from '../core/decisions/consolidator.js';
 import type { ProviderName } from '../utils/command-helpers.js';
@@ -223,6 +224,16 @@ export async function openloreSyncDecisions(
 
   // Optionally filter to specific IDs
   if (options.ids?.length) {
+    // Transition guard: refuse to promote a rejected (or already-synced)
+    // decision to approved — one requested id with an illegal transition fails
+    // the whole sync, leaving the store and spec files unchanged, rather than
+    // resurrecting a recorded human verdict.
+    for (const reqId of options.ids) {
+      const d = store.decisions.find((x) => x.id === reqId);
+      if (!d) continue;
+      const illegal = illegalPromotionToApproved(reqId, d.status, d.reviewNote);
+      if (illegal) throw new Error(illegal);
+    }
     store = {
       ...store,
       decisions: store.decisions.map((d) =>
