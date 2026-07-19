@@ -325,8 +325,20 @@ export class McpWatcher {
         if (watched(absPath)) this.enqueueDeletion(absPath);
       });
 
-      this.fsWatcher.on('ready', () => resolve());
-      this.fsWatcher.on('error', (err: unknown) => reject(err));
+      let watcherReady = false;
+      this.fsWatcher.on('ready', () => { watcherReady = true; resolve(); });
+      this.fsWatcher.on('error', (err: unknown) => {
+        // Before 'ready', an error is a setup failure — reject the start promise.
+        // After 'ready', the promise is already settled, so reject() is a silent
+        // no-op (the pre-hardening behavior). An async watcher error must never
+        // pass silently on the long-lived host: disclose once and keep serving —
+        // pending file changes are still caught at the next full analyze.
+        if (!watcherReady) { reject(err); return; }
+        process.stderr.write(
+          `[mcp-watcher] source watcher error (${(err as Error)?.message ?? String(err)}); ` +
+          `continuing — changes may lag until the next analyze\n`
+        );
+      });
     });
 
     // Best-effort VCS-flood detection (Step 5): a branch switch / rebase / merge
@@ -350,6 +362,22 @@ export class McpWatcher {
         if (base === 'HEAD' || base === 'MERGE_HEAD' || base === 'ORIG_HEAD') {
           this.scheduleGraphRebuild('head-change');
         }
+      });
+      // A .git ref watch is a best-effort optimization; an ASYNC chokidar 'error'
+      // (FD pressure, a locked .git/index, ref churn during a rebase) is emitted
+      // AFTER this synchronous try/catch returns. Without a listener it surfaces
+      // as an unhandled 'error' event and throws — fatal for the warm daemon every
+      // connected agent shares. Disclose once, release the failed watcher, and
+      // degrade to the batch-size VCS-flood threshold in handleBatch (the same
+      // fallback the catch block below promises when setup fails).
+      this.gitWatcher.on('error', (err: unknown) => {
+        process.stderr.write(
+          `[mcp-watcher] .git ref watcher error (${(err as Error)?.message ?? String(err)}); ` +
+          `VCS-flood detection falling back to the batch-size threshold\n`
+        );
+        const failed = this.gitWatcher;
+        this.gitWatcher = undefined;
+        void failed?.close().catch(() => { /* already gone */ });
       });
     } catch {
       // no .git, or watch failed — VCS detection falls back to the batch-size

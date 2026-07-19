@@ -1,6 +1,20 @@
 # Harden runtime event resilience: an async 'error' event must not kill a long-lived process
 
-> Status: PROPOSED (2026-07-03, e2e audit follow-up). Two long-lived paths register Node
+> Status: IMPLEMENTED (2026-07-19). The `.git` ref watcher now registers an `'error'` listener
+> (`mcp-watcher.ts`) that discloses once, releases the failed watcher, and degrades to the
+> batch-size VCS-flood fallback the surrounding catch already promised — an async chokidar error
+> can no longer surface as an unhandled `'error'` event and kill the warm daemon. The source
+> watcher's post-`ready` errors, which could only hit a no-op `reject` on a settled promise, are
+> now disclosed instead of silently swallowed. The `telemetry --live` tail was extracted into a
+> testable `tailTelemetryFile` that (a) attaches a stream `'error'` handler clearing the in-flight
+> guard so the file retries on the next event, and (b) detects rotation structurally — a current
+> file size below the stored offset means the file was rotated and restarted small, so the offset
+> resets to 0 instead of reading silently past EOF forever. Three test files pin it: watcher-error
+> survival + post-ready disclosure (real-EventEmitter chokidar mock so `emit('error')` reproduces
+> Node's throw-on-no-listener), tail stream-error + rotation-reset, and a grep-shaped coverage
+> guard that fails naming any long-lived `chokidar.watch` / read-stream site missing its `'error'`
+> listener. No new tuning constant (rotation detection is `size < offset`, a structural fact).
+> Originally proposed (2026-07-03, e2e audit follow-up). Two long-lived paths register Node
 > event emitters without an `'error'` listener. The MCP watcher's `.git` ref watcher can
 > crash the warm serve daemon / MCP server outright — an unhandled `'error'` event on an
 > EventEmitter throws, and these processes install no `uncaughtException` handler, so Node's
