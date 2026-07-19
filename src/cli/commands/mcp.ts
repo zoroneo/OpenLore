@@ -1783,6 +1783,31 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'locate_symbol_span',
+    description:
+      'USE THIS WHEN: you know WHICH symbol to edit and need the byte-exact location to apply the edit at — ' +
+      'instead of re-finding it by string-matching a fresh read (wrong-overload hits, duplicated snippets, ' +
+      'whitespace drift). Resolves `symbol` (a function name, or name::path to disambiguate — the same ' +
+      'addressing as find_clones) and returns the span (startByte/endByte as UTF-16 code-unit offsets + ' +
+      '1-based startLine/endLine) plus a freshness VERDICT: `fresh` (the index still matches the file — the ' +
+      'offsets are safe to edit at, with a contentHash integrity token), `stale` (the file changed since ' +
+      'analysis — returns a re-analyze hint and NO offset, refusing to hand out a location the substrate can ' +
+      'no longer vouch for), `ambiguous` (a bare name matching several symbols → the name::path candidate ' +
+      'list), or `not-found` (unknown symbol → candidates). Unlike suggest_insertion_points (which RANKS where ' +
+      'to ADD new code) this pinpoints an EXISTING symbol\'s current bytes to modify. READ-ONLY: OpenLore ' +
+      'returns the location and the freshness guarantee; the host applies the write with its own edit tool — ' +
+      'no write face, no shell. Computed live from the cached graph + a re-read of the one file the symbol ' +
+      'spans (no new artifact). Deterministic, offline, no LLM. Run analyze_codebase first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: DIR_DESC },
+        symbol: { type: 'string', description: 'The symbol to locate: its name, or name::path to disambiguate.' },
+      },
+      required: ['directory', 'symbol'],
+    },
+  },
+  {
     name: 'analyze_error_propagation',
     description:
       'USE THIS WHEN: you are about to call a function and want to know "what exceptions can blow out ' +
@@ -2092,6 +2117,7 @@ const TOOL_ANNOTATIONS: Record<string, typeof _RO | typeof _RWI | typeof _RW> = 
   find_clones: _RO,
   analyze_error_propagation: _RO,
   analyze_env_impact: _RO,
+  locate_symbol_span: _RO,
 };
 
 // Tools that touch external entities (LLM / network) → openWorldHint: true.

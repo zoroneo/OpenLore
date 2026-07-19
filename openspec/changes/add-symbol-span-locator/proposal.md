@@ -1,6 +1,8 @@
 # Symbol span locator: a read-only, staleness-checked edit location the host can trust
 
-> Status: PROPOSED (2026-07-03, e2e audit; reframed 2026-07-18). The original draft added
+> Status: IMPLEMENTED (2026-07-18; proposed 2026-07-03, e2e audit; reframed 2026-07-18). Ships the
+> read-only `locate_symbol_span` tool on `--preset full` (tool count 72→73). Awaiting merge +
+> `openspec archive`. The original draft added
 > source-*writing* tools (`replace_symbol_body`, `insert_before/after_symbol`) framed as closing
 > "the largest surface gap vs. Serena MCP." That gives OpenLore a write/edit face — neither memory
 > nor guardrail, and a duplicate of the write surface the agent host already owns. Reframed to keep

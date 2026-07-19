@@ -158,6 +158,7 @@ const TOOL_WEIGHTS: Record<string, number> = {
   get_signatures: 2,
   get_function_body: 2,
   get_function_skeleton: 2,
+  locate_symbol_span: 2, // ← get_function_body (2) — single-symbol span read + freshness hash
   get_mapping: 2,
   get_test_coverage: 2,
   get_route_inventory: 2,
