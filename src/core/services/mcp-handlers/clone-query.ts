@@ -108,6 +108,7 @@ export async function handleFindClones(input: FindClonesInput): Promise<unknown>
   let queryBody: string;
   let queryLineCount: number;
   let exclude: { filePath: string; startIndex: number; endIndex: number } | undefined;
+  let queryLanguage: string | undefined;
   let queryLabel: Record<string, unknown>;
 
   if (hasSymbol) {
@@ -169,6 +170,7 @@ export async function handleFindClones(input: FindClonesInput): Promise<unknown>
     const endLine = node.endLine ?? startLine + queryBody.split('\n').length - 1;
     queryLineCount = endLine - startLine + 1;
     exclude = { filePath: node.filePath, startIndex: node.startIndex, endIndex: node.endIndex };
+    queryLanguage = node.language;
     queryLabel = {
       mode: 'symbol',
       symbol: `${node.name}::${node.filePath}`,
@@ -190,6 +192,7 @@ export async function handleFindClones(input: FindClonesInput): Promise<unknown>
     minSimilarity: input.minSimilarity,
     limit,
     exclude,
+    queryLanguage,
   });
 
   if (result.belowThreshold) {
