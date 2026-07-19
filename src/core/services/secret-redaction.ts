@@ -25,7 +25,11 @@ const SECRET_VALUE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/sk-ant-[A-Za-z0-9\-_]{10,}/g, '[REDACTED]'],
   [/sk-[A-Za-z0-9\-_]{20,}/g, '[REDACTED]'],
   [/Bearer\s+\S{10,}/g, 'Bearer [REDACTED]'],
-  [/Authorization:\s*\S+/gi, 'Authorization: [REDACTED]'],
+  // Consume the ENTIRE header value — scheme plus credential — to end of line/value, so
+  // Basic/Digest/any spaced-credential scheme redacts as fully as Bearer. `\S+` would keep
+  // only the scheme and leave the credential behind. The Bearer-specific pattern above still
+  // covers bare `Bearer <token>` occurrences outside a header context.
+  [/Authorization:[^\n\r]*/gi, 'Authorization: [REDACTED]'],
   [/api[_-]?key["']?\s*[=:]\s*["']?\S{8,}/gi, 'api_key=[REDACTED]'],
   // Google-style `?key=...` in a provider URL (e.g. Gemini generateContent).
   [/([?&]key=)[A-Za-z0-9\-_]{8,}/gi, '$1[REDACTED]'],
@@ -43,20 +47,27 @@ export function redactSecretString(s: string): string {
  * - strings → credential-shaped substrings replaced;
  * - object fields whose KEY name denotes a secret → value replaced with `[REDACTED]`;
  * - arrays/objects → walked recursively.
- * Returns a redacted copy; the input is not mutated. Cycle-safe.
+ * Returns a redacted copy; the input is not mutated. Cycle-safe: a back-reference resolves
+ * to the already-created redacted twin of the visited node, never to the original — so the
+ * output graph never embeds an un-scrubbed subtree.
  */
-export function redactSecrets<T>(value: T, _seen?: WeakSet<object>): T {
+export function redactSecrets<T>(value: T, _seen?: WeakMap<object, unknown>): T {
   if (typeof value === 'string') return redactSecretString(value) as unknown as T;
   if (value === null || typeof value !== 'object') return value;
 
-  const seen = _seen ?? new WeakSet<object>();
-  if (seen.has(value as object)) return value; // break cycles
-  seen.add(value as object);
+  // original → redacted twin, registered BEFORE recursing so a cycle closing on this node
+  // resolves to the (in-progress) redacted copy, not the unredacted original.
+  const seen = _seen ?? new WeakMap<object, unknown>();
+  if (seen.has(value as object)) return seen.get(value as object) as T;
 
   if (Array.isArray(value)) {
-    return value.map((v) => redactSecrets(v, seen)) as unknown as T;
+    const copy: unknown[] = [];
+    seen.set(value as object, copy);
+    for (const v of value) copy.push(redactSecrets(v, seen));
+    return copy as unknown as T;
   }
   const out: Record<string, unknown> = {};
+  seen.set(value as object, out);
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     if (typeof v === 'string' && SECRET_KEY_NAME.test(k)) {
       out[k] = '[REDACTED]';
