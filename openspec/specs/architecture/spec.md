@@ -151,6 +151,68 @@ readable but held by a writer) is NOT corruption and SHALL be surfaced for retry
 - **THEN** the result is the disclosed not-ready conclusion, never an empty graph served as if the
   codebase had no functions
 
+### Requirement: ArtifactWritesAreAtomic
+
+Every persisted analysis artifact (the JSON/Markdown/Mermaid set under the analysis output
+directory — `llm-context.json`, `repo-structure.json`, `SUMMARY.md`, `dependencies.mermaid`, the
+inventory/style/parse-health/duplicates/refactor artifacts, and `dependency-graph.json`) SHALL be
+written via a single shared atomic-write discipline: the payload goes to a uniquely-named temporary
+file in the same directory, is `fsync`'d, and is moved into place with an atomic rename (the same
+`atomicWriteFile` primitive the durable stores use, `src/core/decisions/atomic-store.ts`). At no
+observable moment SHALL an artifact exist on disk truncated or partially written — a crash or kill
+mid-write leaves either the previous complete artifact or the new complete one. The discipline SHALL
+have ONE implementation adopted by ALL writers — the analyze artifact generator
+(`src/core/analyzer/artifact-generator.ts`) and the watcher's persist path
+(`src/core/services/mcp-watcher.ts`) alike — replacing every bare `writeFile` and every per-site
+inline `tmp + rename`. Guarded by `artifact-write-atomicity.test.ts` (writer adoption) and
+`atomic-store.test.ts` (the primitive's durability).
+
+#### Scenario: A crash mid-write cannot tear the artifact
+- **GIVEN** a writer persisting `llm-context.json` is killed partway through
+- **WHEN** a reader (MCP cache load, CLI command) next opens the artifact
+- **THEN** it parses a complete artifact — the previous or the new version — and never falls back
+  to "re-run analyze" because of a truncated file
+
+#### Scenario: One atomic-write implementation, all writers
+- **GIVEN** the analyze artifact generator and the watcher both persist artifacts
+- **WHEN** either writes any artifact in the set
+- **THEN** the write goes through the shared same-directory temp + rename helper, not a bare
+  `writeFile` and not a per-site inline rename
+
+### Requirement: ConcurrentArtifactWritersSerialize
+
+Concurrent writers of the analysis artifact set (a running watcher's read-patch-write and a full
+`analyze` — including the watcher's own self-heal `analyze --force` spawn) SHALL serialize their
+artifact-write critical sections behind a cross-process advisory lock reusing the decision store's
+established lock shape (exclusive-create lock file, stale-lock steal, bounded wait, best-effort
+proceed on timeout) with its existing constants — no second locking mechanism and no new tuning
+values. The lock SHALL be keyed on the analysis output directory (its file living inside that
+directory) so two writers of the same directory contend and writers of different directories do
+not. Each writer's whole artifact-mutation section — the analyze save-set, and the watcher's change
+and deletion lanes — SHALL be one locked critical section, so overlap resolves to one writer's
+complete, self-consistent output followed by the other's, never an interleaving of the two. The
+per-artifact persist helper SHALL remain lock-free (it runs inside a lane that already holds the
+lock), so a lane never re-acquires the lock it holds. Implemented in `src/core/decisions/lock.ts`
+(`acquireAnalysisLock`/`withAnalysisLock`); guarded by `lock.test.ts`.
+
+#### Scenario: Watcher self-heal does not race the watcher
+- **GIVEN** a watcher that has spawned a detached `analyze --force` while continuing to serve and
+  persist
+- **WHEN** both processes reach their artifact-write sections
+- **THEN** the lock serializes them; the final on-disk artifact set is one writer's complete,
+  self-consistent output — never an interleaving of the two
+
+#### Scenario: A crashed lock holder does not wedge analysis
+- **GIVEN** a writer that died holding the analysis lock
+- **WHEN** the next writer arrives after the stale threshold
+- **THEN** it steals the lock and proceeds, matching the decision store's documented recovery
+  behavior
+
+#### Scenario: The analysis lock is independent of the decisions lock
+- **GIVEN** a consolidation holding the decisions lock
+- **WHEN** an analyze or watcher persist takes the analysis lock
+- **THEN** it does not wait on the decisions lock — the two are distinct files and never contend
+
 ### Requirement: AdditiveBitemporalMemorySchema
 
 The memory record schema SHALL be extended additively with optional bitemporal fields:

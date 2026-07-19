@@ -3,10 +3,10 @@
  * `decisions --consolidate` processes from clobbering pending.json.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile, utimes, stat } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, utimes, stat, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acquireDecisionsLock, isDecisionsLockHeld } from './lock.js';
+import { acquireDecisionsLock, isDecisionsLockHeld, acquireAnalysisLock, withAnalysisLock } from './lock.js';
 import { decisionsDir } from './store.js';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -99,4 +99,94 @@ describe('isDecisionsLockHeld', () => {
     const release2 = await p2;
     await release2();
   });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// acquireAnalysisLock / withAnalysisLock — the analysis-artifact lock, same
+// shape and constants as the decisions lock, keyed on the analysis output dir
+// (change: harden-artifact-write-atomicity).
+// ════════════════════════════════════════════════════════════════════════════
+describe('acquireAnalysisLock', () => {
+  it('places its lock file (.artifacts.lock) INSIDE the analysis directory it is given', async () => {
+    const analysisDir = join(root, '.openlore', 'analysis');
+    const release = await acquireAnalysisLock(analysisDir);
+    await expect(access(join(analysisDir, '.artifacts.lock'))).resolves.toBeUndefined();
+    await release();
+    await expect(access(join(analysisDir, '.artifacts.lock'))).rejects.toThrow();
+  });
+
+  it('serializes: a second acquire on the same directory waits until the first releases', async () => {
+    const analysisDir = join(root, 'analysis');
+    const release1 = await acquireAnalysisLock(analysisDir);
+    let acquired2 = false;
+    const p2 = acquireAnalysisLock(analysisDir).then((r) => { acquired2 = true; return r; });
+
+    await sleep(450); // > poll interval (150ms): the second acquire must still be blocked
+    expect(acquired2).toBe(false);
+
+    await release1();
+    const release2 = await p2;
+    expect(acquired2).toBe(true);
+    await release2();
+  });
+
+  it('is independent from the decisions lock — holding one never blocks the other', async () => {
+    // Different lock files (and directories), so a running consolidation and a
+    // running analyze/persist do not contend.
+    const analysisDir = join(root, 'analysis');
+    const relDec = await acquireDecisionsLock(root);
+    const t0 = Date.now();
+    const relAna = await acquireAnalysisLock(analysisDir); // must NOT wait on the decisions lock
+    expect(Date.now() - t0).toBeLessThan(300);
+    await relAna();
+    await relDec();
+  });
+
+  it('steals a stale analysis lock left by a crashed holder', async () => {
+    const analysisDir = join(root, 'analysis');
+    await mkdir(analysisDir, { recursive: true });
+    const lockPath = join(analysisDir, '.artifacts.lock');
+    await writeFile(lockPath, '99999 crashed');
+    const old = (Date.now() - 200_000) / 1000; // 200s ago > STALE_MS (120s)
+    await utimes(lockPath, old, old);
+
+    const release = await acquireAnalysisLock(analysisDir); // steals, returns promptly
+    await stat(lockPath); // ours now
+    await release();
+  }, 10_000);
+});
+
+describe('withAnalysisLock — set-level serialization', () => {
+  it('never lets two set-writers of the same directory interleave', async () => {
+    // Each "writer" persists a 3-file artifact set, yielding between files so an
+    // unguarded pair WOULD interleave. Under the lock the critical sections run
+    // strictly one-after-another, so the observed event log is never interleaved
+    // and the final set is one writer's homogeneous output.
+    const analysisDir = join(root, 'analysis');
+    await mkdir(analysisDir, { recursive: true });
+    const log: string[] = [];
+
+    const writer = (id: string) => withAnalysisLock(analysisDir, async () => {
+      log.push(`${id}:start`);
+      for (const name of ['a.json', 'b.json', 'c.json']) {
+        await writeFile(join(analysisDir, name), id);
+        await sleep(15); // force a yield window an unguarded writer would exploit
+      }
+      log.push(`${id}:end`);
+    });
+
+    await Promise.all([writer('A'), writer('B')]);
+
+    // No interleaving: every start is immediately followed by its own end.
+    const first = log[0].split(':')[0];
+    const second = first === 'A' ? 'B' : 'A';
+    expect(log).toEqual([`${first}:start`, `${first}:end`, `${second}:start`, `${second}:end`]);
+
+    // The set is homogeneous — the second writer fully overwrote the first, so no
+    // file carries a different writer's id than its siblings.
+    const contents = await Promise.all(
+      ['a.json', 'b.json', 'c.json'].map((n) => readFile(join(analysisDir, n), 'utf-8')),
+    );
+    expect(new Set(contents).size).toBe(1);
+  }, 10_000);
 });

@@ -5,8 +5,10 @@
  * that will be consumed by the LLM generation phase and optionally by humans.
  */
 
-import { writeFile, mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join, basename, isAbsolute } from 'node:path';
+import { atomicWriteFile } from '../decisions/atomic-store.js';
+import { withAnalysisLock } from '../decisions/lock.js';
 import {
   TOKENS_PER_CHAR_DEFAULT,
   PHASE2_FILE_CONTENT_MAX_CHARS,
@@ -321,93 +323,100 @@ export class AnalysisArtifactGenerator {
     // Ensure output directory exists
     await mkdir(this.options.outputDir, { recursive: true });
 
-    // Save each artifact
-    const saves: Promise<void>[] = [
-      writeFile(
-        join(this.options.outputDir, ARTIFACT_REPO_STRUCTURE),
-        JSON.stringify(artifacts.repoStructure, null, 2)
-      ),
-      writeFile(
-        join(this.options.outputDir, 'SUMMARY.md'),
-        artifacts.summaryMarkdown
-      ),
-      writeFile(
-        join(this.options.outputDir, 'dependencies.mermaid'),
-        artifacts.dependencyDiagram
-      ),
-      writeFile(
-        join(this.options.outputDir, ARTIFACT_LLM_CONTEXT),
-        // Strip the CFG/def-use overlay before persisting: it is DB-only and must
-        // never enter the resident llm-context.json or the hot cache (spec:
-        // add-intraprocedural-cfg-dataflow-overlay).
-        JSON.stringify({ ...artifacts.llmContext, cfgs: undefined }, null, 2)
-      ),
-    ];
+    // The artifact-write critical section runs under the analysis lock so a concurrent
+    // writer of the same directory — a watcher's persist, or the watcher's own self-heal
+    // `analyze --force` — cannot interleave its set with ours (change:
+    // harden-artifact-write-atomicity). Each individual write is already atomic (temp +
+    // rename via atomicWriteFile); the lock adds set-level serialization on top.
+    await withAnalysisLock(this.options.outputDir, async () => {
+      // Save each artifact
+      const saves: Promise<void>[] = [
+        atomicWriteFile(
+          join(this.options.outputDir, ARTIFACT_REPO_STRUCTURE),
+          JSON.stringify(artifacts.repoStructure, null, 2)
+        ),
+        atomicWriteFile(
+          join(this.options.outputDir, 'SUMMARY.md'),
+          artifacts.summaryMarkdown
+        ),
+        atomicWriteFile(
+          join(this.options.outputDir, 'dependencies.mermaid'),
+          artifacts.dependencyDiagram
+        ),
+        atomicWriteFile(
+          join(this.options.outputDir, ARTIFACT_LLM_CONTEXT),
+          // Strip the CFG/def-use overlay before persisting: it is DB-only and must
+          // never enter the resident llm-context.json or the hot cache (spec:
+          // add-intraprocedural-cfg-dataflow-overlay).
+          JSON.stringify({ ...artifacts.llmContext, cfgs: undefined }, null, 2)
+        ),
+      ];
 
-    if (enrichment?.schemas) {
-      saves.push(writeFile(
-        join(this.options.outputDir, ARTIFACT_SCHEMA_INVENTORY),
-        JSON.stringify(enrichment.schemas, null, 2)
-      ));
-    }
+      if (enrichment?.schemas) {
+        saves.push(atomicWriteFile(
+          join(this.options.outputDir, ARTIFACT_SCHEMA_INVENTORY),
+          JSON.stringify(enrichment.schemas, null, 2)
+        ));
+      }
 
-    if (enrichment?.uiComponents) {
-      saves.push(writeFile(
-        join(this.options.outputDir, ARTIFACT_UI_INVENTORY),
-        JSON.stringify(enrichment.uiComponents, null, 2)
-      ));
-    }
+      if (enrichment?.uiComponents) {
+        saves.push(atomicWriteFile(
+          join(this.options.outputDir, ARTIFACT_UI_INVENTORY),
+          JSON.stringify(enrichment.uiComponents, null, 2)
+        ));
+      }
 
-    if (enrichment?.routeInventory) {
-      saves.push(writeFile(
-        join(this.options.outputDir, ARTIFACT_ROUTE_INVENTORY),
-        JSON.stringify(enrichment.routeInventory, null, 2)
-      ));
-    }
+      if (enrichment?.routeInventory) {
+        saves.push(atomicWriteFile(
+          join(this.options.outputDir, ARTIFACT_ROUTE_INVENTORY),
+          JSON.stringify(enrichment.routeInventory, null, 2)
+        ));
+      }
 
-    if (enrichment?.middleware) {
-      const { ARTIFACT_MIDDLEWARE_INVENTORY } = await import('../../constants.js');
-      saves.push(writeFile(
-        join(this.options.outputDir, ARTIFACT_MIDDLEWARE_INVENTORY),
-        JSON.stringify(enrichment.middleware, null, 2)
-      ));
-    }
+      if (enrichment?.middleware) {
+        const { ARTIFACT_MIDDLEWARE_INVENTORY } = await import('../../constants.js');
+        saves.push(atomicWriteFile(
+          join(this.options.outputDir, ARTIFACT_MIDDLEWARE_INVENTORY),
+          JSON.stringify(enrichment.middleware, null, 2)
+        ));
+      }
 
-    if (enrichment?.envVars) {
-      const { ARTIFACT_ENV_INVENTORY } = await import('../../constants.js');
-      saves.push(writeFile(
-        join(this.options.outputDir, ARTIFACT_ENV_INVENTORY),
-        JSON.stringify(enrichment.envVars, null, 2)
-      ));
-    }
+      if (enrichment?.envVars) {
+        const { ARTIFACT_ENV_INVENTORY } = await import('../../constants.js');
+        saves.push(atomicWriteFile(
+          join(this.options.outputDir, ARTIFACT_ENV_INVENTORY),
+          JSON.stringify(enrichment.envVars, null, 2)
+        ));
+      }
 
-    // Style fingerprint (change: add-codebase-style-fingerprint) — its own artifact so the hot
-    // llm-context.json stays lean. Absent when no supported language is present. Fail-soft: a
-    // descriptive side artifact must never reject `Promise.all(saves)` and thereby abort analysis
-    // or skip the SQLite edge-store write below — so its write failure is swallowed (matching the
-    // non-fatal treatment of the edge store), unlike the source-of-truth artifacts above.
-    if (artifacts.styleFingerprint) {
-      saves.push(
-        writeFile(
-          join(this.options.outputDir, ARTIFACT_STYLE_FINGERPRINT),
-          JSON.stringify(artifacts.styleFingerprint, null, 2)
-        ).catch(() => {})
-      );
-    }
+      // Style fingerprint (change: add-codebase-style-fingerprint) — its own artifact so the hot
+      // llm-context.json stays lean. Absent when no supported language is present. Fail-soft: a
+      // descriptive side artifact must never reject `Promise.all(saves)` and thereby abort analysis
+      // or skip the SQLite edge-store write below — so its write failure is swallowed (matching the
+      // non-fatal treatment of the edge store), unlike the source-of-truth artifacts above.
+      if (artifacts.styleFingerprint) {
+        saves.push(
+          atomicWriteFile(
+            join(this.options.outputDir, ARTIFACT_STYLE_FINGERPRINT),
+            JSON.stringify(artifacts.styleFingerprint, null, 2)
+          ).catch(() => {})
+        );
+      }
 
-    // Parse health (change: add-parse-health-boundary-disclosure) — its own artifact, absent on a
-    // clean repo. Same fail-soft treatment as the style fingerprint: a disclosure side artifact must
-    // never abort analysis, so its write failure is swallowed.
-    if (artifacts.parseHealth) {
-      saves.push(
-        writeFile(
-          join(this.options.outputDir, ARTIFACT_PARSE_HEALTH),
-          JSON.stringify(artifacts.parseHealth, null, 2)
-        ).catch(() => {})
-      );
-    }
+      // Parse health (change: add-parse-health-boundary-disclosure) — its own artifact, absent on a
+      // clean repo. Same fail-soft treatment as the style fingerprint: a disclosure side artifact must
+      // never abort analysis, so its write failure is swallowed.
+      if (artifacts.parseHealth) {
+        saves.push(
+          atomicWriteFile(
+            join(this.options.outputDir, ARTIFACT_PARSE_HEALTH),
+            JSON.stringify(artifacts.parseHealth, null, 2)
+          ).catch(() => {})
+        );
+      }
 
-    await Promise.all(saves);
+      await Promise.all(saves);
+    });
 
     // Write SQLite edge store alongside JSON artifacts (additive, non-fatal)
     if (artifacts.llmContext.callGraph) {
@@ -1327,7 +1336,7 @@ export class AnalysisArtifactGenerator {
 
     // Save duplicates
     try {
-      await writeFile(
+      await atomicWriteFile(
         join(this.options.outputDir, 'duplicates.json'),
         JSON.stringify(duplicates, null, 2)
       );
@@ -1348,7 +1357,7 @@ export class AnalysisArtifactGenerator {
 
     // Save refactor priorities
     try {
-      await writeFile(
+      await atomicWriteFile(
         join(this.options.outputDir, ARTIFACT_REFACTOR_PRIORITIES),
         JSON.stringify(refactorReport, null, 2)
       );

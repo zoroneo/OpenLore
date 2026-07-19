@@ -24,7 +24,9 @@
  *     OPENLORE_WATCH_DEBUG).
  */
 
-import { readFile, writeFile, readdir, rename, unlink } from 'node:fs/promises';
+import { readFile, readdir, unlink } from 'node:fs/promises';
+import { atomicWriteFile } from '../decisions/atomic-store.js';
+import { withAnalysisLock } from '../decisions/lock.js';
 import { createHash } from 'node:crypto';
 import { join, relative, posix } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -682,45 +684,56 @@ export class McpWatcher {
     // 3. Signatures: load context (shared in-memory cache), patch all changed
     //    files, then ONE persist + read-cache handoff (Step 2). The handoff
     //    means the next tool call is a cache HIT — no cold 2.1 MB re-parse.
-    const context = await this.loadContext();
-    if (!context) {
-      process.stderr.write(`[mcp-watcher] no context at ${this.contextPath} — run analyze first\n`);
-      return;
-    }
-    if (!context.signatures) context.signatures = [];
-    for (const f of changedFiles) {
-      const newMap = extractSignatures(f.rel, f.content);
-      const idx = context.signatures.findIndex((m) => m.path === f.rel);
-      if (idx >= 0) context.signatures[idx] = newMap;
-      else context.signatures.push(newMap);
-    }
-    await this.persistContext(context);
+    //
+    // The whole artifact-mutation section (load → patch → persist → the four
+    // update* lanes) runs under the analysis lock so this read-modify-write of the
+    // JSON artifact set cannot interleave with a full `analyze` writing the same
+    // directory — including the watcher's own self-heal `analyze --force` spawn
+    // (change: harden-artifact-write-atomicity). loadContext is INSIDE the lock so
+    // our persist can never clobber a fresh full write that landed after we read.
+    const context = await withAnalysisLock(this.outputPath, async (): Promise<CachedContext | null> => {
+      const loaded = await this.loadContext();
+      if (!loaded) {
+        process.stderr.write(`[mcp-watcher] no context at ${this.contextPath} — run analyze first\n`);
+        return null;
+      }
+      if (!loaded.signatures) loaded.signatures = [];
+      for (const f of changedFiles) {
+        const newMap = extractSignatures(f.rel, f.content);
+        const idx = loaded.signatures.findIndex((m) => m.path === f.rel);
+        if (idx >= 0) loaded.signatures[idx] = newMap;
+        else loaded.signatures.push(newMap);
+      }
+      await this.persistContext(loaded);
 
-    // 3.5. Literal-text line index — keep it fresh for the changed files
-    //      (source + HTML). Runs regardless of the embed setting (BM25-only).
-    //      File deletions are handled separately by handleDeletions (the 'unlink'
-    //      lane), which drops the removed file's lines from this index.
-    await this.updateTextLines(changedFiles);
+      // 3.5. Literal-text line index — keep it fresh for the changed files
+      //      (source + HTML). Runs regardless of the embed setting (BM25-only).
+      //      File deletions are handled separately by handleDeletions (the 'unlink'
+      //      lane), which drops the removed file's lines from this index.
+      await this.updateTextLines(changedFiles);
 
-    // 3.6. Dependency graph — keep dependency-graph.json's file→file import edges
-    //      live (get_file_dependencies reads that static artifact). Incremental,
-    //      O(change): re-resolve the changed files' imports and splice their
-    //      edges, recompute in/out-degree. Global metrics (pageRank, clusters,
-    //      betweenness) are O(graph) and left to the next full `analyze`.
-    await this.updateDependencyGraph(changedFiles);
+      // 3.6. Dependency graph — keep dependency-graph.json's file→file import edges
+      //      live (get_file_dependencies reads that static artifact). Incremental,
+      //      O(change): re-resolve the changed files' imports and splice their
+      //      edges, recompute in/out-degree. Global metrics (pageRank, clusters,
+      //      betweenness) are O(graph) and left to the next full `analyze`.
+      await this.updateDependencyGraph(changedFiles);
 
-    // 3.7. Style fingerprint — keep style-fingerprint.json's per-file idiom counters live for the
-    //      changed files (change: add-codebase-style-fingerprint). Incremental: re-tally only the
-    //      changed files, reuse the stored file→region map (communities are O(graph), recomputed
-    //      on the next full analyze). byLanguage and per-file profiles stay exact.
-    await this.updateStyleFingerprint(changedFiles);
+      // 3.7. Style fingerprint — keep style-fingerprint.json's per-file idiom counters live for the
+      //      changed files (change: add-codebase-style-fingerprint). Incremental: re-tally only the
+      //      changed files, reuse the stored file→region map (communities are O(graph), recomputed
+      //      on the next full analyze). byLanguage and per-file profiles stay exact.
+      await this.updateStyleFingerprint(changedFiles);
 
-    // 3.8. Parse health — keep parse-health.json's per-file degradation records live for the
-    //      changed files (change: add-parse-health-boundary-disclosure). Unlike the style
-    //      fingerprint, this artifact is ABSENT on a clean repo, so a newly-introduced parse error
-    //      must be able to create it, and a repaired file must be able to remove its entry (and the
-    //      artifact once empty).
-    await this.updateParseHealth(changedFiles);
+      // 3.8. Parse health — keep parse-health.json's per-file degradation records live for the
+      //      changed files (change: add-parse-health-boundary-disclosure). Unlike the style
+      //      fingerprint, this artifact is ABSENT on a clean repo, so a newly-introduced parse error
+      //      must be able to create it, and a repaired file must be able to remove its entry (and the
+      //      artifact once empty).
+      await this.updateParseHealth(changedFiles);
+      return loaded;
+    });
+    if (!context) return;
 
     // 4. Vector update — decoupled from signature freshness (Step 4).
     const isBulk = consumedVcsBulk || changedFiles.length >= this.bulkThreshold;
@@ -879,7 +892,12 @@ export class McpWatcher {
     // Strip the runtime-only EdgeStore handle before serializing.
     const { edgeStore: _edgeStore, ...serializable } = context as CachedContext & { edgeStore?: unknown };
     void _edgeStore;
-    await writeFile(this.contextPath, JSON.stringify(serializable, null, 2), 'utf-8');
+    // Atomic write (temp + rename via atomicWriteFile) so a crash mid-write never tears
+    // llm-context.json and a concurrent reader never sees a truncated file (change:
+    // harden-artifact-write-atomicity). Set-level serialization against a full analyze is
+    // owned by the caller's analysis lock — persist itself stays lock-free (it runs inside a
+    // lane that already holds the lock, so it must never re-acquire it).
+    await atomicWriteFile(this.contextPath, JSON.stringify(serializable, null, 2));
     // Hand the patched object back to the read cache, aligned to the new on-disk
     // mtime, so the next tool call is a cache hit (no cold re-parse). This is the
     // fix for root-cause item 2 (mtime bump forcing a full re-read). Only valid
@@ -1092,11 +1110,10 @@ export class McpWatcher {
         n.metrics.inDegree = inn.get(n.id)?.size ?? 0;
       }
 
-      // Atomic write (tmp + rename) so a concurrent MCP read never sees a torn
-      // JSON — matching the watcher's "readers never see a torn graph" invariant.
-      const tmp = `${graphPath}.${process.pid}.tmp`;
-      await writeFile(tmp, JSON.stringify(graph));
-      await rename(tmp, graphPath);
+      // Atomic write (temp + rename via the shared atomicWriteFile) so a concurrent MCP
+      // read never sees a torn JSON — matching the watcher's "readers never see a torn
+      // graph" invariant (change: harden-artifact-write-atomicity — one atomic-write home).
+      await atomicWriteFile(graphPath, JSON.stringify(graph));
       if (this.debug) {
         process.stderr.write(
           `[mcp-watcher] dependency graph: patched import edges for ${changedFiles.length} file(s)\n`,
@@ -1146,9 +1163,7 @@ export class McpWatcher {
       for (const r of fp.regions ?? []) if (r.label) labels[r.communityId] = r.label;
 
       const updated = assembleFromRegions([...byPath.values()], fp.fileRegions ?? {}, labels, fp.evidenceFloor);
-      const tmp = `${fpPath}.${process.pid}.tmp`;
-      await writeFile(tmp, JSON.stringify(updated, null, 2));
-      await rename(tmp, fpPath);
+      await atomicWriteFile(fpPath, JSON.stringify(updated, null, 2));
       if (this.debug) {
         process.stderr.write(`[mcp-watcher] style fingerprint: refreshed ${changedFiles.length} changed / ${deletedRels.length} deleted\n`);
       }
@@ -1205,9 +1220,7 @@ export class McpWatcher {
         if (before > 0) await unlink(phPath).catch(() => {});
         return;
       }
-      const tmp = `${phPath}.${process.pid}.tmp`;
-      await writeFile(tmp, JSON.stringify(report, null, 2));
-      await rename(tmp, phPath);
+      await atomicWriteFile(phPath, JSON.stringify(report, null, 2));
       if (this.debug) {
         process.stderr.write(`[mcp-watcher] parse health: refreshed ${changedFiles.length} changed / ${deletedRels.length} deleted\n`);
       }
@@ -1268,48 +1281,56 @@ export class McpWatcher {
       }
     }
 
-    // 2. Signatures in llm-context.json.
-    const context = await this.loadContext();
-    if (context?.signatures) {
-      const relSet = new Set(rels);
-      const kept = context.signatures.filter((m) => !relSet.has(m.path));
-      if (kept.length !== context.signatures.length) {
-        context.signatures = kept;
-        await this.persistContext(context);
+    // Steps 2–7 mutate the JSON artifact set (and the vector index) for the deleted
+    // files. They run under the analysis lock so this deletion reconciliation cannot
+    // interleave its set with a concurrent full `analyze` writing the same directory
+    // (change: harden-artifact-write-atomicity). The vector delete (step 4) is kept
+    // inside the section rather than reordered — deletions are infrequent, and holding
+    // the lock briefly is cheaper than risking a reorder.
+    await withAnalysisLock(this.outputPath, async () => {
+      // 2. Signatures in llm-context.json.
+      const context = await this.loadContext();
+      if (context?.signatures) {
+        const relSet = new Set(rels);
+        const kept = context.signatures.filter((m) => !relSet.has(m.path));
+        if (kept.length !== context.signatures.length) {
+          context.signatures = kept;
+          await this.persistContext(context);
+        }
       }
-    }
 
-    // 3. Text-line index — drop the deleted files' lines.
-    try {
-      const { TextLineIndex } = await import('../analyzer/text-line-index.js');
-      if (TextLineIndex.exists(this.outputPath)) {
-        await TextLineIndex.updateFiles(this.outputPath, [], rels);
+      // 3. Text-line index — drop the deleted files' lines.
+      try {
+        const { TextLineIndex } = await import('../analyzer/text-line-index.js');
+        if (TextLineIndex.exists(this.outputPath)) {
+          await TextLineIndex.updateFiles(this.outputPath, [], rels);
+        }
+      } catch (err) {
+        process.stderr.write(`[mcp-watcher] delete (text) error: ${(err as Error).message}\n`);
       }
-    } catch (err) {
-      process.stderr.write(`[mcp-watcher] delete (text) error: ${(err as Error).message}\n`);
-    }
 
-    // 4. Vector index — delete the deleted files' rows (no nodes to add).
-    try {
-      const { VectorIndex } = await import('../analyzer/vector-index.js');
-      if (VectorIndex.exists(this.outputPath)) {
-        await VectorIndex.updateFiles(
-          this.outputPath, [], new Set(rels), context?.signatures ?? [],
-          new Set(), new Set(), undefined,
-        );
+      // 4. Vector index — delete the deleted files' rows (no nodes to add).
+      try {
+        const { VectorIndex } = await import('../analyzer/vector-index.js');
+        if (VectorIndex.exists(this.outputPath)) {
+          await VectorIndex.updateFiles(
+            this.outputPath, [], new Set(rels), context?.signatures ?? [],
+            new Set(), new Set(), undefined,
+          );
+        }
+      } catch (err) {
+        process.stderr.write(`[mcp-watcher] delete (vector) error: ${(err as Error).message}\n`);
       }
-    } catch (err) {
-      process.stderr.write(`[mcp-watcher] delete (vector) error: ${(err as Error).message}\n`);
-    }
 
-    // 5. Dependency graph — remove the deleted nodes and every edge touching them.
-    await this.removeFromDependencyGraph(absPaths);
+      // 5. Dependency graph — remove the deleted nodes and every edge touching them.
+      await this.removeFromDependencyGraph(absPaths);
 
-    // 6. Style fingerprint — drop the deleted files' counters and re-roll-up.
-    await this.updateStyleFingerprint([], rels);
+      // 6. Style fingerprint — drop the deleted files' counters and re-roll-up.
+      await this.updateStyleFingerprint([], rels);
 
-    // 7. Parse health — drop the deleted files' degradation records and re-roll-up.
-    await this.updateParseHealth([], rels);
+      // 7. Parse health — drop the deleted files' degradation records and re-roll-up.
+      await this.updateParseHealth([], rels);
+    });
 
     if (this.debug) {
       process.stderr.write(`[mcp-watcher] reconciled ${rels.length} deletion(s)\n`);
@@ -1352,9 +1373,7 @@ export class McpWatcher {
         n.metrics.inDegree = inn.get(n.id)?.size ?? 0;
       }
 
-      const tmp = `${graphPath}.${process.pid}.tmp`;
-      await writeFile(tmp, JSON.stringify(graph));
-      await rename(tmp, graphPath);
+      await atomicWriteFile(graphPath, JSON.stringify(graph));
     } catch (err) {
       process.stderr.write(`[mcp-watcher] delete (dep-graph) error: ${(err as Error).message}\n`);
     }
