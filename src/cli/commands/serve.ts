@@ -32,7 +32,7 @@
 import { Command } from 'commander';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createRequire } from 'node:module';
-import { writeFile, readFile, unlink, mkdir } from 'node:fs/promises';
+import { writeFile, unlink, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { logger } from '../../utils/logger.js';
 import { OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR, FULL_PRESET, FULL_PRESET_ALIAS, LEAN_DEFAULT_PRESET } from '../../constants.js';
@@ -50,6 +50,7 @@ import {
   originDefenseError,
   OPENLORE_TOKEN_HEADER,
 } from './local-http-guard.js';
+import { readServeDescriptor, type ServeDescriptor } from './serve-descriptor.js';
 
 /**
  * Debounce before a full call-graph re-analyze after edits settle. Longer than
@@ -94,15 +95,6 @@ const HEALTH_PROBE_TIMEOUT_MS = 2500;
 const _require = createRequire(import.meta.url);
 const _pkgVersion = (_require('../../../package.json') as { version: string }).version;
 
-/** Daemon discovery descriptor written to <root>/.openlore/serve.json. */
-interface ServeDescriptor {
-  port: number;
-  pid: number;
-  host: string;
-  token?: string;
-  startedAt: string;
-  version: string;
-}
 
 interface ServeCliOptions {
   directory?: string;
@@ -173,36 +165,15 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 /**
  * Read + validate <root>/.openlore/serve.json. The discovery file is an untrusted
  * on-disk artifact (mcp-security: Untrusted Artifact Deserialization): a hostile repo
- * could ship a poisoned serve.json. We fail closed unless every field has the expected
- * type AND the host is a loopback name — otherwise `daemonAlive` would fetch an
- * arbitrary host (egress / SSRF) and `stopDaemon` could SIGTERM an arbitrary pid.
+ * could ship a poisoned serve.json, and `daemonAlive` would then fetch an arbitrary
+ * host (egress / SSRF) and `stopDaemon` could SIGTERM an arbitrary pid. Validation
+ * lives in the shared {@link readServeDescriptor} so every reader fails closed the
+ * same way (mcp-security: ServeDescriptorValidatedAtEveryReader).
  *
  * Exported for the serve.json validation tests.
  */
 export async function readDescriptor(root: string): Promise<ServeDescriptor | null> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(await readFile(serveFilePath(root), 'utf-8'));
-  } catch {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const d = parsed as Record<string, unknown>;
-  const portOk = typeof d.port === 'number' && Number.isInteger(d.port) && d.port >= 1 && d.port <= 65535;
-  const pidOk = typeof d.pid === 'number' && Number.isInteger(d.pid) && d.pid > 0;
-  // Confine host to loopback: a recorded non-loopback host must never become an
-  // outbound fetch target during liveness probing.
-  const hostOk = typeof d.host === 'string' && isLoopbackHost(d.host);
-  const tokenOk = d.token === undefined || typeof d.token === 'string';
-  if (!portOk || !pidOk || !hostOk || !tokenOk) return null;
-  return {
-    port: d.port as number,
-    pid: d.pid as number,
-    host: d.host as string,
-    token: d.token as string | undefined,
-    startedAt: typeof d.startedAt === 'string' ? d.startedAt : '',
-    version: typeof d.version === 'string' ? d.version : '',
-  };
+  return readServeDescriptor(serveFilePath(root));
 }
 
 /**

@@ -1,6 +1,14 @@
 # Harden serve-descriptor trust: one untrusted artifact, one validator, three readers
 
-> Status: PROPOSED (2026-07-03, e2e audit follow-up). `.openlore/serve.json` is a
+> Status: SHIPPED (2026-07-19). Extracted `serve.ts`'s validation into the shared
+> `src/cli/commands/serve-descriptor.ts` (`validateServeDescriptor` + `readServeDescriptor`,
+> dependency-light: node builtins + `isLoopbackHost`). All three readers — `serve.ts`,
+> `serve-client.ts`, and the Pi extension — now resolve `.openlore/serve.json` through it, so a
+> poisoned descriptor is treated exactly as absent (no fetch, no header, no signal target). A
+> source-level coverage guard (`serve-descriptor.test.ts`) fails CI if a future reader reads the
+> file raw. Spec `mcp-security` gained `ServeDescriptorValidatedAtEveryReader`.
+>
+> Original (PROPOSED 2026-07-03, e2e audit follow-up): `.openlore/serve.json` is a
 > repo-local, attacker-writable artifact, and OpenLore reads it at three sites with two
 > security postures. `serve.ts` validates it — port range, integer pid, loopback-only host —
 > with a comment citing the mcp-security "Untrusted Artifact Deserialization" requirement.

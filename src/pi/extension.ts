@@ -53,6 +53,11 @@ import {
   POINTER_LINE,
   type LeanOrientResult,
 } from '../cli/commands/orient-inject-render.js';
+// The shared serve.json validator. Dependency-light (node builtins + the loopback
+// predicate) so it does not drag the analyzer into the Pi host, and it guarantees
+// Pi trusts the untrusted descriptor exactly as the CLI and MCP server do
+// (mcp-security: ServeDescriptorValidatedAtEveryReader).
+import { readServeDescriptor, type ServeDescriptor } from '../cli/commands/serve-descriptor.js';
 import type { ContextInjectionConfig } from '../types/index.js';
 
 // ── Config types & helpers ────────────────────────────────────────────────────
@@ -379,7 +384,6 @@ async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig 
 
 // ── Daemon discovery + lifecycle ──────────────────────────────────────────────
 
-interface ServeDescriptor { port: number; pid: number; host: string; token?: string }
 interface Daemon { baseUrl: string; token?: string }
 
 const HEALTH_TIMEOUT_MS = 8000;
@@ -397,10 +401,12 @@ const KEEPALIVE_MS = 5 * 60_000;
 const RESULT_MAX = 50_000;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+// `.openlore/serve.json` is an untrusted, repo-writable artifact; resolve it
+// through the shared validator so a poisoned descriptor (non-loopback host, bad
+// port/pid, non-string token) is treated exactly as absent and no field of it
+// ever becomes a fetch target or request header.
 async function readDescriptor(cwd: string): Promise<ServeDescriptor | null> {
-  try {
-    return JSON.parse(await readFile(join(cwd, OPENLORE_DIR, 'serve.json'), 'utf-8')) as ServeDescriptor;
-  } catch { return null; }
+  return readServeDescriptor(join(cwd, OPENLORE_DIR, 'serve.json'));
 }
 
 async function healthy(desc: ServeDescriptor): Promise<boolean> {

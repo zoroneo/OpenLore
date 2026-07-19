@@ -9,7 +9,7 @@
  * discover-only paths against a daemon we start in-process.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -81,6 +81,53 @@ describe('serve-client', () => {
   it('throws when the daemon is unreachable (stale endpoint)', async () => {
     const ep = { baseUrl: 'http://127.0.0.1:1' }; // nothing listening
     await expect(callServeTool(ep, 'orient', { task: 'x' }, '/tmp')).rejects.toThrow();
+  });
+
+  it('treats a poisoned serve.json as absent and issues no fetch (SSRF guard)', async () => {
+    // A hostile repo ships a serve.json naming an attacker-controlled host. The
+    // shared validator rejects the non-loopback host, so the descriptor is
+    // treated as absent — no liveness probe is ever fetched at the poisoned
+    // endpoint (mcp-security: ServeDescriptorValidatedAtEveryReader).
+    const dir = await mkdtemp(join(tmpdir(), 'openlore-poison-'));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      const { writeFile, mkdir } = await import('node:fs/promises');
+      await mkdir(join(dir, '.openlore'), { recursive: true });
+      await writeFile(
+        join(dir, '.openlore', 'serve.json'),
+        JSON.stringify({ port: 8080, pid: 99999, host: '169.254.169.254', token: 'x' }),
+        'utf-8',
+      );
+      // spawn:false → with the descriptor rejected as absent, ensureServeDaemon
+      // returns null without probing or spawning.
+      const ep = await ensureServeDaemon(dir, { spawn: false });
+      expect(ep).toBeNull();
+      expect(fetchSpy, 'no fetch may be issued for a poisoned descriptor').not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats a malformed-field serve.json (bad port/pid/token) as absent', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'openlore-malformed-'));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      const { writeFile, mkdir } = await import('node:fs/promises');
+      await mkdir(join(dir, '.openlore'), { recursive: true });
+      // Loopback host, but an out-of-range port and a non-string token.
+      await writeFile(
+        join(dir, '.openlore', 'serve.json'),
+        JSON.stringify({ port: 70000, pid: -1, host: '127.0.0.1', token: 5 }),
+        'utf-8',
+      );
+      const ep = await ensureServeDaemon(dir, { spawn: false });
+      expect(ep).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('returns null for a stale serve.json pointing at a dead port (kill -9 simulation)', async () => {
