@@ -170,25 +170,68 @@ export function evaluateRepoState(entry: FederationRepoEntry): RepoIndexState {
   if (!existsSync(entry.path)) return 'missing';
   const live = readRepoFingerprint(entry.path);
   if (live === null) return 'unindexed';
-  // An entry registered before its first analyze has an empty stored fingerprint;
-  // treat a now-present index as indexed (adopt the live hash on next refresh).
-  if (entry.fingerprint && live !== entry.fingerprint) return 'stale';
+  // An entry registered before its first analyze has an empty stored fingerprint.
+  // Without a baseline, staleness cannot be assessed, so a now-present index is
+  // 'unbaselined' — never a freshness-checked 'indexed'. A status/consult path
+  // adopts the live hash on observation (adoptEmptyFingerprints) so the next drift
+  // is detected as 'stale'.
+  if (!entry.fingerprint) return 'unbaselined';
+  if (live !== entry.fingerprint) return 'stale';
   return 'indexed';
+}
+
+/**
+ * Baseline any registered repo whose stored fingerprint is empty (registered
+ * before its first analyze) but now has a built index: adopt the live index hash
+ * as the stored baseline, persisted through the atomic registry write. Makes the
+ * "adopt the live hash on next refresh" promise true — once a baseline exists,
+ * subsequent index drift is detected as `stale` instead of reported `indexed`
+ * forever. Best-effort by design: a corrupt registry (nothing to adopt) or a
+ * read-only registry (write fails) is swallowed and the caller still reports the
+ * observed state honestly. Returns the names of the entries baselined (empty when
+ * none applied or the write could not be persisted).
+ */
+export function adoptEmptyFingerprints(homeDir: string): string[] {
+  let registry: FederationRegistry;
+  try {
+    registry = loadRegistry(homeDir);
+  } catch {
+    return []; // corrupt registry: the caller degrades it separately; nothing to adopt
+  }
+  const adopted: string[] = [];
+  for (const entry of registry.repos) {
+    if (entry.fingerprint) continue; // already baselined
+    const live = readRepoFingerprint(entry.path);
+    if (live === null) continue; // no index yet — adoption needs a live fingerprint
+    entry.fingerprint = live;
+    adopted.push(entry.name);
+  }
+  if (adopted.length === 0) return [];
+  try {
+    saveRegistry(homeDir, registry);
+  } catch {
+    return []; // read-only registry: report state honestly, never crash
+  }
+  return adopted;
 }
 
 /** Build a ConsultedRepo status record (consulted flag set by the caller). */
 export function repoStatus(entry: FederationRepoEntry, consulted: boolean): ConsultedRepo {
   const state = evaluateRepoState(entry);
   const reasons: Record<Exclude<RepoIndexState, 'indexed'>, string> = {
+    unbaselined: `index present but no fingerprint baseline yet — staleness not assessable until "openlore analyze" or re-registration in ${entry.path}`,
     stale: `index fingerprint changed since registration — re-run "openlore analyze" in ${entry.path}`,
     unindexed: `no .openlore index found — run "openlore analyze" in ${entry.path}`,
     missing: `repo path no longer exists: ${entry.path}`,
   };
+  // An unbaselined repo has a live index, so it is consultable — its freshness just
+  // cannot be assessed; the caveat is disclosed via `reason` even while consulted.
+  const consultable = state === 'indexed' || state === 'unbaselined';
   return {
     name: entry.name,
     path: entry.path,
     state,
-    consulted: consulted && state === 'indexed',
+    consulted: consulted && consultable,
     reason: state === 'indexed' ? undefined : reasons[state],
   };
 }

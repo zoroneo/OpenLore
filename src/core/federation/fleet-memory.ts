@@ -100,7 +100,7 @@ export async function findFleetMemory(
 
   for (const entry of scope.repos) {
     const status = repoStatus(entry, true);
-    if (status.state !== 'indexed') { reposSkipped.push(status); continue; }
+    if (!status.consulted) { reposSkipped.push(status); continue; }
     const repoPath = resolve(entry.path);
     const ctx = await readCachedContext(repoPath);
     if (!ctx?.edgeStore) {

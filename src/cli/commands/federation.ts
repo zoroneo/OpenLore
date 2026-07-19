@@ -18,6 +18,7 @@ import {
 
 const STATE_LABEL: Record<string, string> = {
   indexed: '✓ indexed',
+  unbaselined: '◐ unbaselined (staleness not yet assessable — run status/analyze to baseline)',
   stale: '⚠ stale (re-run analyze)',
   unindexed: '∅ unindexed (run analyze)',
   missing: '✗ missing path',
