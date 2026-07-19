@@ -18,6 +18,7 @@ import {
   OPENSPEC_CONFIG_FILENAME,
 } from '../../constants.js';
 import { fileExists } from '../../utils/command-helpers.js';
+import { validateOpenLoreConfig, CONFIG_SCHEMA_VERSION } from './config-schema.js';
 
 /**
  * OpenSpec config.yaml structure
@@ -53,7 +54,7 @@ async function ensureDir(dirPath: string): Promise<void> {
  */
 export function getDefaultConfig(projectType: ProjectType, openspecPath: string): OpenLoreConfig {
   return {
-    version: '1.0.0',
+    version: CONFIG_SCHEMA_VERSION,
     projectType,
     openspecPath,
     analysis: {
@@ -72,6 +73,44 @@ export function getDefaultConfig(projectType: ProjectType, openspecPath: string)
 }
 
 /**
+ * Per-process memory of config-validation warnings already emitted, so a hub caller
+ * (`readOpenLoreConfig` has ~45 call sites) emits each finding at most once per process
+ * instead of once per read (change: add-config-schema-validation).
+ */
+const emittedConfigWarnings = new Set<string>();
+
+/** Test hook: clear the per-process config-validation warning dedup memory. */
+export function resetConfigValidationWarnings(): void {
+  emittedConfigWarnings.clear();
+}
+
+/**
+ * Validate a parsed config against the type-derived schema and emit any findings once
+ * per process. Warnings are advisory: a typo'd key, a type mismatch, or a version skew
+ * is disclosed and then ignored — never a hard failure, and never emitted for a config
+ * that uses only known keys with correctly-typed values (change: add-config-schema-validation).
+ *
+ * Emitted to STDERR (honoring the logger's quiet/noColor state), not stdout: this is a
+ * ~45-caller hub read by machine-output paths — `--json` commands, `orient`, and the MCP
+ * JSON-RPC stream — where a warning on stdout would corrupt the output. Humans still see
+ * the diagnostic in their terminal; `openlore doctor` additionally surfaces it as a
+ * structured `Config schema` finding.
+ */
+function emitConfigValidationWarnings(configPath: string, parsed: unknown): void {
+  const findings = validateOpenLoreConfig(parsed);
+  if (findings.length === 0) return;
+  const { quiet, noColor } = logger.getOptions();
+  if (quiet) return; // errors-only mode — match logger.warning's suppression
+  const prefix = noColor ? '[warn]' : '\x1b[33m[warn]\x1b[0m';
+  for (const finding of findings) {
+    const signature = `${configPath} ${finding.kind} ${finding.key ?? ''}`;
+    if (emittedConfigWarnings.has(signature)) continue;
+    emittedConfigWarnings.add(signature);
+    process.stderr.write(`${prefix} ${OPENLORE_CONFIG_REL_PATH}: ${finding.message}\n`);
+  }
+}
+
+/**
  * Read openlore configuration from .openlore/config.json
  */
 export async function readOpenLoreConfig(rootPath: string): Promise<OpenLoreConfig | null> {
@@ -82,13 +121,16 @@ export async function readOpenLoreConfig(rootPath: string): Promise<OpenLoreConf
   } catch {
     return null; // File doesn't exist — normal case before init
   }
+  let parsed: OpenLoreConfig;
   try {
-    return JSON.parse(content) as OpenLoreConfig;
+    parsed = JSON.parse(content) as OpenLoreConfig;
   } catch (err) {
     logger.warning(`Failed to parse ${configPath}: ${(err as Error).message}`);
     logger.warning(`Delete ${OPENLORE_CONFIG_REL_PATH} and run 'openlore init' to recreate it.`);
     return null;
   }
+  emitConfigValidationWarnings(configPath, parsed);
+  return parsed;
 }
 
 /**

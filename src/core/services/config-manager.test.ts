@@ -2,7 +2,7 @@
  * Tests for config-manager service
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdir, writeFile, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,7 +18,9 @@ import {
   createOpenSpecStructure,
   mergeOpenSpecConfig,
   detectExistingSpecDir,
+  resetConfigValidationWarnings,
 } from './config-manager.js';
+import { logger } from '../../utils/logger.js';
 
 describe('config-manager', () => {
   let testDir: string;
@@ -255,6 +257,97 @@ describe('config-manager', () => {
 
       const result = await readOpenLoreConfig(testDir);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('readOpenLoreConfig — schema validation warnings (add-config-schema-validation)', () => {
+    async function writeRawConfig(obj: unknown): Promise<void> {
+      const configDir = join(testDir, '.openlore');
+      await mkdir(configDir, { recursive: true });
+      await writeFile(join(configDir, 'config.json'), JSON.stringify(obj), 'utf-8');
+    }
+
+    beforeEach(() => {
+      resetConfigValidationWarnings();
+      // Diagnostics go to stderr (keeping machine stdout pure); ensure the logger is
+      // not in quiet mode, which suppresses them.
+      logger.configure({ quiet: false, noColor: true });
+    });
+
+    /** Spy on the stderr channel the emitter writes to, returning captured lines. */
+    function spyStderr(): { restore: () => void; lines: () => string[] } {
+      const captured: string[] = [];
+      const spy = vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+        captured.push(String(chunk));
+        return true;
+      }) as typeof process.stderr.write);
+      return { restore: () => spy.mockRestore(), lines: () => captured };
+    }
+
+    it('emits no warning for a valid config, and returns it unchanged', async () => {
+      const s = spyStderr();
+      try {
+        const valid = getDefaultConfig('nodejs', 'openspec');
+        await writeRawConfig(valid);
+        const result = await readOpenLoreConfig(testDir);
+        expect(result).not.toBeNull();
+        expect(result?.projectType).toBe('nodejs');
+        expect(s.lines().filter(m => m.includes('config.json'))).toHaveLength(0);
+      } finally {
+        s.restore();
+      }
+    });
+
+    it('warns with a did-you-mean on a typo\'d key, and still applies defaults', async () => {
+      const s = spyStderr();
+      try {
+        const cfg = { ...getDefaultConfig('nodejs', 'openspec'), pancResponse: { mode: 'off' } };
+        await writeRawConfig(cfg);
+        const result = await readOpenLoreConfig(testDir);
+        expect(result).not.toBeNull(); // never a hard failure
+        expect(s.lines().some(m => m.includes('pancResponse') && m.includes('panicResponse'))).toBe(true);
+      } finally {
+        s.restore();
+      }
+    });
+
+    it('is silent in quiet mode (errors-only)', async () => {
+      logger.configure({ quiet: true });
+      const s = spyStderr();
+      try {
+        await writeRawConfig({ ...getDefaultConfig('nodejs', 'openspec'), pancResponse: { mode: 'off' } });
+        const result = await readOpenLoreConfig(testDir);
+        expect(result).not.toBeNull();
+        expect(s.lines().filter(m => m.includes('config.json'))).toHaveLength(0);
+      } finally {
+        s.restore();
+        logger.configure({ quiet: false });
+      }
+    });
+
+    it('deduplicates warnings across reads — one emission per process, not per read', async () => {
+      const s = spyStderr();
+      try {
+        await writeRawConfig({ ...getDefaultConfig('nodejs', 'openspec'), embeding: {} });
+        await readOpenLoreConfig(testDir);
+        await readOpenLoreConfig(testDir);
+        await readOpenLoreConfig(testDir);
+        expect(s.lines().filter(m => m.includes('embeding'))).toHaveLength(1);
+      } finally {
+        s.restore();
+      }
+    });
+
+    it('discloses a newer version stamp without crashing the read', async () => {
+      const s = spyStderr();
+      try {
+        await writeRawConfig({ ...getDefaultConfig('nodejs', 'openspec'), version: '99.0.0' });
+        const result = await readOpenLoreConfig(testDir);
+        expect(result).not.toBeNull();
+        expect(s.lines().some(m => m.includes('newer'))).toBe(true);
+      } finally {
+        s.restore();
+      }
     });
   });
 

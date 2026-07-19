@@ -1,6 +1,13 @@
 # Config schema validation: typo'd keys disclosed, version drift visible
 
-> Status: PROPOSED (2026-07-03, e2e audit). `.openlore/config.json` is parsed with a bare
+> Status: SHIPPED (2026-07-18). Implemented as `src/core/services/config-schema.ts` (type-bound
+> validator + version check), wired into `readOpenLoreConfig`, and surfaced by `openlore doctor`
+> as a `Config schema` check. Deviation from the note below: validation warnings emit to **stderr**
+> (honoring quiet/noColor), not stdout — `readOpenLoreConfig` is read by machine-output paths
+> (`--json`, `orient`, the MCP JSON-RPC stream), and a warning on stdout would corrupt them. The
+> logger's intent (standard, quiet-respecting, deduplicated diagnostics) is preserved.
+>
+> Original: PROPOSED (2026-07-03, e2e audit). `.openlore/config.json` is parsed with a bare
 > `JSON.parse(...) as OpenLoreConfig` — a typo'd key (`pancResponse`, `embeding`) is silently
 > dropped and defaults win, and the `version` stamp written at init is never read back, so
 > config-schema drift across OpenLore versions is invisible. Deterministic validation at read,
