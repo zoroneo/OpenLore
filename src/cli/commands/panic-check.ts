@@ -10,10 +10,18 @@
  */
 
 import { Command } from 'commander';
-import { readPanicState, recordHookInterventionLocked, buildPanicCheckOutput } from '../../core/services/mcp-handlers/panic-response.js';
+import {
+  readPanicState,
+  recordHookInterventionLocked,
+  buildPanicCheckOutput,
+  deescalatePanicByWallClock,
+  parsePendingToolName,
+  isRecoveryTool,
+} from '../../core/services/mcp-handlers/panic-response.js';
 import { queryGryphSignals, applyGryphDelta } from '../../core/services/mcp-handlers/gryph-bridge.js';
 import { readOpenLoreConfig } from '../../core/services/config-manager.js';
 import { emit } from '../../core/services/telemetry.js';
+import { readStdin } from '../../utils/stdin.js';
 
 type HookFormat = 'claude' | 'kilo' | 'codex';
 
@@ -82,10 +90,27 @@ export const panicCheckCommand = new Command('panic-check')
 
       // experimental_blocking: emit a block signal at L4 — the runtime decides enforcement.
       // advisory:true is always present: OpenLore recommends, never mandates. Still exits 0.
+      //
+      // Two escape hatches keep the block from trapping the agent it supervises:
+      //  1. The prescribed recovery call (orient + read-only recovery no-ops) is parsed from the
+      //     PreToolUse payload and always allowed through — the block message demands orient(),
+      //     so blocking orient() would leave no exit but a human config edit.
+      //  2. Bounded wall-clock deescalation: an agent working only via Bash/Edit never rewrites the
+      //     panic score, so without this the level 4 block is permanent. Passive decay (existing
+      //     constants, no new tuning value) settles the level down over its disclosed window, so
+      //     even an unparseable payload cannot leave a permanent block.
       if (mode === 'experimental_blocking' && state.panicLevel >= 4) {
-        const blockOutput = { decision: 'block' as const, advisory: true, panicLevel: state.panicLevel, message: output.message };
-        process.stdout.write(JSON.stringify(blockOutput) + '\n');
-        process.exit(0);
+        const effective = deescalatePanicByWallClock(state);
+        if (effective.panicLevel >= 4) {
+          const pendingTool = parsePendingToolName(await readStdin());
+          if (!isRecoveryTool(pendingTool)) {
+            const blockOutput = { decision: 'block' as const, advisory: true, panicLevel: effective.panicLevel, message: output.message };
+            process.stdout.write(JSON.stringify(blockOutput) + '\n');
+            process.exit(0);
+          }
+        }
+        // Deescalated below L4, or the pending call is a prescribed recovery tool → fall through
+        // to the normal (advisory warn) output; the block is not emitted.
       }
 
       process.stdout.write(formatOutput(output, format) + '\n');

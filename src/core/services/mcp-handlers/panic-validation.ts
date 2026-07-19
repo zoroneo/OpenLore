@@ -6,11 +6,19 @@
  * BEFORE any interventional posture (default advisory injection, experimental_blocking,
  * auto-installed hooks) is turned on by default.
  *
- * It never auto-clears the gate — `verdict` is INSUFFICIENT_DATA or REVIEW_REQUIRED. Clearing
- * the gate is a human decision; this only surfaces whether each criterion is met and why.
+ * The `verdict` is a MECHANICAL read of the criteria, never an activation: it is CLEARED only when
+ * every gate criterion is met, REVIEW_REQUIRED when there is enough data but a criterion is unmet,
+ * and INSUFFICIENT_DATA below the episode floor. CLEARED does NOT turn anything on — activating an
+ * interventional posture is still a human decision (`setup --panic …`, which consults this verdict
+ * and requires an explicit acknowledgement to proceed when it is not CLEARED).
  *
  * No LLM, no heuristics beyond counting — the north-star determinism constraint holds.
  */
+
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { OPENLORE_DIR } from '../../../constants.js';
+import { MAX_ROTATED_FILES } from '../telemetry.js';
 
 /** A panic.jsonl record (subset of fields this analysis reads). */
 export interface PanicTelemetryEvent {
@@ -38,15 +46,21 @@ export const PANIC_GATE = {
   NOISY_TRIGGER_FP_SHARE: 0.5,
 } as const;
 
-export type PanicGateVerdict = 'INSUFFICIENT_DATA' | 'REVIEW_REQUIRED';
+export type PanicGateVerdict = 'INSUFFICIENT_DATA' | 'REVIEW_REQUIRED' | 'CLEARED';
 
 export interface PanicGateReport {
-  verdict: PanicGateVerdict; // never 'CLEARED' — clearing is a human call
+  /** CLEARED only when every criterion is met — a mechanical read, never an activation. */
+  verdict: PanicGateVerdict;
   min_episodes: number;
   episodes: { total: number; completed: number; open: number };
   peak_level_histogram: Record<'L1' | 'L2' | 'L3' | 'L4', number>;
   false_positive: {
-    /** completed episodes resolved without the agent ever re-orienting / completed. */
+    /**
+     * UPPER BOUND, not a true false-positive rate: the share of completed episodes that resolved
+     * WITHOUT the agent re-orienting (resolved-by-decay). Some of those were genuine panics the
+     * agent worked through without an explicit orient() — so this over-counts false positives by
+     * construction. Presented as a proxy everywhere it surfaces; never labeled a true FP rate.
+     */
     proxy_rate: number | null;
     resolved_via_orient: number;
     resolved_via_decay: number;
@@ -178,7 +192,11 @@ export function validatePanicSignal(events: PanicTelemetryEvent[]): PanicGateRep
   const dataSufficient = completed.length >= PANIC_GATE.MIN_EPISODES;
   const fpOk = fpProxyRate === null ? null : fpProxyRate <= PANIC_GATE.FP_PROXY_TARGET;
   const ftOk = followThrough === null ? null : followThrough >= PANIC_GATE.FOLLOW_THROUGH_TARGET;
-  const verdict: PanicGateVerdict = dataSufficient ? 'REVIEW_REQUIRED' : 'INSUFFICIENT_DATA';
+  // CLEARED requires EVERY criterion affirmatively met — a null (unmeasured) follow-through is not
+  // "met", so pure observe-mode (no interventions yet) never clears. Still mechanical, never an
+  // activation: setup consults this and requires an explicit acknowledgement to act when not CLEARED.
+  const cleared = dataSufficient && fpOk === true && ftOk === true;
+  const verdict: PanicGateVerdict = cleared ? 'CLEARED' : dataSufficient ? 'REVIEW_REQUIRED' : 'INSUFFICIENT_DATA';
 
   const recs: string[] = [];
   if (!dataSufficient) {
@@ -210,10 +228,10 @@ export function validatePanicSignal(events: PanicTelemetryEvent[]): PanicGateRep
         `(${responses}/${hookIntercepts} intercepts led to an orient). Agents are ignoring or fighting the nudge.`,
     );
   }
-  if (dataSufficient && fpOk && ftOk && recs.length === 0) {
+  if (cleared && recs.length === 0) {
     recs.push(
-      `All measured criteria meet target (fp-proxy ≤ ${(PANIC_GATE.FP_PROXY_TARGET * 100).toFixed(0)}%, follow-through ≥ ${(PANIC_GATE.FOLLOW_THROUGH_TARGET * 100).toFixed(0)}%). ` +
-        `A maintainer may now review enabling an advisory posture by default — the gate is a human decision, not auto-cleared.`,
+      `Gate CLEARED — every criterion meets target (fp-proxy ≤ ${(PANIC_GATE.FP_PROXY_TARGET * 100).toFixed(0)}% [upper bound], follow-through ≥ ${(PANIC_GATE.FOLLOW_THROUGH_TARGET * 100).toFixed(0)}%). ` +
+        `You may now enable an interventional posture with \`setup --panic advisory|experimental_blocking\`. CLEARED reports the criteria are met; it does not activate anything.`,
     );
   }
 
@@ -239,4 +257,35 @@ export function validatePanicSignal(events: PanicTelemetryEvent[]): PanicGateRep
     criteria: { data_sufficient: dataSufficient, fp_ok: fpOk, follow_through_ok: ftOk },
     recommendations: recs,
   };
+}
+
+/**
+ * Read all panic telemetry for a project, spanning the live file AND its rotated archives.
+ *
+ * Telemetry rotates the live `panic.jsonl` into numbered archives (`panic.1.jsonl` … up to
+ * `panic.<MAX_ROTATED_FILES>.jsonl`) once it exceeds the size threshold. Reading only the live file
+ * silently discards episodes on a long-running observation loop, so the gate's MIN_EPISODES floor
+ * could stay unreachable forever. This reads the oldest archive first through the live file last, so
+ * events arrive roughly in order (validatePanicSignal re-sorts by ts regardless). Malformed lines
+ * are skipped; a missing file contributes nothing. Never throws.
+ */
+export function readPanicTelemetry(directory: string): PanicTelemetryEvent[] {
+  const base = join(directory, OPENLORE_DIR, 'telemetry', 'panic');
+  // Oldest → newest: panic.N.jsonl … panic.1.jsonl, then the live panic.jsonl.
+  const files: string[] = [];
+  for (let i = MAX_ROTATED_FILES; i >= 1; i--) files.push(`${base}.${i}.jsonl`);
+  files.push(`${base}.jsonl`);
+
+  const out: PanicTelemetryEvent[] = [];
+  for (const path of files) {
+    if (!existsSync(path)) continue;
+    let raw: string;
+    try { raw = readFileSync(path, 'utf-8'); } catch { continue; }
+    for (const line of raw.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      try { out.push(JSON.parse(t) as PanicTelemetryEvent); } catch { /* skip malformed */ }
+    }
+  }
+  return out;
 }

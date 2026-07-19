@@ -397,7 +397,7 @@ function renderSummary(
   section('OBSERVE-MODE VALIDATION (accuracy gate)');
   const pv = panicValidation;
   const pct = (r: number | null) => (r != null ? `${Math.round(r * 100)}%` : '—');
-  console.log(`  gate verdict             : ${pv.verdict}  (never auto-CLEARED — maintainer decides)`);
+  console.log(`  gate verdict             : ${pv.verdict}  (CLEARED = criteria met; activating still needs acknowledgement)`);
   console.log(`  episodes observed        : ${pv.episodes.completed} completed / ${pv.episodes.total} total  (need ≥${pv.min_episodes})`);
   console.log(`  false-positive proxy     : ${pct(pv.false_positive.proxy_rate)}  (${pv.false_positive.resolved_via_decay}/${pv.episodes.completed} resolved without re-orient)`);
   console.log(`  intervention follow-thru : ${pct(pv.intervention.follow_through_rate)}  (${pv.intervention.responses}/${pv.intervention.hook_intercepts} intercepts → orient)`);

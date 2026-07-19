@@ -21,6 +21,9 @@ import {
   mutatePanicStateLocked,
   buildPanicCheckOutput,
   getPanicSignalText,
+  deescalatePanicByWallClock,
+  parsePendingToolName,
+  isRecoveryTool,
 } from './panic-response.js';
 import type { PanicState, PanicLevel } from './panic-response.js';
 import {
@@ -28,6 +31,7 @@ import {
   PANIC_DOWN_THRESHOLD,
   HOOK_COOLDOWN_MS,
   PANIC_SESSION_EXPIRY_MS,
+  PANIC_DECAY_PER_MIN,
 } from './panic-constants.js';
 import { OPENLORE_DIR } from '../../../constants.js';
 
@@ -410,5 +414,96 @@ describe('locked writes fail open on a write failure (adversarial final round)',
   it('recordHookInterventionLocked returns the fallback when the lock cannot be acquired (missing dir)', () => {
     const noDir = join(dir, 'does-not-exist');
     expect(recordHookInterventionLocked(noDir, { lastHookInterventionAt: 'x' }, 42)).toBe(42);
+  });
+});
+
+// ============================================================================
+// deescalatePanicByWallClock — the bounded L4 auto-deescalation (no permanent trap)
+// ============================================================================
+
+describe('deescalatePanicByWallClock', () => {
+  const stateAt = (updatedMsAgo: number, score: number, level: PanicLevel): PanicState => ({
+    ...defaultPanicState(),
+    updatedAt: new Date(Date.now() - updatedMsAgo).toISOString(),
+    panicScore: score,
+    panicLevel: level,
+  });
+
+  it('does not change a freshly-updated state (no elapsed time → no decay)', () => {
+    const s = stateAt(0, 100, 4);
+    const out = deescalatePanicByWallClock(s);
+    expect(out.panicLevel).toBe(4);
+    expect(out.panicScore).toBe(100);
+  });
+
+  it('lifts an L4 block once enough wall-clock passes for score to fall below the L4 down-threshold', () => {
+    // From score 100, leaving L4 needs (100 - PANIC_DOWN_THRESHOLD[4]) / PANIC_DECAY_PER_MIN minutes.
+    const minutesToLeaveL4 = (100 - PANIC_DOWN_THRESHOLD[4]) / PANIC_DECAY_PER_MIN;
+    const justBefore = stateAt((minutesToLeaveL4 - 0.5) * 60_000, 100, 4);
+    expect(deescalatePanicByWallClock(justBefore).panicLevel).toBe(4); // not yet
+    const justAfter = stateAt((minutesToLeaveL4 + 0.5) * 60_000, 100, 4);
+    expect(deescalatePanicByWallClock(justAfter).panicLevel).toBeLessThan(4); // block lifts
+  });
+
+  it('settles all the way to 0 after a long idle window', () => {
+    const out = deescalatePanicByWallClock(stateAt(60 * 60_000, 100, 4)); // 1 hour
+    expect(out.panicLevel).toBe(0);
+    expect(out.panicScore).toBe(0);
+  });
+
+  it('never raises the level (decay only lowers)', () => {
+    const out = deescalatePanicByWallClock(stateAt(10 * 60_000, 100, 2));
+    expect(out.panicLevel).toBeLessThanOrEqual(2);
+  });
+
+  it('applies exactly PANIC_DECAY_PER_MIN per elapsed minute to the score', () => {
+    const out = deescalatePanicByWallClock(stateAt(3 * 60_000, 100, 4));
+    expect(out.panicScore).toBe(100 - 3 * PANIC_DECAY_PER_MIN);
+  });
+
+  it('is inert on an unparseable updatedAt (never throws, no change)', () => {
+    const s = { ...defaultPanicState(), updatedAt: 'not-a-date', panicScore: 100, panicLevel: 4 as PanicLevel };
+    expect(() => deescalatePanicByWallClock(s)).not.toThrow();
+    expect(deescalatePanicByWallClock(s).panicLevel).toBe(4);
+  });
+});
+
+// ============================================================================
+// parsePendingToolName + isRecoveryTool — L4 recovery-call exemption
+// ============================================================================
+
+describe('parsePendingToolName', () => {
+  it('reads the Claude Code PreToolUse tool_name field', () => {
+    expect(parsePendingToolName(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }))).toBe('Bash');
+  });
+  it('accepts toolName / tool aliases', () => {
+    expect(parsePendingToolName(JSON.stringify({ toolName: 'Edit' }))).toBe('Edit');
+    expect(parsePendingToolName(JSON.stringify({ tool: 'Read' }))).toBe('Read');
+  });
+  it('returns null (unknown) for empty, non-JSON, or nameless payloads', () => {
+    expect(parsePendingToolName('')).toBeNull();
+    expect(parsePendingToolName('   ')).toBeNull();
+    expect(parsePendingToolName('{ not json')).toBeNull();
+    expect(parsePendingToolName(JSON.stringify({ foo: 'bar' }))).toBeNull();
+    expect(parsePendingToolName(JSON.stringify({ tool_name: '' }))).toBeNull();
+  });
+});
+
+describe('isRecoveryTool', () => {
+  it('matches orient in bare and MCP-namespaced forms', () => {
+    expect(isRecoveryTool('orient')).toBe(true);
+    expect(isRecoveryTool('mcp__openlore__orient')).toBe(true);
+    expect(isRecoveryTool('someserver__orient')).toBe(true);
+  });
+  it('matches the read-only recovery no-ops', () => {
+    expect(isRecoveryTool('mcp__openlore__recall')).toBe(true);
+    expect(isRecoveryTool('mcp__openlore__blast_radius')).toBe(true);
+  });
+  it('does not match write/other tools or unknown/null', () => {
+    expect(isRecoveryTool('Bash')).toBe(false);
+    expect(isRecoveryTool('Edit')).toBe(false);
+    expect(isRecoveryTool('mcp__openlore__record_decision')).toBe(false);
+    expect(isRecoveryTool(null)).toBe(false);
+    expect(isRecoveryTool(undefined)).toBe(false);
   });
 });

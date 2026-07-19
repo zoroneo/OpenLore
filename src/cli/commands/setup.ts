@@ -24,6 +24,8 @@ import { checkbox } from '@inquirer/prompts';
 import { logger } from '../../utils/logger.js';
 import { installPreCommitHook, uninstallClaudeHook } from './decisions.js';
 import { readOpenLoreConfig, writeOpenLoreConfig } from '../../core/services/config-manager.js';
+import { validatePanicSignal, readPanicTelemetry } from '../../core/services/mcp-handlers/panic-validation.js';
+import type { PanicGateReport } from '../../core/services/mcp-handlers/panic-validation.js';
 import type { PanicResponseMode } from '../../types/index.js';
 
 // ============================================================================
@@ -293,6 +295,44 @@ async function runSetup(
 const PANIC_CHECK_HOOK_MARKER = 'openlore panic-check';
 const GRYPH_WATCH_HOOK_MARKER = 'openlore gryph-watch';
 
+/** Sentinel written by `setup --panic off|observe`. When present, the guarded PreToolUse hook skips
+ *  spawning Node entirely (the hook is a pure no-op in those modes) — off/observe cost nothing per
+ *  tool call. Its ABSENCE means "run" (fail-safe: existing installs and direct config edits still
+ *  run the hook), so only the setup path opts into the cheap fast-exit. */
+const PANIC_DISABLED_SENTINEL = 'panic-check-disabled';
+
+/** The PreToolUse hook command: a POSIX-sh guard that runs panic-check only when the disabled
+ *  sentinel is absent, and always exits 0 (a non-zero PreToolUse exit could be read as a denial). */
+export function panicCheckHookCommand(format: string): string {
+  return `test -f "$(pwd)/.openlore/${PANIC_DISABLED_SENTINEL}" || openlore panic-check --directory "$(pwd)" --format ${format} || true`;
+}
+
+export { PANIC_DISABLED_SENTINEL };
+
+/**
+ * Decide whether `setup --panic <mode>` may activate an interventional mode. Pure and deterministic
+ * so it is testable without touching the filesystem or process. Non-interventional modes (off,
+ * observe) always pass. An interventional mode is allowed only when the accuracy gate has CLEARED,
+ * or the operator passed `--acknowledge-unvalidated`; otherwise it is refused with the unmet
+ * criteria named (never a silent refusal, never a silent activation).
+ */
+export function evaluatePanicActivation(
+  mode: PanicResponseMode,
+  report: PanicGateReport,
+  acknowledgeUnvalidated: boolean,
+): { allow: boolean; interventional: boolean; unmet: string[] } {
+  const interventional = mode === 'advisory' || mode === 'experimental_blocking';
+  if (!interventional) return { allow: true, interventional: false, unmet: [] };
+  const c = report.criteria;
+  const unmet: string[] = [];
+  if (!c.data_sufficient) unmet.push(`insufficient data (${report.episodes.completed}/${report.min_episodes} completed episodes)`);
+  if (c.fp_ok === false) unmet.push('false-positive proxy above target (upper bound)');
+  if (c.follow_through_ok === false) unmet.push('intervention follow-through below target');
+  if (c.follow_through_ok === null && c.data_sufficient) unmet.push('follow-through unmeasured (no interventions observed yet)');
+  const allow = report.verdict === 'CLEARED' || acknowledgeUnvalidated;
+  return { allow, interventional, unmet };
+}
+
 interface ClaudeHookSettings {
   hooks?: {
     PreToolUse?: Array<{ _comment?: string; [key: string]: unknown }>;
@@ -331,9 +371,9 @@ export async function installPanicCheckHook(rootPath: string, format: string = '
   catch (e) { logger.error((e as Error).message); return; }
   const hooks = settings.hooks?.PreToolUse ?? [];
   const hookEntry = {
-    _comment: 'openlore: behavioral destabilization guard — fires before every tool call',
+    _comment: 'openlore: behavioral destabilization guard — fires before every tool call (skips spawning Node when panic is off/observe)',
     type: 'command',
-    command: `openlore panic-check --directory "$(pwd)" --format ${format}`,
+    command: panicCheckHookCommand(format),
   };
   // Replace an existing openlore entry in place so a re-run with a DIFFERENT --format
   // actually updates the command (the marker is format-independent), rather than
@@ -414,7 +454,7 @@ export async function uninstallPanicHooks(rootPath: string): Promise<void> {
 }
 
 /** Set panicResponse.mode in .openlore/config.json. Returns true on success. */
-async function setPanicMode(rootPath: string, mode: string): Promise<boolean> {
+async function setPanicMode(rootPath: string, mode: string, acknowledgeUnvalidated: boolean): Promise<boolean> {
   const valid: PanicResponseMode[] = ['off', 'observe', 'advisory', 'experimental_blocking'];
   if (!valid.includes(mode as PanicResponseMode)) {
     logger.error(`Unknown panic mode "${mode}". Valid: ${valid.join(', ')}`);
@@ -425,11 +465,39 @@ async function setPanicMode(rootPath: string, mode: string): Promise<boolean> {
     logger.error('setup --panic: no .openlore/config.json found. Run `openlore init` first.');
     return false;
   }
+
+  // Interventional modes consult the accuracy gate. Activation is never silent: if the gate has not
+  // CLEARED, it is refused with the unmet criteria named, unless the operator says so explicitly.
+  const report = validatePanicSignal(readPanicTelemetry(rootPath));
+  const decision = evaluatePanicActivation(mode as PanicResponseMode, report, acknowledgeUnvalidated);
+  const interventional = decision.interventional;
+  if (interventional && !decision.allow) {
+    logger.error(
+      `setup --panic ${mode}: the panic accuracy gate has not CLEARED (verdict ${report.verdict}) — declining to activate an interventional mode.`,
+    );
+    logger.error(`  Unmet: ${decision.unmet.length ? decision.unmet.join('; ') : 'see `openlore panic-validate`'}`);
+    logger.error('  Review with `openlore panic-validate`, or re-run with `--acknowledge-unvalidated` to activate anyway (recorded).');
+    return false;
+  }
+
   cfg.panicResponse = { mode: mode as PanicResponseMode };
   await writeOpenLoreConfig(rootPath, cfg);
+
+  // Off-mode cheapness: in off/observe the PreToolUse hook is a pure no-op, so drop the disabled
+  // sentinel and the guarded hook skips spawning Node entirely. Interventional modes clear it.
+  const sentinelPath = join(rootPath, '.openlore', PANIC_DISABLED_SENTINEL);
+  try {
+    if (interventional) { await unlink(sentinelPath).catch(() => {}); }
+    else { await writeFile(sentinelPath, 'panic-check disabled in off/observe mode — remove to force the hook to run\n', 'utf-8'); }
+  } catch { /* sentinel is a best-effort fast-path optimization — never fail setup over it */ }
+
   logger.success(`panic response mode set to "${mode}" in .openlore/config.json`);
-  if (mode === 'advisory' || mode === 'experimental_blocking') {
-    logger.warning('Interventional mode enabled — validate signal accuracy first: `openlore panic-validate`');
+  if (interventional) {
+    if (report.verdict === 'CLEARED') {
+      logger.success('Accuracy gate CLEARED — interventional mode enabled.');
+    } else {
+      logger.warning(`Interventional mode enabled WITHOUT a CLEARED accuracy gate (verdict ${report.verdict}, --acknowledge-unvalidated). Validate with \`openlore panic-validate\`.`);
+    }
   }
   return true;
 }
@@ -452,12 +520,13 @@ export const setupCommand = new Command('setup')
   .option('--global', 'For the pi target: install the extension to ~/.pi/agent/extensions/ instead of the project', false)
   .option('--hooks <format>', 'Install the opt-in panic-check + gryph-watch hooks for the given agent format: claude|kilo|codex (use "none" to remove them)')
   .option('--panic <mode>', 'Set panic response mode in .openlore/config.json: off|observe|advisory|experimental_blocking')
-  .action(async (options: { tools?: string; force: boolean; dir: string; global: boolean; hooks?: string; panic?: string }) => {
+  .option('--acknowledge-unvalidated', 'Activate an interventional panic mode even though the accuracy gate has not CLEARED (recorded)', false)
+  .action(async (options: { tools?: string; force: boolean; dir: string; global: boolean; hooks?: string; panic?: string; acknowledgeUnvalidated: boolean }) => {
     const projectRoot = options.dir;
 
     // Opt-in panic setup — runs independently of skill install and needs no TTY.
     if (options.panic !== undefined) {
-      const ok = await setPanicMode(projectRoot, options.panic);
+      const ok = await setPanicMode(projectRoot, options.panic, options.acknowledgeUnvalidated);
       if (!ok) process.exit(1);
     }
     if (options.hooks) {

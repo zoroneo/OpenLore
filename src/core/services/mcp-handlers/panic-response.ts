@@ -19,6 +19,8 @@ import {
   SEVERITY_MAP,
   PANIC_SESSION_EXPIRY_MS,
   PANIC_SCORE_MAX,
+  PANIC_DECAY_PER_MIN,
+  PANIC_RECOVERY_TOOLS,
 } from './panic-constants.js';
 
 // ============================================================================
@@ -85,6 +87,69 @@ export function applyPanicHysteresis(current: PanicLevel, score: number, staleDe
   // Panic ceiling: stale depth floors minimum level
   const minLevel: PanicLevel = staleDepth >= 3 ? 2 : staleDepth >= 2 ? 1 : 0;
   return Math.max(level, minLevel) as PanicLevel;
+}
+
+/**
+ * Apply passive wall-clock decay to a persisted panic state and re-settle its level.
+ *
+ * The standalone panic-check hook path never recomputes the score (only the MCP tracker and the
+ * gryph poll do). So an agent working exclusively via Bash/Edit — the exact case the hook exists to
+ * cover — would sit at a level 4 block forever, with nothing to lower it. This applies the SAME
+ * passive decay the tracker uses (`PANIC_DECAY_PER_MIN` per elapsed minute since `updatedAt`) and
+ * steps the level down through the existing hysteresis thresholds until it settles. No new tuning
+ * constant: the deescalation window is fully determined by the decay rate and the down-thresholds
+ * (from L4 at score 100 that is (100 − PANIC_DOWN_THRESHOLD[4]) / PANIC_DECAY_PER_MIN = 4 min to
+ * leave L4, and on down). staleDepth is unknown in the hook path, so 0 is used — the persisted
+ * level already encodes any earlier stale floor, and decay is only allowed to LOWER it (a returned
+ * level never exceeds the input level).
+ */
+export function deescalatePanicByWallClock(state: PanicState, now: number = Date.now()): PanicState {
+  const updatedMs = new Date(state.updatedAt).getTime();
+  if (!Number.isFinite(updatedMs)) return state;
+  const elapsedMin = Math.max(0, (now - updatedMs) / 60_000);
+  const decay = Math.floor(elapsedMin * PANIC_DECAY_PER_MIN);
+  if (decay <= 0) return state;
+
+  const newScore = Math.max(0, state.panicScore - decay);
+  // Settle the level for the decayed score by applying the existing single-step hysteresis to a
+  // fixpoint (staleDepth 0). Bounded to ≤5 iterations — one per possible level.
+  let level = state.panicLevel;
+  for (let i = 0; i < 5; i++) {
+    const next = applyPanicHysteresis(level, newScore, 0);
+    if (next === level) break;
+    level = next;
+  }
+  // Decay must never raise the level (defensive: applyPanicHysteresis only steps down here).
+  const settled = Math.min(level, state.panicLevel) as PanicLevel;
+  return { ...state, panicScore: newScore, panicLevel: settled };
+}
+
+/**
+ * Parse the pending tool name from a PreToolUse hook payload (Claude Code / codex schema).
+ * Returns null if the payload is empty, not JSON, or carries no recognizable tool-name field —
+ * the caller must treat null as "unknown", never as "not a recovery tool".
+ */
+export function parsePendingToolName(rawPayload: string): string | null {
+  const raw = rawPayload.trim();
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>;
+    const name = obj['tool_name'] ?? obj['toolName'] ?? obj['tool'];
+    return typeof name === 'string' && name.trim() ? name.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True if `toolName` is one of the read-only recovery tools an L4 block must let through.
+ * Normalizes an MCP-namespaced name (`mcp__openlore__orient`, `server__orient`) to its base name.
+ */
+export function isRecoveryTool(toolName: string | null | undefined): boolean {
+  if (!toolName) return false;
+  const segments = toolName.split('__');
+  const base = segments[segments.length - 1].toLowerCase();
+  return PANIC_RECOVERY_TOOLS.includes(base);
 }
 
 // ============================================================================

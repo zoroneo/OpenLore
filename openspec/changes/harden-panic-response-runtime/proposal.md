@@ -1,6 +1,6 @@
 # Harden the panic-response runtime: escapable blocking, atomic watcher singleton, honest gate
 
-> Status: PROPOSED (2026-07-03, e2e audit). Fixes four runtime defects in the opt-in behavioral
+> Status: IMPLEMENTED (2026-07-18). Fixes four runtime defects in the opt-in behavioral
 > governance subsystem WITHOUT changing its posture: modes stay off by default, blocking stays
 > experimental and opt-in (the `defer-panic-blocking-enforcement` / `defer-panic-setup-hooks`
 > decisions are untouched). The theme: an interventional feature must never trap the agent, race

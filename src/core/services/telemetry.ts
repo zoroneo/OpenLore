@@ -16,7 +16,9 @@ import { redactSecrets } from './secret-redaction.js';
 
 const TELEMETRY_SUBDIR = 'telemetry';
 const ROTATE_THRESHOLD_BYTES = 50 * 1024 * 1024;  // 50 MB
-const MAX_ROTATED_FILES = 5;
+/** Number of rotated archive files kept per domain (`<domain>.1.jsonl` … `<domain>.N.jsonl`).
+ *  Exported so readers that must span rotation (e.g. the panic accuracy gate) stay in lockstep. */
+export const MAX_ROTATED_FILES = 5;
 const _createdDirs = new Set<string>();
 
 function rotateTelemetryFile(filePath: string): void {
