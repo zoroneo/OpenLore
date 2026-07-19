@@ -1,9 +1,16 @@
 # structural_diff must read old content at the merge-base, not the base ref's tip
 
-> Status: PROPOSED (2026-07-08, e2e audit fifth pass). `structural_diff`'s changed-file list is
-> merge-base-scoped (three-dot), but its OLD snapshots are read at the base ref's TIP — on any PR
-> whose base advanced past the branch point, main-side drift is misattributed to the change. The
-> repo already ships the fix three times over (`oldContentRef` in the impact certificate); port it.
+> Status: SHIPPED (2026-07-19, PR fix-structural-diff-merge-base). Both paths now read old content
+> at the merge-base of the base ref and the new state (working-tree path: `merge-base(base, HEAD)`;
+> two-ref path: three-dot file list + `merge-base(base, headRef)`), ported from the impact
+> certificate's `oldContentRef` helper. `safeBuild` now discloses a snapshot build failure as a
+> soundness caveat instead of silently comparing an empty graph. Regression tests
+> (`structural-diff-mergebase.test.ts`) pin the advanced-base, footprint-escape, two-ref, no-drift,
+> and parse-crash scenarios; verified to fail against the pre-fix code. Originally proposed
+> (2026-07-08, e2e audit fifth pass): `structural_diff`'s changed-file list is merge-base-scoped
+> (three-dot), but its OLD snapshots were read at the base ref's TIP — on any PR whose base advanced
+> past the branch point, main-side drift was misattributed to the change. The repo already ships the
+> fix three times over (`oldContentRef` in the impact certificate); port it.
 
 ## The defect(s)
 

@@ -82,6 +82,27 @@ async function fileAtRef(rootPath: string, ref: string, path: string): Promise<s
   }
 }
 
+/**
+ * The commit the OLD file content must be read from. The changed-file list is
+ * scoped to the MERGE-BASE (three-dot `base...tip`), so old content has to be read
+ * from that same point — not the base ref's TIP — or a file changed on BOTH the
+ * branch and the base since the branch point yields an old snapshot polluted with
+ * the base branch's own edits: a teammate's new function reads as REMOVED, their
+ * signature change reads as YOURS. Returns the merge-base SHA of `base` and `tip`,
+ * or the resolved base when no common ancestor exists (mirrors `getChangedFiles`'
+ * own three-dot → two-dot fallback). The same discipline the impact certificate
+ * (`oldContentRef`) and public-surface certification (`mergeBase`) already ship.
+ */
+async function oldContentRef(rootPath: string, base: string, tip: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('git', ['merge-base', base, tip], { cwd: rootPath });
+    const sha = stdout.trim();
+    return sha.length > 0 ? sha : base;
+  } catch {
+    return base; // no common ancestor → fall back to the ref tip (as getChangedFiles does)
+  }
+}
+
 function nodeRef(n: FunctionNode) {
   return { name: n.name, file: n.filePath, className: n.className ?? null, signature: n.signature ?? n.name };
 }
@@ -104,10 +125,22 @@ export async function handleStructuralDiff(input: StructuralDiffInput): Promise<
   let changed: Array<{ path: string; status: string; oldPath?: string }>;
   try {
     if (input.headRef) {
-      const { stdout } = await execFileAsync(
-        'git', gitPathArgs('diff', '--name-status', '--diff-filter=ACDMR', `${resolvedBase}..${input.headRef}`),
-        { cwd: absDir, maxBuffer: 16 * 1024 * 1024 },
-      );
+      // Merge-base (three-dot) semantics, matching the working-tree path's
+      // `getChangedFiles`: files changed only on the base side after the branch
+      // point must NOT enter the delta. Fall back to two-dot when the two refs
+      // share no common ancestor (mirrors `getChangedFiles`' own fallback).
+      let stdout = '';
+      for (const sep of ['...', '..']) {
+        try {
+          ({ stdout } = await execFileAsync(
+            'git', gitPathArgs('diff', '--name-status', '--diff-filter=ACDMR', `${resolvedBase}${sep}${input.headRef}`),
+            { cwd: absDir, maxBuffer: 16 * 1024 * 1024 },
+          ));
+          break;
+        } catch (err) {
+          if (sep === '..') throw err; // both separators failed → surface it
+        }
+      }
       changed = stdout.split('\n').filter(Boolean).map(line => {
         const parts = line.split('\t');
         const s = parts[0].charAt(0);
@@ -160,12 +193,16 @@ export async function handleStructuralDiff(input: StructuralDiffInput): Promise<
   }
 
   // ── Build old + new snapshots from just the changed files ───────────────────
+  // Old content is read at the MERGE-BASE of the resolved base and the new state's
+  // tip — the same point the changed-file list is scoped to — so base-branch drift
+  // accrued after the branch point is never attributed to this change.
+  const oldRef = await oldContentRef(absDir, resolvedBase, input.headRef ?? 'HEAD');
   const oldFiles: InFile[] = [];
   const newFiles: InFile[] = [];
   for (const c of codeChanged) {
     const lang = detectLanguage(c.path);
     const oldSrcPath = c.oldPath ?? c.path;
-    const oldContent = c.status === 'added' ? '' : await fileAtRef(absDir, resolvedBase, oldSrcPath);
+    const oldContent = c.status === 'added' ? '' : await fileAtRef(absDir, oldRef, oldSrcPath);
     let newContent = '';
     if (c.status !== 'deleted') {
       newContent = input.headRef
@@ -181,8 +218,17 @@ export async function handleStructuralDiff(input: StructuralDiffInput): Promise<
     if (newContent) newFiles.push({ path: c.path, content: newContent, language: lang });
   }
 
-  const oldGraph = await safeBuild(oldFiles);
-  const newGraph = await safeBuild(newFiles);
+  const oldBuild = await safeBuild(oldFiles);
+  const newBuild = await safeBuild(newFiles);
+  const oldGraph = oldBuild.graph;
+  const newGraph = newBuild.graph;
+  // A snapshot whose graph build threw is a disclosed parse-failure boundary, not a
+  // silent empty graph: without disclosure every symbol on that side reads as a
+  // confident add/remove (add-parse-health-boundary-disclosure, applied here).
+  const failedSnapshots = [
+    ...(oldBuild.failed ? ['old (base)'] : []),
+    ...(newBuild.failed ? ['new (head)'] : []),
+  ];
 
   const oldList = oldGraph.nodes.filter(isCode);
   const newList = newGraph.nodes.filter(isCode);
@@ -341,7 +387,7 @@ export async function handleStructuralDiff(input: StructuralDiffInput): Promise<
     edges: { added: addedEdges.slice(0, limit), removed: removedEdges.slice(0, limit) },
     ...(staleCallerNote ? { note: staleCallerNote } : {}),
     ...(escapeBlock ? { escapeAnalysis: escapeBlock } : {}),
-    soundness: diffSoundness(false),
+    soundness: diffSoundness(false, failedSnapshots),
   };
 }
 
@@ -486,12 +532,14 @@ function edgePair(e: { callerId: string; calleeId: string; calleeName: string },
   const caller = g.nodes.find(n => n.id === e.callerId);
   return { caller: caller?.name ?? e.callerId, callee: e.calleeName, file: caller?.filePath ?? '' };
 }
-async function safeBuild(files: InFile[]): Promise<SerializedCallGraph> {
-  if (files.length === 0) return emptyGraph();
+async function safeBuild(files: InFile[]): Promise<{ graph: SerializedCallGraph; failed: boolean }> {
+  // An empty file set is a legitimate empty snapshot (e.g. an all-added change has
+  // no old files), NOT a build failure — only the catch path is a parse boundary.
+  if (files.length === 0) return { graph: emptyGraph(), failed: false };
   try {
-    return serializeCallGraph(await new CallGraphBuilder().build(files));
+    return { graph: serializeCallGraph(await new CallGraphBuilder().build(files)), failed: false };
   } catch {
-    return emptyGraph();
+    return { graph: emptyGraph(), failed: true };
   }
 }
 function emptyGraph(): SerializedCallGraph {
@@ -501,12 +549,17 @@ function emptyGraph(): SerializedCallGraph {
 function emptySummary() {
   return { addedFunctions: 0, removedFunctions: 0, signatureChanges: 0, addedEdges: 0, removedEdges: 0, staleCallers: 0, renameCandidates: 0 };
 }
-function diffSoundness(empty: boolean): { posture: string; caveats: string[] } {
+function diffSoundness(empty: boolean, failedSnapshots?: string[]): { posture: string; caveats: string[] } {
   const caveats = [
 'A cross-file pair sharing a content-addressed stable id (name + parameter shape) is reported as a move with confidence "stable-id" — a strong signal, but NOT proof: a symbol that was deleted and independently replaced by a same-name/same-shape homonym is indistinguishable, so verify rather than assume "same symbol". The stable id is matched only when unique within the changed-file set (a same-shape symbol in an unchanged file is not considered). Identifier renames and symbols without a stable id (anonymous/synthetic) stay heuristic — paired by signature shape and reported separately.',
     'Signature-change detection is limited to what the analyzer extracts per language; cross-language signature notions differ.',
     'Edge deltas cover calls among/out of the changed files; calls into unchanged files resolve against the canonical graph for stale callers only.',
+    'Old file content is read at the merge-base of the base ref and the new state (the same point the changed-file list is scoped to), so a base branch that advanced past the branch point does not have its own edits attributed to this change.',
   ];
   if (empty) caveats.push('No code files changed — the structural delta is empty.');
+  if (failedSnapshots && failedSnapshots.length > 0) {
+    const plural = failedSnapshots.length > 1;
+    caveats.push(`The ${failedSnapshots.join(' and ')} snapshot${plural ? 's' : ''} could not be parsed into a call graph (build failure); ${plural ? 'their' : 'its'} side of the delta is unavailable and this comparison is NOT authoritative — symbols shown as added or removed against the failed side may be parse artifacts, not real changes. Disclosed parse-failure boundary, not a clean empty comparison.`);
+  }
   return { posture: 'structural-complement-to-git-diff', caveats };
 }
