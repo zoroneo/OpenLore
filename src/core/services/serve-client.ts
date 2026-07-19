@@ -12,17 +12,9 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { OPENLORE_DIR } from '../../constants.js';
-
-/** Subset of the daemon's serve.json we need to reach it. */
-interface ServeDescriptor {
-  port: number;
-  pid: number;
-  host: string;
-  token?: string;
-}
+import { readServeDescriptor, type ServeDescriptor } from '../../cli/commands/serve-descriptor.js';
 
 /** A resolved, reachable daemon. */
 export interface ServeEndpoint {
@@ -53,12 +45,16 @@ export function serveSpawnArgs(directory: string): string[] {
   return ['serve', '--directory', directory];
 }
 
+/**
+ * Discover the daemon descriptor. `.openlore/serve.json` is an untrusted,
+ * repo-writable artifact, so it is resolved through the shared validator
+ * ({@link readServeDescriptor}) — a poisoned descriptor (non-loopback host,
+ * bad port/pid, non-string token) is treated exactly as absent, so no field of
+ * it ever becomes a fetch target or request header (mcp-security:
+ * ServeDescriptorValidatedAtEveryReader).
+ */
 async function readDescriptor(directory: string): Promise<ServeDescriptor | null> {
-  try {
-    return JSON.parse(await readFile(descriptorPath(directory), 'utf-8')) as ServeDescriptor;
-  } catch {
-    return null;
-  }
+  return readServeDescriptor(descriptorPath(directory));
 }
 
 /** True when a descriptor points at a LIVE daemon (ok:true /health), not a stale
