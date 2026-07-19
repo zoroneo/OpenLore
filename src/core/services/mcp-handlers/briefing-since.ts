@@ -28,7 +28,6 @@ import { seedsFromFiles, handleSelectTests } from './test-impact.js';
 import { isCodeNode, isExcludedPath } from './code-node.js';
 import { computeLandmarkSignals } from '../../analyzer/landmark-signals.js';
 import { analyzeChangeCoupling } from '../../provenance/change-coupling.js';
-import { refExists } from '../../drift/git-diff.js';
 import { assembleBoundary, computeStaleness } from './confidence-boundary.js';
 import {
   labelChangeSignificance,
@@ -82,29 +81,26 @@ export async function handleBriefingSince(input: BriefingSinceInput): Promise<un
   const baseRefInput = input.baseRef && input.baseRef.length > 0 ? input.baseRef : 'auto';
 
   // ── 1. Changed files since the base ref ─────────────────────────────────────
+  // Resolve-or-disclose through the one shared helper (fix-cli-conclusion-honesty):
+  // it returns the ref git actually diffs against (post main → master → HEAD~1
+  // fallback) AND whether the caller's explicit ref was genuinely unresolvable — so a
+  // typo'd `--base` is disclosed rather than silently briefing against a base the
+  // caller never asked for. The `auto` default explicitly requests the fallback chain.
   let resolvedBase: string;
+  let requestedRefUnresolved: boolean;
   let changedFiles: string[];
   try {
-    const { getChangedFiles } = await import('../../drift/git-diff.js');
-    const diff = await getChangedFiles({ rootPath: absDir, baseRef: baseRefInput, includeUnstaged: true });
-    resolvedBase = diff.resolvedBase;
+    const { getChangedFiles, resolveBaseRefDisclosed } = await import('../../drift/git-diff.js');
+    const base = await resolveBaseRefDisclosed(absDir, baseRefInput);
+    resolvedBase = base.resolved;
+    requestedRefUnresolved = base.fellBack;
+    const diff = await getChangedFiles({ rootPath: absDir, baseRef: resolvedBase, includeUnstaged: true });
     // Production code files only — tests/config/generated are not "changes that matter"
     // to rank; they still drive the tests-to-run selection below.
     changedFiles = diff.files.filter(f => !f.isTest).map(f => f.path);
   } catch (err) {
     return { error: `git diff failed (base ${baseRefInput}): ${err instanceof Error ? err.message : String(err)}` };
   }
-
-  // ── Honesty: detect a SILENT base-ref fallback ──────────────────────────────
-  // `resolveBaseRef` (inside getChangedFiles) returns an explicit ref verbatim when
-  // it verifies, and SILENTLY substitutes main → master → HEAD~1 → empty-tree when it
-  // does not — so `resolvedBase !== baseRefInput` is exactly "a fallback happened".
-  // We additionally confirm the requested ref is genuinely unresolvable, so a valid
-  // base that simply isn't a commit (e.g. the empty-tree SHA, which resolves to
-  // itself) is never mis-flagged. Briefing against a base the caller never asked for
-  // (a typo'd `--base`) would make every number below authoritative-looking but wrong.
-  const requestedRefUnresolved =
-    baseRefInput !== 'auto' && resolvedBase !== baseRefInput && !(await refExists(absDir, baseRefInput));
 
   // ── 2. Changed production symbols (file-level granularity) ──────────────────
   // A region scope (filePattern) narrows BOTH the briefed symbols and the file

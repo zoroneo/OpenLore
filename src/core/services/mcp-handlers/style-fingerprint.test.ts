@@ -62,6 +62,25 @@ describe('handleGetStyleFingerprint', () => {
     expect(go.idioms.functionNaming).toEqual({ signal: null, reason: 'enforced' });
   });
 
+  it('an unrecognized --language is a not-found error, never a quiet empty (finding #3)', async () => {
+    // The tool family whose selling point is "a null signal, never a quiet empty" must
+    // not answer a typo'd language with byLanguage: []; it errors and lists the known set.
+    const res = (await handleGetStyleFingerprint({ directory: dir, language: 'Klingon' })) as Record<string, unknown>;
+    expect(res.error).toMatch(/No style fingerprint for language "Klingon"/);
+    expect(res.error).toMatch(/TypeScript/);
+    expect(res.knownLanguages).toEqual(['Go', 'JavaScript', 'Python', 'TypeScript']);
+    expect(res.byLanguage).toBeUndefined();
+  });
+
+  it('a supported-but-absent language returns an honest note, not a silent empty', async () => {
+    // Python IS a supported style-fingerprint language, just not present in this fixture.
+    // That is a legitimate empty — but disclosed with a note, never a bare byLanguage: [].
+    const res = (await handleGetStyleFingerprint({ directory: dir, language: 'python' })) as Record<string, unknown>;
+    expect(res.error).toBeUndefined();
+    expect(res.byLanguage).toEqual([]);
+    expect(res.note).toMatch(/Python is a supported language but no functions were sampled/i);
+  });
+
   it('region scope returns one community profile', async () => {
     const res = (await handleGetStyleFingerprint({ directory: dir, communityId: 'reg2' })) as Record<string, unknown>;
     expect(res.scope).toBe('region');

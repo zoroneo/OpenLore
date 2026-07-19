@@ -112,8 +112,8 @@ export function triggeredBlockSeverities(
 /** Compact human rendering of the certificate (to stderr in hook mode). */
 function renderHuman(c: ImpactCertificate): string {
   const lines: string[] = ['', '📜 Change-impact certificate (advisory)', '   ' + c.headline];
-  if (c.resolvedBaseRef !== c.baseRef) {
-    lines.push(`   ⚠ base ref "${c.baseRef}" did not resolve — diffed against "${c.resolvedBaseRef}".`);
+  if (c.baseRefFallback) {
+    lines.push(`   ⚠ base ref "${c.baseRefFallback.requested}" did not resolve — certified against "${c.baseRefFallback.resolved}" (--allow-base-fallback).`);
   }
   if (c.surfaces.length > 0) {
     lines.push('   Surfaces: ' + c.surfaces.map(s => `${s.name} (${s.resolvedSymbols} sym, ${s.severity})`).join(', '));
@@ -144,6 +144,7 @@ export interface ImpactCertificateCliOptions {
   save?: boolean;
   installHook?: boolean;
   uninstallHook?: boolean;
+  allowBaseFallback?: boolean;
 }
 
 export async function runImpactCertificateCli(opts: ImpactCertificateCliOptions): Promise<number> {
@@ -155,10 +156,14 @@ export async function runImpactCertificateCli(opts: ImpactCertificateCliOptions)
   // Hook mode persists by default so the certificate decays and the spec-store
   // health check can re-fire it; an explicit --save forces it elsewhere too.
   const persist = opts.save || opts.hook;
+  // The hook is advisory and must never block a commit — so a bogus --base there
+  // falls back (disclosed) rather than erroring. A direct invocation stays fatal on
+  // an unresolvable base (fix-cli-conclusion-honesty) unless --allow-base-fallback.
+  const allowBaseFallback = opts.allowBaseFallback || opts.hook === true;
   configureLogger({ quiet: true });
   let result: Awaited<ReturnType<typeof computeImpactCertificate>>;
   try {
-    result = await computeImpactCertificate({ directory: cwd, baseRef: opts.base, change: opts.change, persist });
+    result = await computeImpactCertificate({ directory: cwd, baseRef: opts.base, change: opts.change, persist, allowBaseFallback });
   } catch (err) {
     // Final advisory safety net: a throw must NEVER block a commit.
     result = { error: err instanceof Error ? err.message : String(err) };
@@ -169,6 +174,10 @@ export async function runImpactCertificateCli(opts: ImpactCertificateCliOptions)
   if ('error' in result) {
     if (opts.json) await writeStdout(JSON.stringify({ status: 'unavailable', error: result.error }, null, 2) + '\n');
     else logger.warning(`impact-certificate: ${result.error}`);
+    // A caller-supplied unresolvable base is a usage error, not infrastructure failure:
+    // fail non-zero for a direct invocation so a typo'd ref can't yield a clean-looking
+    // certificate. In hook mode allowBaseFallback is on, so this branch is unreachable there.
+    if ('baseUnresolved' in result && result.baseUnresolved && !opts.hook) return 1;
     return 0; // infrastructure failure never blocks
   }
 
@@ -204,15 +213,16 @@ export const impactCertificateCommand = new Command('impact-certificate')
   .description('Change-impact certificate for the current diff (advisory): blast radius, newly-opened paths into declared covering surfaces, drifted specs, and tests to run.')
   .option('--base <ref>', 'Git ref to diff the working tree against (default HEAD)')
   .option('--change <id>', 'Change id to record on the certificate (spec-store context)')
+  .option('--allow-base-fallback', 'Accept the disclosed main → master → HEAD~1 fallback when --base does not resolve, instead of erroring (direct invocation only; the hook always falls back)', false)
   .option('--json', 'Emit the certificate as JSON', false)
   .option('--hook', 'Hook mode: print to stderr, persist, and block only on a configured surface severity', false)
   .option('--save', 'Persist the certificate under .openlore/impact-certificates/ for later decay re-checks', false)
   .option('--install-hook', 'Install the advisory pre-commit hook', false)
   .option('--uninstall-hook', 'Remove the advisory pre-commit hook', false)
-  .action(async (opts: { base?: string; change?: string; json?: boolean; hook?: boolean; save?: boolean; installHook?: boolean; uninstallHook?: boolean }) => {
+  .action(async (opts: { base?: string; change?: string; json?: boolean; hook?: boolean; save?: boolean; installHook?: boolean; uninstallHook?: boolean; allowBaseFallback?: boolean }) => {
     const code = await runImpactCertificateCli({
       base: opts.base, change: opts.change, json: opts.json, hook: opts.hook, save: opts.save,
-      installHook: opts.installHook, uninstallHook: opts.uninstallHook,
+      installHook: opts.installHook, uninstallHook: opts.uninstallHook, allowBaseFallback: opts.allowBaseFallback,
     });
     process.exit(code);
   });

@@ -22,6 +22,8 @@ import { validateDirectory, readCachedContext } from './utils.js';
 import { seedsFromFiles, handleSelectTests } from './test-impact.js';
 import { handleAnalyzeImpact } from './graph.js';
 import { handleCheckSpecDrift } from './analysis.js';
+import { assembleBoundary, computeStaleness } from './confidence-boundary.js';
+import type { ConfidenceBoundary } from './confidence-boundary.js';
 import type { SerializedCallGraph } from '../../analyzer/call-graph.js';
 import type { DriftIssue, DriftResult } from '../../../types/index.js';
 
@@ -105,6 +107,11 @@ export interface BlastRadiusBriefing {
     items: Array<{ kind: string; message: string; domain: string | null }>;
   };
   federation: { evaluated: false; note: string };
+  /** Present only when the requested base did not resolve; names both refs (fix-cli-conclusion-honesty). */
+  baseRefFallback?: { requested: string; resolved: string };
+  /** Index-staleness disclosure: a risk headline computed over a graph that predates the
+   * working tree must say so (fix-cli-conclusion-honesty). Absent when the index is current. */
+  confidenceBoundary?: ConfidenceBoundary;
   headline: string;
   posture: 'advisory';
   caveats: string[];
@@ -145,15 +152,18 @@ export async function computeBlastRadius(
 
   // ── 1. Resolve the diff → changed files → seed production symbols ───────────
   let changedFiles: string[] = [];
-  // resolveBaseRef silently falls back (main → master → HEAD~1) when the requested
-  // ref does not resolve; capture what git ACTUALLY diffed against so the briefing
-  // never misrepresents its base (honest-scope; mirrors no-silent-truncation).
+  // Resolve-or-disclose through the one shared helper (fix-cli-conclusion-honesty):
+  // an explicit ref that git can't resolve falls back (main → master → HEAD~1) and is
+  // disclosed, so the advisory briefing never misrepresents the base it diffed against.
   let resolvedBaseRef = baseRef;
+  let baseFellBack = false;
   try {
-    const { getChangedFiles } = await import('../../drift/git-diff.js');
-    const diff = await getChangedFiles({ rootPath: absDir, baseRef, includeUnstaged: true });
+    const { getChangedFiles, resolveBaseRefDisclosed } = await import('../../drift/git-diff.js');
+    const base = await resolveBaseRefDisclosed(absDir, baseRef);
+    resolvedBaseRef = base.resolved;
+    baseFellBack = base.fellBack;
+    const diff = await getChangedFiles({ rootPath: absDir, baseRef: resolvedBaseRef, includeUnstaged: true });
     changedFiles = diff.files.map(f => f.path);
-    resolvedBaseRef = diff.resolvedBase ?? baseRef;
   } catch (err) {
     return { error: `git diff failed (base ${baseRef}): ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -205,7 +215,7 @@ export async function computeBlastRadius(
   let testToRun: Array<{ test: string; file: string; confidence: string }> = [];
   let testSoundness: unknown;
   try {
-    const sel = await handleSelectTests({ directory: absDir, diffRef: baseRef }) as {
+    const sel = await handleSelectTests({ directory: absDir, diffRef: resolvedBaseRef }) as {
       selectedTests?: Array<{ test: string; file: string; confidence: string }>;
       soundness?: unknown;
     };
@@ -225,7 +235,7 @@ export async function computeBlastRadius(
   let driftUnavailable: string | null = null;
   let driftRaw: unknown;
   try {
-    driftRaw = await handleCheckSpecDrift(absDir, baseRef, changedFiles, [], 'warning');
+    driftRaw = await handleCheckSpecDrift(absDir, resolvedBaseRef, changedFiles, [], 'warning');
   } catch (err) {
     // Drift is best-effort: a throw degrades to "unavailable" (reported as a
     // caveat), it never aborts the briefing (advisory — never block).
@@ -250,7 +260,7 @@ export async function computeBlastRadius(
     'Blast radius is an over-approximate structural prioritizer, not a behavioral test outcome.',
     'Impact and test selection can under-select through dynamic dispatch, reflection, and DI.',
   ];
-  if (resolvedBaseRef !== baseRef) {
+  if (baseFellBack) {
     caveats.push(`Requested base ref "${baseRef}" did not resolve; diffed against "${resolvedBaseRef}" instead (main → master → HEAD~1 fallback).`);
   }
   if (seeds.length > analyzed.length) {
@@ -276,9 +286,17 @@ export async function computeBlastRadius(
     caveats.push(`Detail lists truncated for brevity: ${capped.join(', ')} — see the counts for totals.`);
   }
 
+  // Index-staleness disclosure: a risk headline computed from a graph that predates
+  // the working tree must say so (fix-cli-conclusion-honesty). Same shared shape the
+  // certification commands emit; absent when the index is current.
+  const staleness = await computeStaleness(absDir);
+  const confidenceBoundary = assembleBoundary({ staleness, integrity: ctx.integrity });
+
   const briefing: BlastRadiusBriefing = {
     baseRef,
     resolvedBaseRef,
+    ...(baseFellBack ? { baseRefFallback: { requested: baseRef, resolved: resolvedBaseRef } } : {}),
+    ...(confidenceBoundary.complete ? {} : { confidenceBoundary }),
     changed: {
       files: changedFiles.length,
       symbols: seeds.length,

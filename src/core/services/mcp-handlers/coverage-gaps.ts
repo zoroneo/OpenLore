@@ -143,6 +143,7 @@ export async function handleReportCoverageGaps(input: ReportCoverageGapsInput): 
   let scopeIds: Set<string> | null = null;
   let changedDescriptor: string[] = [];
   let baseRefUsed: string | undefined;
+  let baseRefFallback: { requested: string; resolved: string } | undefined;
   let diffError: string | undefined;
   if (wantsDiff) {
     scope = 'diff';
@@ -153,8 +154,14 @@ export async function handleReportCoverageGaps(input: ReportCoverageGapsInput): 
       changedDescriptor = input.changedSymbols!;
     } else {
       try {
-        const { getChangedFiles } = await import('../../drift/git-diff.js');
-        const diff = await getChangedFiles({ rootPath: absDir, baseRef: baseRefUsed, includeUnstaged: true });
+        // Resolve-or-disclose through the one shared helper (fix-cli-conclusion-honesty): a
+        // typo'd diffRef silently falls back inside getChangedFiles, which would report gaps
+        // scoped to the wrong diff. Resolve first, disclose the fallback, diff the real base.
+        const { getChangedFiles, resolveBaseRefDisclosed } = await import('../../drift/git-diff.js');
+        const base = await resolveBaseRefDisclosed(absDir, baseRefUsed);
+        if (base.fellBack) baseRefFallback = { requested: baseRefUsed, resolved: base.resolved };
+        baseRefUsed = base.resolved;
+        const diff = await getChangedFiles({ rootPath: absDir, baseRef: base.resolved, includeUnstaged: true });
         const files = diff.files.map(f => f.path);
         changedDescriptor = files;
         scopeIds = new Set(seedsFromFiles(cg, files).map(s => s.id));
@@ -270,9 +277,16 @@ export async function handleReportCoverageGaps(input: ReportCoverageGapsInput): 
 
   const testedCount = inScope.filter(n => reachedByTest.has(n.id)).length;
 
+  // The unresolved-ref disclosure leads the caveats — it changes which base the diff
+  // scope was computed against, so it must not be buried under the gaps-only caveats.
+  if (baseRefFallback) {
+    caveats.unshift(`Requested base ref "${baseRefFallback.requested}" did not resolve; scoped gaps to the diff vs "${baseRefFallback.resolved}" instead (git's silent fallback). Pass a ref that exists to target the base you meant.`);
+  }
+
   return {
     scope,
     ...(scope === 'diff' ? { changed: changedDescriptor } : {}),
+    ...(baseRefFallback ? { baseRefFallback } : {}),
     ...(input.filePattern ? { filePattern: input.filePattern } : {}),
     analyzedSymbols: inScope.length,
     reachableFromTest: testedCount,

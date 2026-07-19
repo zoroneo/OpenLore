@@ -1110,3 +1110,53 @@ but unreachable — not when keyword mode is simply the unconfigured default.
 Benchmark-cleared. The DefaultSurfaceRevealsAllFaces gate ran all three quantities and none regressed: (1) token economy — substrate ~4.5k tokens, +1.2k over navigation, within the ~10k tool-search threshold; (2) face coverage — substrate exposes navigate+change+remember+verify, navigation only navigate; (3) selection accuracy — substrate 90% vs navigation 80% on shared tool selection (no regression) and 100% vs 0% on governance, plus end-to-end task COMPLETION on the pinned real-repo corpus across TWO models (sonnet + haiku) on BOTH tiers: 100% correctness everywhere, substrate cheaper on 3 of 4 model×tier cells. The lean navigation default under-sold the substrate: agents installed the documented way never discovered recall/verify_claim/blast_radius.
 
 **Consequences:** The out-of-box default install now exposes the substrate preset (navigation core + recall + verify_claim + blast_radius, 13 tools) instead of navigation (10). No tool removed; navigation stays a named preset and is a one-flag reversible escape (--preset navigation). Reverses ADR-0022 (a6c916ed). Lean-default payload budget rises ~13.2KB to ~17.7KB. The BREADTH_POINTER now describes the substrate default and points to full/federation/navigation. Docs/guards updated to the 13-tool default.
+
+### Requirement: BaseRefResolutionIsDisclosedOrFatal
+
+Every CLI command accepting a `--base` ref SHALL resolve it through one shared helper
+(`resolveBaseRefDisclosed`). When the requested ref does not resolve, an advisory command (blast
+radius, briefing, coverage-gaps) SHALL return a structured fallback disclosure (`requested`,
+`resolved`) alongside its conclusion, and a certification command (`certify-public-surface`,
+`impact-certificate`) SHALL fail with a non-zero exit naming the unresolvable ref — a verdict
+computed against a base the user did not ask for is never presented as a certificate — unless the
+user explicitly opts into disclosed fallback with `--allow-base-fallback`. A composer that forwards
+`--base` to a helper-routed handler inherits the disclosure. A parity test SHALL fail when a
+`--base` command does not route through the helper.
+
+#### Scenario: A typo'd tag cannot produce a clean certificate
+
+- **GIVEN** `openlore certify-public-surface --base v2.1.5-typo`
+- **WHEN** the ref does not resolve
+- **THEN** the command exits non-zero naming the ref, and no verdict is printed
+
+#### Scenario: An advisory command falls back with a receipt
+
+- **GIVEN** `openlore blast-radius --base not-a-ref`
+- **WHEN** the ref does not resolve and the fallback chain selects `main`
+- **THEN** the output carries the structured fallback disclosure naming both refs
+
+#### Scenario: The opt-in flag restores disclosed fallback for a certificate
+
+- **GIVEN** `openlore certify-public-surface --base not-a-ref --allow-base-fallback`
+- **WHEN** the ref does not resolve
+- **THEN** the certificate is computed against the fallback base and carries the `baseRefFallback` disclosure
+
+### Requirement: ConclusionCommandsDiscloseIndexStaleness
+
+Every CLI command whose conclusion is computed from the cached graph SHALL disclose index
+staleness through one shared boundary shape (the index's build commit and the count of source files
+changed since) whenever the working tree has moved past the index. No conclusion command may present
+a risk headline or ranked briefing over a stale graph without the disclosure. A parity test SHALL
+enumerate cached-graph commands and fail when one lacks the boundary path.
+
+#### Scenario: A stale blast radius says so
+
+- **GIVEN** an index built 90 commits ago and a `blast-radius` invocation
+- **WHEN** the conclusion is printed
+- **THEN** it carries the staleness boundary (build commit, changed-file count) alongside the risk headline
+
+#### Scenario: Unknown enum inputs are not quiet-empty
+
+- **GIVEN** `openlore style-fingerprint --language <unrecognized>`
+- **WHEN** the language matches no known language
+- **THEN** the command exits non-zero with a not-found shape listing the known languages, matching the honesty of its file-path counterpart

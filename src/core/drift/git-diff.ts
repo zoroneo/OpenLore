@@ -231,6 +231,42 @@ export async function resolveBaseRef(rootPath: string, preferredRef: string): Pr
 }
 
 /**
+ * The disclosed resolution of a `--base` ref. `requested` is what the caller asked
+ * for (verbatim, or the command's default sentinel); `resolved` is the ref git will
+ * actually diff against after {@link resolveBaseRef}'s main → master → HEAD~1 fallback.
+ * `fellBack` is true exactly when the caller passed an EXPLICIT ref that git could not
+ * resolve — so `resolved` is a base the caller did not ask for. A conclusion command
+ * must never present a verdict over a fallback base without disclosing this.
+ */
+export interface BaseRefResolution {
+  requested: string;
+  resolved: string;
+  fellBack: boolean;
+}
+
+/**
+ * Resolve a base ref AND disclose whether the caller's requested ref actually
+ * resolved — the single "resolve-or-disclose" point every `--base` command shares
+ * (fix-cli-conclusion-honesty). Advisory commands surface `fellBack` as a caveat;
+ * certification commands treat it as fatal unless the caller opts into fallback.
+ *
+ * The `auto`/empty sentinel (the briefing default that explicitly REQUESTS the
+ * fallback chain) never counts as a fallback. For an explicit ref we confirm the
+ * fallback with {@link refExists}, so a ref that resolves to a differently-spelled
+ * commit (e.g. a short SHA, a tag) is correctly reported as resolved, not fallen-back.
+ */
+export async function resolveBaseRefDisclosed(
+  rootPath: string,
+  requestedRef: string,
+): Promise<BaseRefResolution> {
+  const resolved = await resolveBaseRef(rootPath, requestedRef);
+  const isAuto = !requestedRef || requestedRef === 'auto';
+  const fellBack =
+    !isAuto && resolved !== requestedRef && !(await refExists(rootPath, requestedRef));
+  return { requested: requestedRef, resolved, fellBack };
+}
+
+/**
  * Parse a git status character into a ChangedFile status
  */
 function parseGitStatus(statusChar: string): ChangedFile['status'] {

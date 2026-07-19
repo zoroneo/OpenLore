@@ -14,6 +14,13 @@ vi.mock('./utils.js', () => ({
 
 vi.mock('../../drift/git-diff.js', () => ({
   getChangedFiles: vi.fn(async () => ({ files: [{ path: 'src/utils.ts' }], resolvedBase: 'HEAD' })),
+  // The shared resolve-or-disclose helper (fix-cli-conclusion-honesty). Default: the ref
+  // resolves as-is (no fallback); individual tests override to force a disclosed fallback.
+  resolveBaseRefDisclosed: vi.fn(async (_d: string, requested: string) => ({
+    requested,
+    resolved: !requested || requested === 'auto' ? 'HEAD' : requested,
+    fellBack: false,
+  })),
 }));
 
 // Partial mock: stub handleAnalyzeImpact but keep buildAdjacency real (select_tests needs it).
@@ -26,11 +33,21 @@ vi.mock('./analysis.js', () => ({
   handleCheckSpecDrift: vi.fn(),
 }));
 
+// Real staleness reads disk; stub ONLY computeStaleness so we can drive it
+// deterministically, keeping every other confidence-boundary export (assembleBoundary,
+// edgeBasisWithinSet, …) real — other reachable handlers depend on them. Default: index
+// current (undefined) so the confidenceBoundary is omitted (existing assertions unaffected).
+vi.mock('./confidence-boundary.js', async (importActual) => {
+  const actual = await importActual<typeof import('./confidence-boundary.js')>();
+  return { ...actual, computeStaleness: vi.fn(async () => undefined) };
+});
+
 import { computeBlastRadius, type BlastRadiusBriefing } from './blast-radius.js';
 import { triggeredBlockPatterns } from '../../../cli/commands/blast-radius.js';
 import { readCachedContext } from './utils.js';
 import { handleAnalyzeImpact } from './graph.js';
 import { handleCheckSpecDrift } from './analysis.js';
+import { computeStaleness } from './confidence-boundary.js';
 import { assertConclusionShape } from './tool-contract.js';
 import type { FunctionNode, SerializedCallGraph, CallEdge } from '../../analyzer/call-graph.js';
 import type { DriftResult } from '../../../types/index.js';
@@ -83,6 +100,9 @@ describe('computeBlastRadius', () => {
       { id: 's1', kind: 'stale', severity: 'warning', message: 'mcp-handlers spec describes removed behavior', filePath: 'src/utils.ts', domain: 'mcp-handlers', specPath: 'openspec/specs/mcp-handlers/spec.md', suggestion: '' },
       { id: 'a1', kind: 'adr-orphaned', severity: 'warning', message: 'ADR references a domain that no longer exists', filePath: 'src/utils.ts', domain: 'mcp-handlers', specPath: null, suggestion: '' },
     ]));
+    // Default: index current. Composed handlers (select_tests) also call computeStaleness,
+    // so use a persistent value (not Once) — a fresh default is set every beforeEach.
+    vi.mocked(computeStaleness).mockResolvedValue(undefined);
   });
 
   it('briefs a hub change: callers, layers, tests, and anchored drift, as one conclusion', async () => {
@@ -138,13 +158,15 @@ describe('computeBlastRadius', () => {
   });
 
   it('reports the resolved base ref (and caveats the fallback) when the requested ref does not resolve', async () => {
-    // resolveBaseRef silently falls back to main when the requested ref is bogus;
-    // the briefing must report what git ACTUALLY diffed against, not the typo.
-    const { getChangedFiles } = await import('../../drift/git-diff.js');
+    // The shared helper falls back to main when the requested ref is bogus; the briefing
+    // must report what git ACTUALLY diffed against (and disclose it), not the typo.
+    const { getChangedFiles, resolveBaseRefDisclosed } = await import('../../drift/git-diff.js');
+    vi.mocked(resolveBaseRefDisclosed).mockResolvedValueOnce({ requested: 'totally-bogus-ref', resolved: 'main', fellBack: true });
     vi.mocked(getChangedFiles).mockResolvedValueOnce({ files: [{ path: 'src/utils.ts' }], resolvedBase: 'main' } as never);
     const b = await computeBlastRadius({ directory: '/p', baseRef: 'totally-bogus-ref' }) as BlastRadiusBriefing;
     expect(b.baseRef).toBe('totally-bogus-ref');     // what the caller asked for
     expect(b.resolvedBaseRef).toBe('main');          // what git actually diffed
+    expect(b.baseRefFallback).toEqual({ requested: 'totally-bogus-ref', resolved: 'main' });
     expect(b.caveats.join(' ')).toMatch(/Requested base ref "totally-bogus-ref" did not resolve.*diffed against "main"/i);
   });
 
@@ -153,6 +175,20 @@ describe('computeBlastRadius', () => {
     const b = await computeBlastRadius({ directory: '/p' }) as BlastRadiusBriefing;
     expect(b.resolvedBaseRef).toBe('HEAD');
     expect(b.caveats.join(' ')).not.toMatch(/did not resolve/i);
+  });
+
+  it('discloses index staleness when the graph predates the working tree (finding #2)', async () => {
+    // A risk headline computed over a stale graph must say so — the same boundary shape
+    // certify-public-surface already emits.
+    const marker = { indexCommit: 'abc1234', filesChangedSince: 42, detail: '42 source file(s) changed since abc1234.' };
+    vi.mocked(computeStaleness).mockResolvedValue(marker);
+    const b = await computeBlastRadius({ directory: '/p' }) as BlastRadiusBriefing;
+    expect(b.confidenceBoundary?.staleness).toEqual(marker);
+  });
+
+  it('omits the confidence boundary when the index is current (no false staleness noise)', async () => {
+    const b = await computeBlastRadius({ directory: '/p' }) as BlastRadiusBriefing;
+    expect(b.confidenceBoundary).toBeUndefined();
   });
 
   it('errors clearly when no analysis exists', async () => {
