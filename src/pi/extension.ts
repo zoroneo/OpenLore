@@ -606,11 +606,11 @@ export const NAV_TOOLS: NavToolSpec[] = [
   {
     name: 'verify_claim',
     label: 'openlore verify_claim',
-    description: 'Verify a structural claim against the graph before asserting it — "X is dead", "Y calls Z", "Z is safe to change" — and get a deterministic verdict (confirmed / refuted / unverifiable) with a citation receipt.',
-    guideline: 'Before you tell the user a structural fact ("X is dead", "Y calls Z", "this is safe to change"), call openlore_verify_claim with `kind` and `subject` (and `object` for relational kinds: calls, reaches, impacts). An "unverifiable" verdict means hedge or read the source rather than assert.',
+    description: 'Verify a structural claim against the graph before asserting it — "X is dead", "Y calls Z", "Z is safe to change" — or a decision-authority claim ("ADR abc12345 governs this") before citing it, and get a deterministic verdict (confirmed / refuted / unverifiable) with a citation receipt.',
+    guideline: 'Before you tell the user a structural fact ("X is dead", "Y calls Z", "this is safe to change"), or cite a decision id to a human, call openlore_verify_claim with `kind` and `subject` (and `object` for relational kinds: calls, reaches, impacts). For `decision-current`, `subject` is the 8-character decision id — a "refuted" verdict names the live superseder to cite instead. An "unverifiable" verdict means hedge or read the source rather than assert.',
     parameters: Type.Object({
-      kind: StringEnum(['calls', 'reaches', 'dead', 'impacts', 'safe-to-change'] as const, { description: 'REQUIRED. The kind of structural claim to verify.' }),
-      subject: Type.String({ description: 'REQUIRED. The symbol the claim is about (a function/method name).' }),
+      kind: StringEnum(['calls', 'reaches', 'dead', 'impacts', 'safe-to-change', 'decision-current'] as const, { description: 'REQUIRED. The kind of claim to verify (structural, or decision-current for decision authority).' }),
+      subject: Type.String({ description: 'REQUIRED. What the claim is about: a function/method name for structural kinds, or an 8-character decision id for decision-current.' }),
       object: Type.Optional(Type.String({ description: 'The second symbol — required for relational kinds (calls, reaches, impacts).' })),
     }),
   },
@@ -698,6 +698,70 @@ export const NAV_TOOLS: NavToolSpec[] = [
     parameters: Type.Object({
       filePath: Type.Optional(Type.String({ description: 'Restrict search to this file (relative path)' })),
       fanOutThreshold: Type.Optional(Type.Number({ description: 'Minimum fan-out to be considered a god function (default: 8)' })),
+    }),
+  },
+  {
+    name: 'find_clones',
+    label: 'openlore find_clones',
+    description: 'Before writing (or just after writing) a function, find whether a near-duplicate already exists that you should reuse instead of reinventing.',
+    guideline: 'When you are about to add a function, call openlore_find_clones with `snippet` (the code you are about to write) — or `symbol` (an existing function name, or name::path) to find clones of one already in the index. Matches are ranked exact > structural > near; reuse the canonical one it names.',
+    parameters: Type.Object({
+      symbol: Type.Optional(Type.String({ description: 'An existing function to find clones of: its name, or name::path to disambiguate. Provide exactly one of symbol or snippet.' })),
+      snippet: Type.Optional(Type.String({ description: 'Raw code to find clones of (need not be in the index) — answers the pre-write "does this already exist?".' })),
+      minSimilarity: Type.Optional(Type.Number({ description: 'Near-clone Jaccard floor (default 0.7, clamped to [0.1, 1]).' })),
+      maxResults: Type.Optional(Type.Number({ description: 'Cap on returned matches (default 25, max 200).' })),
+    }),
+  },
+  {
+    name: 'analyze_error_propagation',
+    label: 'openlore analyze_error_propagation',
+    description: 'See what exceptions can propagate OUT of a function to its callers, and which are already caught inside it — the error-handling analogue of analyze_impact.',
+    guideline: 'Before calling a function, or after changing one to throw, call openlore_analyze_error_propagation with `symbol` to learn what escapes to callers and what is handled internally. TypeScript/JavaScript/Python; other languages return an explicit unsupported result.',
+    parameters: Type.Object({
+      symbol: Type.String({ description: 'REQUIRED. The function to analyze: its name, or name::path to disambiguate.' }),
+      maxDepth: Type.Optional(Type.Number({ description: 'Callee-traversal depth bound (default 10, clamped to [1, 30]).' })),
+    }),
+  },
+  {
+    name: 'analyze_env_impact',
+    label: 'openlore analyze_env_impact',
+    description: 'See what breaks if you remove or rename an environment variable — its read sites, the callers that reach them, and the tests to run.',
+    guideline: 'Before removing or renaming an env var, call openlore_analyze_env_impact with its `name` (e.g. DATABASE_URL) to get the read sites, the blast radius, and per-site whether the read is a hard break. TypeScript/JavaScript/Python/Go/Ruby.',
+    parameters: Type.Object({
+      name: Type.String({ description: 'REQUIRED. The environment variable to analyze, e.g. DATABASE_URL.' }),
+      maxDepth: Type.Optional(Type.Number({ description: 'Backward-reachability depth bound (default 12, clamped to [1, 30]).' })),
+    }),
+  },
+  {
+    name: 'certify_public_surface',
+    label: 'openlore certify_public_surface',
+    description: 'Before shipping a library/module change, check whether you broke your consumers\' contract — a removed/renamed export, an added required param, a narrowed type.',
+    guideline: 'Before shipping a change to exported code, call openlore_certify_public_surface with `baseRef` (e.g. "main") for a breaking-change verdict; omit it to just list the public surface. A change it cannot prove compatible is reported potentially-breaking, never silently safe.',
+    parameters: Type.Object({
+      baseRef: Type.Optional(Type.String({ description: 'Git ref to diff the working tree\'s public surface against (e.g. "HEAD", "main"). Omit to return the surface itself.' })),
+      maxResults: Type.Optional(Type.Number({ description: 'Limit the surface listing in surface mode (default 200, capped 500).' })),
+    }),
+  },
+  {
+    name: 'get_style_fingerprint',
+    label: 'openlore get_style_fingerprint',
+    description: 'Before writing or editing code, learn the codebase\'s house style — arrow vs. declared functions, const vs. let, ternary vs. if, and more — so your edit matches it.',
+    guideline: 'Before writing code, call openlore_get_style_fingerprint to match the house style instead of your default. Pass `filePath` for one file or `communityId` (from get_map) for a region; omit both for the whole repo. It reports what the code IS, not a lint judgment.',
+    parameters: Type.Object({
+      communityId: Type.Optional(Type.String({ description: 'Profile one community/region by id (list ids with get_map).' })),
+      filePath: Type.Optional(Type.String({ description: 'Profile a single file (exact path or a unique path suffix); wins over communityId if both are given.' })),
+      language: Type.Optional(Type.String({ description: 'Restrict the returned languages to this one (e.g. "TypeScript").' })),
+    }),
+  },
+  {
+    name: 'briefing_since',
+    label: 'openlore briefing_since',
+    description: 'Catching up on a repo that changed a lot since you last looked — the changed functions that STRUCTURALLY MATTER (hubs, chokepoints), ranked, not a flat wall of diffs.',
+    guideline: 'To review a large change set or catch up after time away, call openlore_briefing_since with `baseRef` (e.g. "main", a PR base). It ranks changed production symbols by tier (surprising > hub > chokepoint > ordinary) with the tests to run — unlike blast_radius, which briefs YOUR pending diff.',
+    parameters: Type.Object({
+      baseRef: Type.Optional(Type.String({ description: 'Git ref to brief changes SINCE (e.g. "main", a PR base, "HEAD~20"). Default resolves main → master → HEAD~1.' })),
+      filePattern: Type.Optional(Type.String({ description: 'Region scope — only brief changes whose file path contains this substring.' })),
+      maxResults: Type.Optional(Type.Number({ description: 'Bound on briefed symbols, highest-tier-first (default 50, max 200).' })),
     }),
   },
   {
@@ -868,6 +932,58 @@ export const NAV_TOOLS: NavToolSpec[] = [
     }),
   },
 ];
+
+// Conclusion tools deliberately NOT surfaced natively in Pi, each with a stated
+// reason (project doctrine: "if parity is intentionally skipped, say why").
+// The two-direction parity guard (extension.test.ts) requires every dispatchable
+// conclusion tool to be either in NAV_TOOLS above or listed here — a new MCP
+// conclusion tool fails CI until its author makes this decision explicitly, the
+// same fails-until-you-classify discipline tool-contract.test.ts enforces.
+export const PI_EXCLUDED_CONCLUSION_TOOLS: Record<string, string> = {
+  // Opt-in preset surfaces — federation/coordination tools ship behind
+  // `--preset federation` / `--preset coordination`, not the native substrate
+  // surface Pi mirrors; surface them if a Pi host adopts those workflows.
+  change_impact_certificate: 'opt-in federation preset surface',
+  federation_status: 'opt-in federation preset surface',
+  spec_store_status: 'opt-in federation preset surface',
+  working_set_context: 'opt-in federation preset surface',
+  map_in_flight_conflicts: 'opt-in federation/coordination preset surface',
+  plan_parallel_work: 'opt-in coordination preset surface',
+  // Inventories — the before_agent_start context injection already grounds the
+  // model with the architecture digest and spec index; per-domain inventories
+  // are an on-demand CLI/full-preset concern, not the native nav surface.
+  get_route_inventory: 'inventory — context injection covers grounding',
+  get_middleware_inventory: 'inventory — context injection covers grounding',
+  get_schema_inventory: 'inventory — context injection covers grounding',
+  get_ui_component_inventory: 'inventory — context injection covers grounding',
+  get_env_vars: 'inventory — context injection covers grounding (see analyze_env_impact for blast radius)',
+  get_external_packages: 'inventory — context injection covers grounding',
+  // Generation paths — LLM-backed authoring, not the deterministic navigate
+  // surface Pi exposes; the Pi host drives generation through its own flows.
+  generate_change_proposal: 'generation path — not the deterministic navigate surface',
+  generate_tests: 'generation path — not the deterministic navigate surface',
+  annotate_story: 'generation path — not the deterministic navigate surface',
+  // Lifecycle/orchestration — the Pi host drives analysis via the warm daemon,
+  // not an agent on-demand tool call.
+  analyze_codebase: 'lifecycle — the host drives analyze via the warm daemon, not a tool call',
+  detect_changes: 'lifecycle — the host drives incremental analysis, not a tool call',
+  // Covered by a surfaced peer — the native surface already carries the
+  // edit-time conclusion; these are the whole-repo/lower-level variants.
+  get_duplicate_report: 'whole-repo audit — find_clones is the surfaced edit-time peer',
+  get_low_risk_refactor_candidates: 'covered by the surfaced get_refactor_report',
+  get_leaf_functions: 'covered by the surfaced get_landmarks structural anchors',
+  check_architecture: 'covered by the surfaced get_refactor_report; full rule reports stay full preset',
+  find_dead_code: 'covered by get_landmarks (dead label) + verify_claim kind "dead"',
+  get_signatures: 'covered by the surfaced get_function_skeleton',
+  get_mapping: 'covered by the surfaced orient / get_map',
+  get_minimal_context: 'orient is the surfaced minimal-context entry',
+  get_cluster: 'covered by the surfaced get_map / get_landmarks',
+  // Opt-in full-preset / host-owned conclusions.
+  report_coverage_gaps: 'opt-in full preset surface',
+  get_language_support: 'opt-in full preset surface',
+  locate_symbol_span: 'edit-span location is a host concern — the Pi host owns file editing',
+  get_change_coupling: 'git co-change/churn conclusion — deferred from the native surface pending demand',
+};
 
 function toolResult(text: string, details: unknown = null): AgentToolResult<unknown> {
   return { content: [{ type: 'text', text }], details };

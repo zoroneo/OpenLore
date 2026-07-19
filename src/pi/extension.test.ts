@@ -3,8 +3,9 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { modelsUrl, stripMarker, isUsableConfig, readConfig, formatToolResult, formatCallArgs, NAV_TOOLS } from './extension.js';
+import { modelsUrl, stripMarker, isUsableConfig, readConfig, formatToolResult, formatCallArgs, NAV_TOOLS, PI_EXCLUDED_CONCLUSION_TOOLS } from './extension.js';
 import { TOOL_DEFINITIONS } from '../cli/commands/mcp.js';
+import { TOOL_OUTPUT_CLASS } from '../core/services/mcp-handlers/tool-contract.js';
 
 describe('modelsUrl', () => {
   it('appends /v1/models to a bare host', () => {
@@ -312,5 +313,65 @@ describe('NAV_TOOLS surface', () => {
       const unknown = declared.filter(p => p !== 'directory' && !allowed.has(p));
       expect(unknown, `${tool.name} declares params absent from inputSchema: ${unknown.join(', ')}`).toEqual([]);
     }
+  });
+
+  // The load-bearing guard in the OTHER direction (spec: PiSurfaceParityIsGuarded).
+  // Every dispatchable conclusion tool must be a deliberate Pi decision — either
+  // surfaced in NAV_TOOLS or listed in PI_EXCLUDED_CONCLUSION_TOOLS with a reason.
+  // A new MCP conclusion tool now fails CI until its author makes that call, the
+  // same fails-until-you-decide discipline tool-contract.test.ts enforces for
+  // output class and capability family.
+  it('every dispatchable conclusion tool is either surfaced in Pi or excluded with a reason', () => {
+    const dispatchable = new Set(TOOL_DEFINITIONS.map(t => t.name));
+    const surfaced = new Set(NAV_TOOLS.map(t => t.name));
+    const excluded = new Set(Object.keys(PI_EXCLUDED_CONCLUSION_TOOLS));
+    const undecided = Object.entries(TOOL_OUTPUT_CLASS)
+      .filter(([name, cls]) => cls === 'conclusion' && dispatchable.has(name))
+      .map(([name]) => name)
+      .filter(name => !surfaced.has(name) && !excluded.has(name));
+    expect(
+      undecided,
+      `conclusion tools neither surfaced in NAV_TOOLS nor in PI_EXCLUDED_CONCLUSION_TOOLS: ${undecided.join(', ')} — surface each in Pi or add it to the exclusion list with a stated reason`,
+    ).toEqual([]);
+  });
+
+  // The exclusion list stays honest: no stale entries (a tool that was surfaced
+  // or removed), and every reason is a non-empty, auditable string.
+  it('the Pi exclusion list has no stale entries and every reason is stated', () => {
+    const dispatchable = new Set(TOOL_DEFINITIONS.map(t => t.name));
+    const surfaced = new Set(NAV_TOOLS.map(t => t.name));
+    for (const [name, reason] of Object.entries(PI_EXCLUDED_CONCLUSION_TOOLS)) {
+      expect(TOOL_OUTPUT_CLASS[name], `excluded tool ${name} is not classified conclusion`).toBe('conclusion');
+      expect(dispatchable.has(name), `excluded tool ${name} is not dispatchable (stale entry)`).toBe(true);
+      expect(surfaced.has(name), `excluded tool ${name} is also surfaced in NAV_TOOLS (contradiction)`).toBe(false);
+      expect(reason.trim().length, `excluded tool ${name} has an empty reason`).toBeGreaterThan(0);
+    }
+  });
+
+  // Proof the guard actually fails on drift: simulate a newly-added conclusion
+  // tool that is neither surfaced nor excluded — the guard predicate flags it.
+  it('the parity guard flags a new conclusion tool that skips the Pi decision', () => {
+    const surfaced = new Set(NAV_TOOLS.map(t => t.name));
+    const excluded = new Set(Object.keys(PI_EXCLUDED_CONCLUSION_TOOLS));
+    const simulatedNew = '__new_conclusion_tool__';
+    const undecided = [simulatedNew].filter(name => !surfaced.has(name) && !excluded.has(name));
+    expect(undecided).toEqual([simulatedNew]);
+  });
+
+  // decision-current — the claim kind the audit found inexpressible on Pi — is
+  // now in the Pi verify_claim enum, matching the daemon's inputSchema.
+  it('Pi verify_claim expresses every claim kind the daemon supports', () => {
+    const piVerify = NAV_TOOLS.find(t => t.name === 'verify_claim');
+    expect(piVerify, 'verify_claim missing from NAV_TOOLS').toBeDefined();
+    const piKinds = new Set(
+      ((piVerify!.parameters as { properties?: { kind?: { enum?: string[] } } }).properties?.kind?.enum) ?? [],
+    );
+    const daemonVerify = TOOL_DEFINITIONS.find(t => t.name === 'verify_claim');
+    const daemonKinds =
+      (daemonVerify?.inputSchema as { properties?: { kind?: { enum?: string[] } } }).properties?.kind?.enum ?? [];
+    expect(daemonKinds.length, 'daemon verify_claim has no kind enum').toBeGreaterThan(0);
+    const missing = daemonKinds.filter(k => !piKinds.has(k));
+    expect(missing, `Pi verify_claim omits daemon kinds: ${missing.join(', ')}`).toEqual([]);
+    expect(piKinds.has('decision-current'), 'Pi verify_claim must express decision-current').toBe(true);
   });
 });
