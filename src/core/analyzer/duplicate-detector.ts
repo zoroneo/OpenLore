@@ -123,30 +123,120 @@ const KEYWORDS = new Set([
 // NORMALIZATION
 // ============================================================================
 
-function stripComments(text: string): string {
-  // // single-line (JS/TS/Go/Rust/Java)
-  text = text.replace(/\/\/[^\n]*/g, '');
-  // # single-line (Python/Ruby)
-  text = text.replace(/#[^\n]*/g, '');
-  // /* */ multi-line
-  text = text.replace(/\/\*[\s\S]*?\*\//g, '');
-  // Python """ and ''' docstrings
-  text = text.replace(/"""[\s\S]*?"""/g, '');
-  text = text.replace(/'''[\s\S]*?'''/g, '');
-  return text;
+/**
+ * Languages where `#` begins a line comment. The `#` line-comment rule is applied
+ * ONLY for these; in C-family languages `#` is code (JS `#private` fields, C
+ * preprocessor `#include`, Rust `#[attr]`, Swift `#selector`, Lua `#len`), so
+ * stripping it there truncated real code. Matched case-insensitively against the
+ * call graph's language display names (`node.language`). An unknown/undefined
+ * language falls back to treating `#` as a comment — the pre-fix behavior, whose
+ * original target was Python/Ruby.
+ */
+const HASH_LINE_COMMENT_LANGUAGES = new Set([
+  'python', 'ruby', 'elixir', 'bash', 'shell', 'sh', 'zsh', 'php',
+  'perl', 'r', 'powershell', 'coffeescript', 'nim', 'crystal',
+  'toml', 'yaml', 'dockerfile', 'makefile', 'terraform', 'hcl',
+]);
+
+function hashStartsLineComment(language?: string): boolean {
+  if (!language) return true; // legacy default: `#` was Python/Ruby-targeted
+  return HASH_LINE_COMMENT_LANGUAGES.has(language.toLowerCase());
+}
+
+/**
+ * Strip comments from a function body WITHOUT corrupting string literals.
+ *
+ * A single left-to-right scan classifies each character as code, string, or
+ * comment. Comment/docstring characters are removed; string-literal CONTENTS are
+ * preserved verbatim, so two bodies differing only in a literal (a URL host, a
+ * hex color) stay distinguishable. This replaces the old string-blind regex
+ * passes, whose line- and block-comment rules ran over raw text and truncated a
+ * literal at the first comment-looking marker inside it (`//` in a URL, `#` in a
+ * hex color or anchor, Ruby `#{...}` interpolation, JS `#private`).
+ *
+ * `hashIsComment` selects the `#` line-comment rule (see `hashStartsLineComment`).
+ * Triple-quoted `"""`/`'''` blocks are removed as docstrings (unchanged
+ * behavior). Escapes inside a string are honored so `"\""` does not terminate
+ * early. An unterminated string or block comment runs to end-of-input —
+ * degrading to the old over-stripping, never to something worse.
+ */
+function stripComments(text: string, hashIsComment: boolean): string {
+  const n = text.length;
+  let out = '';
+  let i = 0;
+  while (i < n) {
+    const c = text[i];
+    const c2 = text[i + 1];
+
+    // Line comment: //
+    if (c === '/' && c2 === '/') {
+      let j = i + 2;
+      while (j < n && text[j] !== '\n') j++;
+      i = j;
+      continue;
+    }
+    // Block comment: /* ... */
+    if (c === '/' && c2 === '*') {
+      let j = i + 2;
+      while (j < n && !(text[j] === '*' && text[j + 1] === '/')) j++;
+      i = Math.min(n, j + 2); // consume the closing */
+      continue;
+    }
+    // Line comment: # (language-selected)
+    if (c === '#' && hashIsComment) {
+      let j = i + 1;
+      while (j < n && text[j] !== '\n') j++;
+      i = j;
+      continue;
+    }
+    // Triple-quoted docstring: """ ... """ or ''' ... ''' → removed
+    if ((c === '"' || c === "'") && text[i + 1] === c && text[i + 2] === c) {
+      const q = c;
+      let j = i + 3;
+      while (j < n && !(text[j] === q && text[j + 1] === q && text[j + 2] === q)) j++;
+      i = Math.min(n, j + 3); // consume the closing triple-quote
+      continue;
+    }
+    // String literal: " ... ", ' ... ', ` ... ` → contents preserved
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c;
+      out += c;
+      let j = i + 1;
+      while (j < n) {
+        const cj = text[j];
+        if (cj === '\\') {
+          // Escape sequence: copy the backslash and the escaped char verbatim.
+          out += cj;
+          if (j + 1 < n) out += text[j + 1];
+          j += 2;
+          continue;
+        }
+        out += cj;
+        j++;
+        if (cj === q) break; // closing delimiter reached
+      }
+      i = j;
+      continue;
+    }
+
+    // Ordinary code character
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 /** Type 1: strip comments + collapse whitespace */
-function normalizeType1(text: string): string {
-  return stripComments(text).replace(/\s+/g, ' ').trim();
+function normalizeType1(text: string, language?: string): string {
+  return stripComments(text, hashStartsLineComment(language)).replace(/\s+/g, ' ').trim();
 }
 
 /**
  * Type 2: Type 1 + replace non-keyword identifiers with sequential placeholders.
  * Same identifier name → same placeholder within the function scope.
  */
-function normalizeType2(text: string): string {
-  const base = normalizeType1(text);
+function normalizeType2(text: string, language?: string): string {
+  const base = normalizeType1(text, language);
   const seen = new Map<string, string>();
   let counter = 0;
   return base.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match) => {
@@ -235,8 +325,8 @@ export function detectDuplicates(
     if (lineCount < MIN_LINES) continue;
 
     const body = content.slice(node.startIndex, node.endIndex);
-    const t1 = normalizeType1(body);
-    const t2 = normalizeType2(body);
+    const t1 = normalizeType1(body, node.language);
+    const t2 = normalizeType2(body, node.language);
     const tokens = tokenize(t2);
 
     if (tokens.length < MIN_TOKENS) continue;
@@ -323,10 +413,15 @@ export function detectDuplicates(
 
       if (group.length >= 2) {
         nearGrouped.add(i);
-        // Use minimum pairwise similarity as the group's score (conservative)
+        // Group score = the ALL-PAIRS minimum similarity (the honest floor). Computing it
+        // seed-vs-member only overstated cohesion: two members each 0.85-similar to the seed
+        // can be far less similar to each other. Groups are tiny (bounded by the near pass), so
+        // O(group²) is negligible.
         let minSim = 1.0;
-        for (let k = 1; k < group.length; k++) {
-          minSim = Math.min(minSim, jaccard(ungrouped[i].shingles, ungrouped[group[k]].shingles));
+        for (let a = 0; a < group.length; a++) {
+          for (let b = a + 1; b < group.length; b++) {
+            minSim = Math.min(minSim, jaccard(ungrouped[group[a]].shingles, ungrouped[group[b]].shingles));
+          }
         }
         const repIdx = group[0];
         cloneGroups.push({
@@ -430,6 +525,13 @@ export interface CloneQueryOptions {
    * never wrongly matched against itself and a different function is never wrongly excluded.
    */
   exclude?: { filePath: string; startIndex: number; endIndex: number };
+  /**
+   * The query's source language (symbol mode: the node's language; snippet mode: unknown). It
+   * governs the `#` line-comment rule for BOTH the query and every candidate, so the comparison is
+   * one consistent linguistic lens — a `#`-comment Python candidate is never spuriously matched to
+   * a `#`-code TS query. Undefined (snippet mode) falls back to the legacy `#`-as-comment default.
+   */
+  queryLanguage?: string;
 }
 
 export interface CloneQueryResult {
@@ -467,9 +569,13 @@ export function findClones(
     : NEAR_THRESHOLD;
   const floor = Math.min(1, Math.max(NEAR_FLOOR_MIN, requestedFloor));
 
+  // The query's language governs the `#` rule for the query AND every candidate, so both sides of
+  // each comparison share one linguistic lens (see `queryLanguage`).
+  const lang = options.queryLanguage;
+
   // ---- Fingerprint the query ----
-  const qT1 = normalizeType1(queryBody);
-  const qT2 = normalizeType2(queryBody);
+  const qT1 = normalizeType1(queryBody, lang);
+  const qT2 = normalizeType2(queryBody, lang);
   const qTokens = tokenize(qT2);
   if (queryLineCount < MIN_LINES || qTokens.length < MIN_TOKENS) {
     return { matches: [], belowThreshold: true, comparedAgainst: 0, similarityFloor: floor };
@@ -502,7 +608,7 @@ export function findClones(
     if (endLine - startLine + 1 < MIN_LINES) continue;
 
     const body = content.slice(node.startIndex, node.endIndex);
-    const tokens = tokenize(normalizeType2(body));
+    const tokens = tokenize(normalizeType2(body, lang));
     if (tokens.length < MIN_TOKENS) continue;
 
     comparedAgainst++;
@@ -516,9 +622,9 @@ export function findClones(
       language: node.language,
     };
 
-    if (sha16(normalizeType1(body)) === qT1Hash) {
+    if (sha16(normalizeType1(body, lang)) === qT1Hash) {
       matches.push({ type: 'exact', similarity: 1.0, ...base });
-    } else if (sha16(normalizeType2(body)) === qT2Hash) {
+    } else if (sha16(normalizeType2(body, lang)) === qT2Hash) {
       matches.push({ type: 'structural', similarity: 1.0, ...base });
     } else {
       const sim = jaccard(qShingles, getShingles(tokens));

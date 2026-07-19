@@ -1,10 +1,20 @@
 # Fix clone-detector string corruption: comment stripping truncates literals → false 1.0 clone verdicts
 
-> Status: PROPOSED (2026-07-08, e2e audit fifth pass). The duplicate detector's comment stripping
-> runs string-blind over raw text, so `//` inside a URL and `#` inside a hex color truncate the
-> literal — two functions differing ONLY in those constants normalize identical and are reported
-> as clones at similarity 1.0, exactly where an agent is told to trust the number (empirically
-> reproduced twice).
+> Status: SHIPPED (2026-07-19, PR fix-clone-string-normalization). `stripComments`
+> (`duplicate-detector.ts`) is now a single left-to-right scanner: it classifies each char as code,
+> string, or comment in one pass, so string-literal contents survive verbatim while comments are
+> removed. The `#` line-comment rule is language-selected (`hashStartsLineComment`); `findClones`
+> threads the query's language so query and candidates share one linguistic lens; the near-group
+> score is the all-pairs minimum (honest floor). Notes: (1) the string masking the proposal
+> described as a separate pass was folded into the scanner — equivalent result, no double-parse;
+> (2) both empirical repros and the language-selection/interpolation cases are pinned by tests in
+> `duplicate-detector.test.ts`; (3) no clone snapshots existed to re-baseline.
+>
+> Original status: PROPOSED (2026-07-08, e2e audit fifth pass). The duplicate detector's comment
+> stripping runs string-blind over raw text, so `//` inside a URL and `#` inside a hex color
+> truncate the literal — two functions differing ONLY in those constants normalize identical and
+> are reported as clones at similarity 1.0, exactly where an agent is told to trust the number
+> (empirically reproduced twice).
 
 ## The defect(s)
 

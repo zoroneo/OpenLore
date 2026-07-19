@@ -736,3 +736,200 @@ describe('findClones — one-vs-all query', () => {
     expect(cpp!.language).toBe('C++');
   });
 });
+
+// ---------------------------------------------------------------------------
+// String-literal-safe normalization (fix-clone-string-normalization)
+//
+// Comment stripping used to run string-blind, so a comment marker INSIDE a
+// literal (`//` in a URL, `#` in a hex color / anchor, Ruby `#{...}`) truncated
+// the literal — two bodies differing only there normalized identical and were
+// reported as clones at 1.0. These pin that the literal contents now survive.
+// ---------------------------------------------------------------------------
+
+describe('detectDuplicates — string-literal-safe normalization', () => {
+  /** Detect duplicates for a two-function fixture, one function per file. */
+  function pair(bodyA: string, bodyB: string, language = 'TypeScript') {
+    const fa = buildFile([bodyA]);
+    const fb = buildFile([bodyB]);
+    const nodes: FunctionNode[] = [
+      makeNode({ id: 'a', name: 'fa', filePath: '/a.ts', language, startIndex: fa.offsets[0].start, endIndex: fa.offsets[0].end }),
+      makeNode({ id: 'b', name: 'fb', filePath: '/b.ts', language, startIndex: fb.offsets[0].start, endIndex: fb.offsets[0].end }),
+    ];
+    return detectDuplicates(
+      [{ path: '/a.ts', content: fa.content }, { path: '/b.ts', content: fb.content }],
+      makeCallGraph(nodes),
+    );
+  }
+
+  it('two TS functions differing only in a URL inside a string are NOT exact/structural clones', () => {
+    // The `//` in the URL used to truncate both to `const url = "https:` → false exact clone.
+    const a = `function fetchUsers(client) {
+  const url = "https://api.example.com/users";
+  const res = client.get(url);
+  const parsed = parse(res.body);
+  return parsed.items;
+}`;
+    const b = `function fetchUsers(client) {
+  const url = "https://cdn.other.org/v2/data/records";
+  const res = client.get(url);
+  const parsed = parse(res.body);
+  return parsed.items;
+}`;
+    const result = pair(a, b);
+    expect(result.cloneGroups.filter(g => g.type === 'exact')).toHaveLength(0);
+    expect(result.cloneGroups.filter(g => g.type === 'structural')).toHaveLength(0);
+    // Any similarity that IS reported reflects the literal difference — strictly below 1.0.
+    for (const g of result.cloneGroups) expect(g.similarity).toBeLessThan(1.0);
+  });
+
+  it('two Python functions differing only in a hex-color string are NOT exact/structural clones', () => {
+    // The `#` in `"#ff0000"` used to truncate both to `color = "` → false exact clone.
+    const a = `def make_style():
+    color = "#ff0000"
+    border = solid(color)
+    fill = shade(color)
+    theme = build(border, fill)
+    return theme`;
+    const b = `def make_style():
+    color = "#00ff00"
+    border = solid(color)
+    fill = shade(color)
+    theme = build(border, fill)
+    return theme`;
+    const result = pair(a, b, 'Python');
+    expect(result.cloneGroups.filter(g => g.type === 'exact')).toHaveLength(0);
+    expect(result.cloneGroups.filter(g => g.type === 'structural')).toHaveLength(0);
+  });
+
+  it('the `#` rule is language-selected: a `#` inside a TS string literal survives', () => {
+    // TS: `#` is not a comment. The literal content after `#` (digits) must survive so the two
+    // bodies stay distinguishable (they would both collapse to `const a = "col` if `#` truncated).
+    const a = `function tag() {
+  const a = "col#100";
+  const b = combine(a);
+  const c = refine(b);
+  const d = finalize(c);
+  return d;
+}`;
+    const b = `function tag() {
+  const a = "col#200";
+  const b = combine(a);
+  const c = refine(b);
+  const d = finalize(c);
+  return d;
+}`;
+    const result = pair(a, b);
+    expect(result.cloneGroups.filter(g => g.type === 'exact')).toHaveLength(0);
+    expect(result.cloneGroups.filter(g => g.type === 'structural')).toHaveLength(0);
+  });
+
+  it('the `#` rule is language-selected: a TS `#private` field is not stripped', () => {
+    // Outside a string too: `this.#alpha` vs `this.#beta` used to both strip to `const v = this.`
+    // → false exact clone. TS `#` is code, so the field content must survive (not exact).
+    const a = `function read() {
+  const v = this.#alpha;
+  const w = wrap(v);
+  const x = scale(w);
+  const y = clamp(x);
+  return y;
+}`;
+    const b = `function read() {
+  const v = this.#beta;
+  const w = wrap(v);
+  const x = scale(w);
+  const y = clamp(x);
+  return y;
+}`;
+    const result = pair(a, b);
+    expect(result.cloneGroups.filter(g => g.type === 'exact')).toHaveLength(0);
+  });
+
+  it('Ruby `#{...}` interpolation does not truncate its line', () => {
+    // Ruby IS a `#`-comment language, but `#{...}` inside a string must be protected. Differing
+    // only in the digits after the interpolation, the pair must stay distinguishable (not exact).
+    const a = `def build(key)
+  value = "id-#{key}-100"
+  a = wrap(value)
+  b = scale(a)
+  c = clamp(b)
+  return c
+end`;
+    const b = `def build(key)
+  value = "id-#{key}-200"
+  a = wrap(value)
+  b = scale(a)
+  c = clamp(b)
+  return c
+end`;
+    const result = pair(a, b, 'Ruby');
+    expect(result.cloneGroups.filter(g => g.type === 'exact')).toHaveLength(0);
+    expect(result.cloneGroups.filter(g => g.type === 'structural')).toHaveLength(0);
+  });
+
+  it('true clones are still detected: identical Python bodies differing only in `#` comments', () => {
+    // The `#` rule STILL removes genuine Python comments, so a real copy-paste is still exact.
+    const a = `def total(items):
+    # sum the prices
+    s = 0
+    for it in items:
+        s = s + it.price
+    return s`;
+    const b = `def total(items):
+    # recompute total
+    s = 0
+    for it in items:
+        s = s + it.price
+    return s`;
+    const result = pair(a, b, 'Python');
+    const exact = result.cloneGroups.filter(g => g.type === 'exact');
+    expect(exact).toHaveLength(1);
+    expect(exact[0].similarity).toBe(1.0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Near-group similarity honesty (fix-clone-string-normalization)
+//
+// A near group's reported similarity is the ALL-PAIRS minimum, not seed-vs-member —
+// so two members far apart from each other cannot be presented as a tight group.
+// ---------------------------------------------------------------------------
+
+describe('detectDuplicates — near-group similarity is the all-pairs floor', () => {
+  // A shared 14-statement core plus three DIFFERENTLY-SHAPED tails (so Type 2 does not collapse
+  // them): the seed is closer to each member than the two members are to each other.
+  const core = Array.from({ length: 14 }, (_, i) => `  const s${i} = op${i}(s${i > 0 ? i - 1 : 0});`).join('\n');
+  const seed = `function seed() {\n${core}\n  return s13;\n}`;
+  const bee = `function bee() {\n${core}\n  if (s13 > 0) { log(s13); }\n  return s13;\n}`;
+  const cee = `function cee() {\n${core}\n  for (const q of s13) { emit(q); trace(q); }\n  return s13;\n}`;
+
+  function nearSim(bodies: Array<{ name: string; body: string }>): { sim: number; members: string[] } {
+    const files = bodies.map(b => ({ path: `/${b.name}.ts`, content: b.body + '\n\n' }));
+    const nodes: FunctionNode[] = bodies.map(b =>
+      makeNode({ id: b.name, name: b.name, filePath: `/${b.name}.ts`, startIndex: 0, endIndex: b.body.length }),
+    );
+    const groups = detectDuplicates(files, makeCallGraph(nodes)).cloneGroups.filter(g => g.type === 'near');
+    expect(groups).toHaveLength(1);
+    return { sim: groups[0].similarity, members: groups[0].instances.map(i => i.functionName).sort() };
+  }
+
+  it('reports the minimum over ALL member pairs, including non-seed pairs', () => {
+    const S = { name: 'seed', body: seed };
+    const B = { name: 'bee', body: bee };
+    const C = { name: 'cee', body: cee };
+
+    // Each pairwise near-similarity, computed independently from a two-function run.
+    const seedBee = nearSim([S, B]).sim;
+    const seedCee = nearSim([S, C]).sim;
+    const beeCee = nearSim([B, C]).sim;
+
+    const combined = nearSim([S, B, C]);
+    expect(combined.members).toEqual(['bee', 'cee', 'seed']);
+
+    // The group score equals the all-pairs minimum — which here is the bee↔cee pair, NOT a
+    // seed-relative pair. A seed-relative floor would have reported min(seedBee, seedCee) instead.
+    const allPairsMin = Math.min(seedBee, seedCee, beeCee);
+    expect(combined.sim).toBe(allPairsMin);
+    expect(allPairsMin).toBe(beeCee);
+    expect(beeCee).toBeLessThan(Math.min(seedBee, seedCee));
+  });
+});
