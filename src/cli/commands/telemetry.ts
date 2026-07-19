@@ -8,9 +8,9 @@
  */
 
 import { Command } from 'commander';
-import { createReadStream, existsSync, watch } from 'node:fs';
+import { createReadStream, existsSync, statSync, watch } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { OPENLORE_DIR } from '../../constants.js';
 
 const TELEMETRY_SUBDIR = 'telemetry';
@@ -406,25 +406,82 @@ function renderSummary(
   hr();
 }
 
-function renderLive(dir: string) {
-  const leaseFile = join(dir, OPENLORE_DIR, TELEMETRY_SUBDIR, 'epistemic-lease.jsonl');
-  const mcpFile = join(dir, OPENLORE_DIR, TELEMETRY_SUBDIR, 'mcp.jsonl');
+/** Shared state a live tail carries across `watch()` events. */
+export interface TelemetryTailState {
+  /** Per-file byte offset already consumed. */
+  offsets: Map<string, number>;
+  /** Per-file guard against overlapping reads when watch() fires twice. */
+  inFlight: Set<string>;
+  /** The lease file path — selects the lease vs. mcp render branch. */
+  leaseFile: string;
+}
 
-  // Track file positions to only read new lines; in-flight guard prevents
-  // overlapping reads when watch() fires twice before the first stream ends.
-  const offsets = new Map<string, number>([
-    [leaseFile, 0], [mcpFile, 0],
-  ]);
-  const inFlight = new Set<string>();
+/** Render one telemetry JSONL line to stdout (lease branch vs. mcp branch). */
+function renderTelemetryLine(filePath: string, trimmed: string, leaseFile: string): void {
+  try {
+    const ev = JSON.parse(trimmed) as Record<string, unknown>;
+    const ts = String(ev['ts'] ?? '').slice(11, 23);
+    if (filePath === leaseFile) {
+      const evt = ev['event'];
+      if (evt === 'stale' || evt === 'degraded') {
+        const density = Number(ev['density'] ?? 0);
+        const oscillation = Number(ev['oscillation'] ?? 0);
+        const isSpike = density >= 0.60;
+        const isOscillating = oscillation >= 0.50;
+        const structuredType = isSpike ? 'TRAJECTORY_SPIKE' : 'STATE_TRANSITION';
+        const depthStr = evt === 'stale' ? ` depth=${ev['depth']}` : '';
+        let line = `${ts}  [${structuredType}] ${String(evt).toUpperCase()}${depthStr} trigger=${ev['trigger']} load=${ev['cognitive_load']} density=${density.toFixed(3)}`;
+        if (isOscillating) line += `  [OSCILLATION_DETECTED osc=${oscillation.toFixed(2)}]`;
+        console.log(line);
+      } else if (evt === 'orient_reset') {
+        console.log(`${ts}  [ORIENT_RECOVERY] from=${ev['from_state']} prior_load=${ev['prior_load']} prior_depth=${ev['prior_depth']}`);
+      } else if (evt === 'depth_escalate') {
+        const burstStr = ev['trigger'] === 'burst' ? ' (burst)' : '';
+        console.log(`${ts}  [STATE_TRANSITION] DEPTH ${ev['from_depth']} → ${ev['to_depth']}${burstStr} density=${Number(ev['density'] ?? 0).toFixed(3)}`);
+      }
+    } else {
+      const tool = ev['tool'];
+      const agent = ev['agent'] ? ` [${ev['agent']}]` : '';
+      if (ev['event'] === 'tool_call') console.log(`${ts}  ${String(tool).padEnd(30)} ${ev['ms']}ms${agent}`);
+      else if (ev['event'] === 'tool_error') console.log(`${ts}  ERROR ${tool}${agent}`);
+    }
+  } catch { /* skip */ }
+}
 
-  async function tail(filePath: string) {
-    if (!existsSync(filePath)) return;
-    if (inFlight.has(filePath)) return;
+/**
+ * Tail the lines appended to a telemetry file since its stored offset, rendering
+ * each. Resolves when the read stream ends OR errors — never rejects — so
+ * overlapping tails serialize on the `inFlight` guard and a stream error can
+ * never crash the `--live` session. Exported for the resilience tests.
+ */
+export function tailTelemetryFile(filePath: string, state: TelemetryTailState): Promise<void> {
+  const { offsets, inFlight, leaseFile } = state;
+  return new Promise<void>((resolve) => {
+    if (!existsSync(filePath)) { resolve(); return; }
+    if (inFlight.has(filePath)) { resolve(); return; }
     inFlight.add(filePath);
-    const { createReadStream } = await import('node:fs');
-    const offset = offsets.get(filePath) ?? 0;
+    let offset = offsets.get(filePath) ?? 0;
+    // Rotation detection (structural, not a threshold): the writer renames the
+    // file at the size threshold and restarts it small
+    // (core/services/telemetry.ts). If the file is now smaller than our stored
+    // offset it was rotated — reset to the start of the new file so the tail
+    // follows it instead of reading silently past end-of-file forever.
+    try {
+      if (statSync(filePath).size < offset) { offset = 0; offsets.set(filePath, 0); }
+    } catch { /* stat raced with rotation — the stream 'error' handler covers it */ }
     const stream = createReadStream(filePath, { start: offset, encoding: 'utf-8' });
     let buf = '';
+    stream.on('error', (err: unknown) => {
+      // A stream error (e.g. the file renamed away by rotation between the watch
+      // event and the open) must not crash --live. Clear the in-flight guard so
+      // the next watch event retries; keep the offset so we resume in place.
+      inFlight.delete(filePath);
+      process.stderr.write(
+        `telemetry --live: tail of ${basename(filePath)} failed ` +
+        `(${(err as Error)?.message ?? String(err)}); retrying on next event\n`
+      );
+      resolve();
+    });
     stream.on('data', chunk => { buf += chunk; });
     stream.on('end', () => {
       offsets.set(filePath, offset + Buffer.byteLength(buf, 'utf-8'));
@@ -432,50 +489,37 @@ function renderLive(dir: string) {
       for (const line of buf.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        try {
-          const ev = JSON.parse(trimmed) as Record<string, unknown>;
-          const ts = String(ev['ts'] ?? '').slice(11, 23);
-          if (filePath === leaseFile) {
-            const evt = ev['event'];
-            if (evt === 'stale' || evt === 'degraded') {
-              const density = Number(ev['density'] ?? 0);
-              const oscillation = Number(ev['oscillation'] ?? 0);
-              const isSpike = density >= 0.60;
-              const isOscillating = oscillation >= 0.50;
-              const structuredType = isSpike ? 'TRAJECTORY_SPIKE' : 'STATE_TRANSITION';
-              const depthStr = evt === 'stale' ? ` depth=${ev['depth']}` : '';
-              let line = `${ts}  [${structuredType}] ${String(evt).toUpperCase()}${depthStr} trigger=${ev['trigger']} load=${ev['cognitive_load']} density=${density.toFixed(3)}`;
-              if (isOscillating) line += `  [OSCILLATION_DETECTED osc=${oscillation.toFixed(2)}]`;
-              console.log(line);
-            } else if (evt === 'orient_reset') {
-              console.log(`${ts}  [ORIENT_RECOVERY] from=${ev['from_state']} prior_load=${ev['prior_load']} prior_depth=${ev['prior_depth']}`);
-            } else if (evt === 'depth_escalate') {
-              const burstStr = ev['trigger'] === 'burst' ? ' (burst)' : '';
-              console.log(`${ts}  [STATE_TRANSITION] DEPTH ${ev['from_depth']} → ${ev['to_depth']}${burstStr} density=${Number(ev['density'] ?? 0).toFixed(3)}`);
-            }
-          } else {
-            const tool = ev['tool'];
-            const agent = ev['agent'] ? ` [${ev['agent']}]` : '';
-            if (ev['event'] === 'tool_call') console.log(`${ts}  ${String(tool).padEnd(30)} ${ev['ms']}ms${agent}`);
-            else if (ev['event'] === 'tool_error') console.log(`${ts}  ERROR ${tool}${agent}`);
-          }
-        } catch { /* skip */ }
+        renderTelemetryLine(filePath, trimmed, leaseFile);
       }
+      resolve();
     });
-  }
+  });
+}
+
+function renderLive(dir: string) {
+  const leaseFile = join(dir, OPENLORE_DIR, TELEMETRY_SUBDIR, 'epistemic-lease.jsonl');
+  const mcpFile = join(dir, OPENLORE_DIR, TELEMETRY_SUBDIR, 'mcp.jsonl');
+
+  // Track file positions to only read new lines; in-flight guard prevents
+  // overlapping reads when watch() fires twice before the first stream ends.
+  const state: TelemetryTailState = {
+    offsets: new Map<string, number>([[leaseFile, 0], [mcpFile, 0]]),
+    inFlight: new Set<string>(),
+    leaseFile,
+  };
 
   console.log(`Watching ${join(dir, OPENLORE_DIR, TELEMETRY_SUBDIR)} — Ctrl+C to stop\n`);
 
   const files = [leaseFile, mcpFile];
   // Initial tail
-  Promise.all(files.map(tail));
+  Promise.all(files.map(f => tailTelemetryFile(f, state)));
 
   const watchDir = join(dir, OPENLORE_DIR, TELEMETRY_SUBDIR);
   if (existsSync(watchDir)) {
     watch(watchDir, { persistent: true }, async (_event, filename) => {
       if (!filename) return;
       const full = join(watchDir, filename);
-      if (files.includes(full)) await tail(full);
+      if (files.includes(full)) await tailTelemetryFile(full, state);
     });
   }
 }
