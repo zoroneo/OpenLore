@@ -391,11 +391,7 @@ The system SHALL preserve user formatting in existing JSON configuration files b
 > Date: 2026-06-16
 ### Requirement: ConfidenceboundaryResponseShapeCategoricalEdgebasisKnownunknowableCrossingsStalenessNeverABlendedScore
 
-The system SHALL attach a deterministic confidenceBoundary object (edge provenance counts, known-unknowable crossings, staleness, and a complete flag) to every conclusion-tool response, computed solely from static analysis metadata without LLM inference.
-
-> Decision recorded: 08e71184
-> Date: 2026-06-18
-
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `08e71184`).
 ### Requirement: PreflightHookIsOptInAndAdvisory
 
 The CLI SHALL provide explicit installation of an advisory pre-flight git hook that emits the structural
@@ -426,16 +422,10 @@ The system SHALL maintain a project-local federation registry at .openlore/feder
 > Date: 2026-06-19
 ### Requirement: SpecstoreBindingResolvesDeclaredTargetsByNameAgainstTheFederationRegistry
 
-The system SHALL provide a declarative spec-store binding that resolves named targets against the federation registry and surfaces health findings as conclusion-shaped diagnostics without throwing or blocking.
-
-> Decision recorded: c6e36101
-> Date: 2026-06-21
+The canonical statement of this decision lives in the `config` domain — see [config/spec.md](../config/spec.md) (decision `c6e36101`).
 ### Requirement: LeanDefaultMcpSurfaceNavigationPresetFull62toolSurfaceIsOptinViaPresetFullAlltools
 
-**[SUPERSEDED by c79ec7ca / ADR-0023.]** This requirement (the `navigation` preset as the default MCP surface; full surface via `--preset full` / `--all-tools`) is superseded: the default is now the `substrate` preset (the navigation core plus `recall` + `verify_claim` + `blast_radius`, 13 tools), and `--preset navigation` remains the lean navigate-only escape.
-
-> Decision recorded: a6c916ed
-> Date: 2026-06-22
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `a6c916ed`).
 ### Requirement: SerializeTheProveScorecardAsVersionedStablekeyedJson
 
 The system SHALL serialize the prove scorecard as a versioned JSON object with a stable key set so that external tooling and CI pipelines can consume and gate on it.
@@ -444,10 +434,7 @@ The system SHALL serialize the prove scorecard as a versioned JSON object with a
 > Date: 2026-06-22
 ### Requirement: PersistProveScorecardsAsDatedNonclobberingFilesUnderOpenloreprove
 
-The system SHALL persist prove scorecards as dated, non-clobbering JSON files under .openlore/prove/ when invoked with --save.
-
-> Decision recorded: 670b5f0b
-> Date: 2026-06-22
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `670b5f0b`).
 ### Requirement: ComputeTheProveEstimateArmAsADeterministicGraphderivedProxyLabeledNevermeasured
 
 The system SHALL compute a deterministic, graph-derived estimate scorecard when invoked with prove --estimate, clearly labeled as never-measured.
@@ -456,16 +443,10 @@ The system SHALL compute a deterministic, graph-derived estimate scorecard when 
 > Date: 2026-06-22
 ### Requirement: ProveSavescorecardWritesAtomicallyWxAndDegradesFsErrorsInsteadOfCrashing
 
-The system SHALL write prove scorecards atomically with O_CREAT|O_EXCL and degrade filesystem errors to stderr + exit 1 without discarding the printed scorecard.
-
-> Decision recorded: dfe33d94
-> Date: 2026-06-23
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `dfe33d94`).
 ### Requirement: FlipDefaultMcpSurfaceToTheSubstrateBothfacesPreset
 
-The system SHALL expose the substrate preset (navigation core plus recall, verify_claim, and blast_radius) as the default MCP tool surface.
-
-> Decision recorded: c79ec7ca
-> Date: 2026-06-28
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `c79ec7ca`).
 
 ## Technical Notes
 

@@ -1,6 +1,6 @@
 # Restore spec-corpus integrity: purge the phantom layer, regenerate the overview, dedupe synced decisions
 
-> Status: PROPOSED (2026-07-03, e2e audit). The committed spec corpus is bimodal: a 2026-Q1
+> Status: IMPLEMENTED (2026-07-18). The committed spec corpus is bimodal: a 2026-Q1
 > auto-generated layer describing a product OpenLore is not (JWT auth, task/project/membership
 > APIs, an "OpenSpec CLI") sits under the genuinely-current hand-written and decision-synced
 > layer, and the two have never been reconciled. This change is the one-time repair; the ongoing

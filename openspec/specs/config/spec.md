@@ -11,30 +11,39 @@ Handles reading, writing, and managing configuration files for both `.openlore/c
 
 ### Requirement: Readopenloreconfig
 
-The system SHALL the service shall read the `.openlore/config.json` file from the specified root path and return its parsed content as a `openloreconfig` object.
+The system SHALL read the `.openlore/config.json` file from the specified root path and return its
+parsed content as an `OpenLoreConfig` object.
 
-#### Scenario: Unnamed
-- **GIVEN** the system is in a valid state
-- **WHEN** the operation is invoked
-- **THEN** the expected outcome occurs
+#### Scenario: Config file exists
+- **GIVEN** a root path containing a valid `.openlore/config.json`
+- **WHEN** `readOpenLoreConfig` is called with that root path
+- **THEN** the parsed `OpenLoreConfig` object is returned
+
+#### Scenario: Config file missing
+- **GIVEN** a root path with no `.openlore/config.json`
+- **WHEN** `readOpenLoreConfig` is called with that root path
+- **THEN** the absence is reported rather than a partially-parsed object
 
 ### Requirement: Writeopenspecconfig
 
-The system SHALL the service shall write the provided `openspecconfig` object to `openspec/config.yaml` in yaml format, ensuring the directory structure exists.
+The system SHALL write the provided `OpenSpecConfig` object to `openspec/config.yaml` in YAML
+format, creating the enclosing directory structure if it does not already exist.
 
-#### Scenario: Unnamed
-- **GIVEN** the system is in a valid state
-- **WHEN** the operation is invoked
-- **THEN** the expected outcome occurs
+#### Scenario: Directory structure ensured on write
+- **GIVEN** an `OpenSpecConfig` object and a root path whose `openspec/` directory does not yet exist
+- **WHEN** `writeOpenspecConfig` is called
+- **THEN** the directory is created and `openspec/config.yaml` is written in YAML format
 
 ### Requirement: Mergeopenspecconfig
 
-The system SHALL the service shall merge an existing `openspecconfig` with new `openlore` metadata, preserving existing values and updating only the `openlore` section.
+The system SHALL merge an existing `OpenSpecConfig` with new `openlore` metadata, preserving
+existing values and updating only the `openlore` section.
 
-#### Scenario: Unnamed
-- **GIVEN** the system is in a valid state
-- **WHEN** the operation is invoked
-- **THEN** the expected outcome occurs
+#### Scenario: Existing values preserved on merge
+- **GIVEN** an existing `OpenSpecConfig` with user-authored fields and new `openlore` metadata
+- **WHEN** `mergeOpenspecConfig` is called
+- **THEN** only the `openlore` section is updated and all other existing values are preserved
+
 ### Requirement: SpecstoreBindingResolvesDeclaredTargetsByNameAgainstTheFederationRegistry
 
 The system SHALL provide a declarative spec-store binding that resolves named targets against the federation registry and surfaces health findings as conclusion-shaped diagnostics without throwing or blocking.

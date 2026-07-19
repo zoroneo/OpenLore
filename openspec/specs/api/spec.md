@@ -4,23 +4,13 @@
 
 ## Purpose
 
-This document specifies the HTTP API exposed by the system.
+This document specifies the programmatic (embeddable) API exposed by `src/api/` — the in-process
+functions (`init`, `analyze`, `generate`, `drift`, `run`, …) a host process calls to drive OpenLore.
+OpenLore is a local-first CLI/library; it exposes no networked HTTP API and performs no user
+authentication (see `overview` and `mcp-security`). Credentials appear only as LLM-provider API
+keys read from the environment.
 
 ## Requirements
-
-### Requirement: APIAuthentication
-
-The API SHALL require authentication via: Bearer JWT, Bearer API Key, API Key, API Key (GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY), None, API Key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or OPENAI_COMPAT_API_KEY), API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or OPENAI_COMPAT_API_KEY), None (local execution)
-
-#### Scenario: AuthenticatedRequest
-- **GIVEN** a request with valid authentication credentials
-- **WHEN** the request is processed
-- **THEN** the request is authenticated successfully
-
-#### Scenario: UnauthenticatedRequest
-- **GIVEN** a request without authentication
-- **WHEN** accessing a protected endpoint
-- **THEN** the response status is 401 Unauthorized
 
 ### Requirement: Functionconfiguration
 
@@ -786,7 +776,7 @@ The API SHALL support `Function resolveProviderConfig(directory: string)` to [pa
 - **WHEN** resolveProviderConfig is called
 - **THEN** Returns a ProviderConfig with kind 'openai-compat', baseUrl, apiKey, and model
 
-### Requirement: Postchatagent
+### Requirement: PostChatCompletions
 
 The API SHALL support `POST /chat/completions` to [partial spec — file too large to fully analyze (4 parts)] process chat messages and execute tools based on the conversation.
 
@@ -830,7 +820,7 @@ The API SHALL support `POST /chat/completions` to [partial spec — file too lar
 - **AND** Error message includes status code
 - **AND** Error message includes preview of the response
 
-### Requirement: Postchatagent
+### Requirement: PostGenerateContent
 
 The API SHALL support `POST /generateContent` to [partial spec — file too large to fully analyze (4 parts)] generate content using the gemini model with tool use capabilities.
 
@@ -905,7 +895,7 @@ The API SHALL support `POST /generateContent` to [partial spec — file too larg
 - **WHEN** POST /generateContent is called
 - **THEN** 200 OK with response containing generated content and tool use results
 
-### Requirement: Postchatagent
+### Requirement: PostMessages
 
 The API SHALL support `POST /messages` to [partial spec — file too large to fully analyze (4 parts)] generate messages using the anthropic model with tool use capabilities.
 
@@ -954,7 +944,7 @@ The API SHALL support `POST /messages` to [partial spec — file too large to fu
 - **WHEN** POST /messages is called
 - **THEN** 200 OK with response containing generated messages and tool use results
 
-### Requirement: Postchatagent
+### Requirement: PostApiChatAgent
 
 The API SHALL support `POST /api/chat-agent` to [partial spec — file too large to fully analyze (4 parts)] run the chat agent to process messages and handle tool use.
 
@@ -2011,7 +2001,7 @@ The API SHALL support `CLI mcp` to main command for the model-centric programmin
 - **WHEN** User runs 'mcp' command
 - **THEN** MCP server starts and provides various subcommands
 
-### Requirement: Clicodebase
+### Requirement: CliMcpOrient
 
 The API SHALL support `CLI mcp orient` to orient the codebase by analyzing and suggesting improvements
 
@@ -2040,7 +2030,7 @@ The API SHALL support `CLI mcp orient` to orient the codebase by analyzing and s
 - **WHEN** User runs 'mcp orient'
 - **THEN** Returns recommendations for improving the codebase
 
-### Requirement: Clicodebase
+### Requirement: CliMcpAnalyzeCodebase
 
 The API SHALL support `CLI mcp analyze-codebase` to analyze the codebase for refactoring opportunities
 
@@ -2466,7 +2456,7 @@ The API SHALL support `Function saveRunMetadata(rootPath: string, metadata: RunM
 - **WHEN** Function is called
 - **THEN** Metadata is saved to disk
 
-### Requirement: Functionui
+### Requirement: FunctionDisplayBanner
 
 The API SHALL support `Function displayBanner(projectName: string, projectType: string, rootPath: string)` to [partial spec — file too large to fully analyze (2 parts)] display the pipeline banner
 
@@ -2485,7 +2475,7 @@ The API SHALL support `Function displayBanner(projectName: string, projectType: 
 - **WHEN** Function is called
 - **THEN** Banner is displayed in console
 
-### Requirement: Functionui
+### Requirement: FunctionDisplayCompletionBanner
 
 The API SHALL support `Function displayCompletionBanner()` to [partial spec — file too large to fully analyze (2 parts)] display the completion banner
 
@@ -2681,7 +2671,7 @@ The API SHALL support `Command verify` to [partial spec — file too large to fu
 - **AND** Individual file verification results are shown with scores and feedback
 - **AND** A summary report is displayed with overall confidence and recommendations
 
-### Requirement: Functiondriftseverity
+### Requirement: FunctionSeverityLabel
 
 The API SHALL support `Function severityLabel(severity: DriftSeverity): string` to [partial spec — file too large to fully analyze (2 parts)] converts a driftseverity enum value to a human-readable label.
 
@@ -2716,7 +2706,7 @@ The API SHALL support `Function severityLabel(severity: DriftSeverity): string` 
 - **WHEN** The function is called with 'info'
 - **THEN** Returns the string 'INFO'
 
-### Requirement: Functiondriftseverity
+### Requirement: FunctionSeverityIcon
 
 The API SHALL support `Function severityIcon(severity: DriftSeverity): string` to [partial spec — file too large to fully analyze (2 parts)] converts a driftseverity enum value to a corresponding icon.
 
@@ -2751,7 +2741,7 @@ The API SHALL support `Function severityIcon(severity: DriftSeverity): string` t
 - **WHEN** The function is called with 'info'
 - **THEN** Returns the string '→'
 
-### Requirement: Functiondriftissue
+### Requirement: FunctionKindLabel
 
 The API SHALL support `Function kindLabel(kind: string): string` to [partial spec — file too large to fully analyze (2 parts)] converts a drift issue kind to a human-readable label.
 
@@ -2806,7 +2796,7 @@ The API SHALL support `Function kindLabel(kind: string): string` to [partial spe
 - **WHEN** The function is called with an unknown kind
 - **THEN** Returns the kind value as-is
 
-### Requirement: Functiondriftissue
+### Requirement: FunctionDisplayIssue
 
 The API SHALL support `Function displayIssue(issue: DriftIssue, verbose: boolean): void` to [partial spec — file too large to fully analyze (2 parts)] displays a drift issue in the console.
 
@@ -2861,7 +2851,7 @@ The API SHALL support `Function displaySummary(result: DriftResult): void` to [p
 - **WHEN** The function is called with the result
 - **THEN** Displays 'No issues found' in the summary
 
-### Requirement: Functiongithook
+### Requirement: FunctionInstallPreCommitHook
 
 The API SHALL support `Function installPreCommitHook(rootPath: string): Promise<void>` to [partial spec — file too large to fully analyze (2 parts)] installs a pre-commit hook to check for spec drift.
 
@@ -2888,7 +2878,7 @@ The API SHALL support `Function installPreCommitHook(rootPath: string): Promise<
 - **WHEN** The function is called with the rootPath
 - **THEN** Appends the openlore drift check to the existing hook
 
-### Requirement: Functiongithook
+### Requirement: FunctionUninstallPreCommitHook
 
 The API SHALL support `Function uninstallPreCommitHook(rootPath: string): Promise<void>` to [partial spec — file too large to fully analyze (2 parts)] uninstalls the openlore drift check from the pre-commit hook.
 

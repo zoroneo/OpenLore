@@ -224,7 +224,7 @@ The system SHALL estimate the number of tokens in a given text string for the ll
 - **WHEN** countTokens is called with the text.
 - **THEN** A number greater than zero is returned.
 
-### Requirement: Generatecompletion
+### Requirement: OpenaiGeneratecompletion
 
 The system SHALL generate a text completion using openai's api based on the provided completionrequest.
 
@@ -234,7 +234,7 @@ The system SHALL generate a text completion using openai's api based on the prov
 - **WHEN** generateCompletion is called with the request.
 - **THEN** A CompletionResponse is returned with content='4', non-zero token usage, and finishReason='stop'.
 
-### Requirement: Counttokens
+### Requirement: OpenaiCounttokens
 
 The system SHALL estimate the number of tokens in a given text string using openai's tokenization rules.
 
@@ -252,60 +252,6 @@ The system SHALL initialize the openai provider with api key, model, base url, a
 - **WHEN** OpenAIProvider is instantiated with the key and model.
 - **THEN** An OpenAIProvider instance is created with apiKey='sk-123', model='gpt-4o', and
 baseUrl='https://api.openai.com/v1'.
-
-### Requirement: Generatecompletion
-
-The system SHALL simulate an llm completion request and return a mock response based on predefined rules or prompt content.
-
-#### Scenario: Unnamed
-- **GIVEN** the system is in a valid state
-- **WHEN** the operation is invoked
-- **THEN** the expected outcome occurs
-
-### Requirement: Setresponse
-
-The system SHALL configure the provider to return a specific response when the user prompt contains the given keyword.
-
-#### Scenario: Unnamed
-- **GIVEN** the system is in a valid state
-- **WHEN** the operation is invoked
-- **THEN** the expected outcome occurs
-
-### Requirement: Simulatefailure
-
-The system SHALL simulate transient failures for testing retry logic.
-
-#### Scenario: Unnamed
-- **GIVEN** the system is in a valid state
-- **WHEN** the operation is invoked
-- **THEN** the expected outcome occurs
-
-### Requirement: Generatecompletion
-
-The system SHALL send a completion request to the anthropic api and return the generated response.
-
-#### Scenario: Unnamed
-- **GIVEN** the system is in a valid state
-- **WHEN** the operation is invoked
-- **THEN** the expected outcome occurs
-
-### Requirement: Counttokens
-
-The system SHALL estimate the number of tokens for a given text using anthropic's tokenization rules.
-
-#### Scenario: Unnamed
-- **GIVEN** the system is in a valid state
-- **WHEN** the operation is invoked
-- **THEN** the expected outcome occurs
-
-### Requirement: Getmaxcontexttokens
-
-The system SHALL return the maximum context window size for the configured model.
-
-#### Scenario: Unnamed
-- **GIVEN** the system is in a valid state
-- **WHEN** the operation is invoked
-- **THEN** the expected outcome occurs
 
 ### Requirement: CursorAgentCliProvider
 

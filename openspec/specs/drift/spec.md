@@ -748,28 +748,16 @@ false
 - **AND** The function SHALL consider the file path and content
 ### Requirement: UseGitCommitAncestryForBitemporalMemoryValidityValidfromcommitDeterministicNoLlm
 
-The system SHALL use git commit ancestry (merge-base --is-ancestor) rather than wall-clock timestamps for bitemporal memory valid-time comparison, ensuring reproducible history for a fixed repo state.
-
-> Decision recorded: 48771c59
-> Date: 2026-06-18
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `48771c59`).
 ### Requirement: ExcludeSupersededDecisionsFromAuthoritativeRecallViaOneSharedSupersessionPredicate
 
-The system SHALL exclude superseded decisions from authoritative recall and orient context using a single shared supersession predicate, surfacing them only as reversal warnings.
-
-> Decision recorded: 6c32e6c6
-> Date: 2026-06-19
+The canonical statement of this decision lives in the `mcp-handlers` domain — see [mcp-handlers/spec.md](../mcp-handlers/spec.md) (decision `6c32e6c6`).
 ### Requirement: LeanDefaultMcpSurfaceNavigationPresetFull62toolSurfaceIsOptinViaPresetFullAlltools
 
-**[SUPERSEDED by c79ec7ca / ADR-0023.]** This requirement (the `navigation` preset as the default MCP surface; full surface via `--preset full` / `--all-tools`) is superseded: the default is now the `substrate` preset (the navigation core plus `recall` + `verify_claim` + `blast_radius`, 13 tools), and `--preset navigation` remains the lean navigate-only escape.
-
-> Decision recorded: a6c916ed
-> Date: 2026-06-22
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `a6c916ed`).
 ### Requirement: FlipDefaultMcpSurfaceToTheSubstrateBothfacesPreset
 
-The system SHALL expose the substrate preset (navigation core plus recall, verify_claim, and blast_radius) as the default MCP tool surface.
-
-> Decision recorded: c79ec7ca
-> Date: 2026-06-28
+The canonical statement of this decision lives in the `analyzer` domain — see [analyzer/spec.md](../analyzer/spec.md) (decision `c79ec7ca`).
 
 ## Technical Notes
 
