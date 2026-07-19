@@ -322,11 +322,12 @@ describe('openlore serve', () => {
   });
 
   it('repopulates the graph after a schema-version reset instead of stalling', async () => {
-    // Regression for the schema-reset auto-heal: EdgeStore.open() reports wasReset
-    // exactly ONCE (it rewrites the on-disk version on that first open), so the
-    // watcher's wasReset-keyed self-heal never fires once serve's startup open has
-    // consumed the flag. Serve must therefore kick `analyze --force` itself —
-    // otherwise every graph request polls an empty store until the 60s timeout.
+    // Regression for the schema-reset auto-heal. A read no longer wipes-then-heals:
+    // EdgeStore.open() reports the mismatch as not-ready and leaves the store intact
+    // (change: harden-index-store-lifecycle), and the watcher only *schedules* a
+    // rebuild. Serve must therefore kick `analyze --force` itself and re-stamp the
+    // store at the current schema — otherwise every graph request polls a not-ready
+    // store until the 60s timeout.
     root = await mkdtemp(join(tmpdir(), 'openlore-serve-reset-'));
     await mkdir(join(root, OPENLORE_DIR), { recursive: true });
     await mkdir(join(root, 'openspec', 'specs'), { recursive: true });
@@ -347,7 +348,7 @@ describe('openlore serve', () => {
     );
 
     // Build a real, populated graph, then simulate a post-upgrade schema bump by
-    // forcing the on-disk version stale so the next open() wipes + flags wasReset.
+    // forcing the on-disk version stale so the next read reports not-ready.
     await openloreAnalyze({ rootPath: root, force: true });
     const analysisDir = join(root, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
     const dbFile = EdgeStore.dbPath(analysisDir);
@@ -360,19 +361,30 @@ describe('openlore serve', () => {
     raw.exec('UPDATE schema_version SET version = 0');
     raw.close();
 
+    // The mismatch is reported without destroying the store (a read never wipes).
+    {
+      const probe = EdgeStore.open(dbFile);
+      expect(probe.notReady?.reason).toBe('schema-mismatch');
+      probe.close();
+    }
+
     // Start serve (watch:false so the ONLY possible healer is serve's own trigger).
     handle = await startServe({ directory: root, port: '0', watch: false });
     expect(handle).toBeDefined();
 
-    // The startup open consumed wasReset and wiped the DB; the fix must rebuild it.
+    // Serve must re-stamp the store at the current schema — poll until the read is
+    // ready again (proving the rebuild ran, not merely that bytes were never wiped).
+    let ready = false;
     let nodes = 0;
-    for (let i = 0; i < 100 && nodes === 0; i++) {
+    for (let i = 0; i < 100 && !ready; i++) {
       await new Promise((r) => setTimeout(r, 100));
       const es = EdgeStore.open(dbFile);
-      nodes = es.countNodes();
+      ready = es.notReady === null;
+      nodes = ready ? es.countNodes() : 0;
       es.close();
     }
-    expect(nodes).toBeGreaterThan(0); // rebuilt, not left empty
+    expect(ready).toBe(true);           // healed back to the current schema
+    expect(nodes).toBeGreaterThan(0);   // rebuilt, not left empty
   }, 30_000);
 
   it('rejects a spoofed (DNS-rebinding) Host header before dispatch', async () => {

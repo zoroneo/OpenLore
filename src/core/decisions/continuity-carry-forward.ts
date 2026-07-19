@@ -90,6 +90,13 @@ export function snapshotOldNodes(storeDir: string): OldNodeSnapshot[] {
   } catch {
     return [];
   }
+  // A not-ready store (schema-mismatched / quarantined) has no readable prior nodes to
+  // carry forward — the rebuild will re-anchor from scratch (change:
+  // harden-index-store-lifecycle).
+  if (store.notReady) {
+    store.close();
+    return [];
+  }
   try {
     return store.getAllInternalNodes().map((n) => ({
       id: n.id,
@@ -285,6 +292,12 @@ export async function carryForwardContinuity(
   try {
     store = EdgeStore.open(EdgeStore.dbPath(storeDir));
   } catch {
+    return EMPTY_SUMMARY;
+  }
+  // Not-ready store: nothing readable to reconcile against (change:
+  // harden-index-store-lifecycle).
+  if (store.notReady) {
+    try { store.close(); } catch { /* ignore */ }
     return EMPTY_SUMMARY;
   }
 

@@ -137,7 +137,15 @@ export class AnchorContext {
     const dir = analysisDir(rootPath);
     if (!EdgeStore.exists(dir)) return null;
     try {
-      return new AnchorContext(EdgeStore.open(EdgeStore.dbPath(dir)), rootPath);
+      const store = EdgeStore.open(EdgeStore.dbPath(dir));
+      // A not-ready store (schema-mismatched / quarantined) cannot answer anchor
+      // queries — recall degrades to "no analysis yet" rather than serving an empty
+      // graph as authoritative (change: harden-index-store-lifecycle).
+      if (store.notReady) {
+        store.close();
+        return null;
+      }
+      return new AnchorContext(store, rootPath);
     } catch {
       return null;
     }

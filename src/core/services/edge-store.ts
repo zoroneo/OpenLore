@@ -8,7 +8,39 @@ import type { FileProvenance } from '../provenance/git-provenance.js';
 import type { FileChangeCoupling, CoupledFile, ChangeCouplingResult } from '../provenance/change-coupling.js';
 import type { DecisionStatus } from '../../types/index.js';
 import { ARTIFACT_CALL_GRAPH_DB } from '../../constants.js';
+import { quarantineCorruptSync } from '../decisions/atomic-store.js';
 
+/**
+ * Why a just-opened graph store cannot be trusted to answer a read (change:
+ * harden-index-store-lifecycle):
+ *  - `schema-mismatch` — the on-disk store was built by a different OpenLore
+ *    (a SCHEMA_VERSION bump). A read leaves it byte-untouched and reports this,
+ *    rather than the old drop-and-rebuild-on-read that destroyed the index.
+ *  - `quarantined`     — the DB file failed to open (corrupt/truncated); it was
+ *    moved aside to `*.corrupt-<n>` and this handle wraps an ephemeral empty DB,
+ *    never a silently recreated on-disk store presented as healthy.
+ * In both cases the recovery is the same single command: `openlore analyze`.
+ */
+export interface StoreLifecycleFault {
+  reason: 'schema-mismatch' | 'quarantined';
+  /** Human-readable, names the recovery command. */
+  message: string;
+  /** Present for `quarantined`: where the corrupt bytes were preserved (null if unmovable). */
+  quarantinePath?: string | null;
+  /** Present for `schema-mismatch`: the SCHEMA_VERSION found on disk. */
+  onDiskVersion?: number;
+}
+
+/**
+ * Distinguish genuine store corruption (quarantine + rebuild) from a transient lock
+ * (surface it — the store is fine, the caller is racing a writer). Only corruption is
+ * quarantined; a `SQLITE_BUSY`/locked open error is re-thrown for the caller to retry.
+ */
+function isCorruptionError(err: unknown): boolean {
+  const m = ((err as Error | undefined)?.message ?? '').toLowerCase();
+  if (m.includes('locked') || m.includes('busy')) return false;
+  return /malformed|not a database|file is encrypted|disk image|not a valid|corrupt/.test(m);
+}
 
 function openDatabase(dbPath: string): DatabaseSync {
   const db = new DatabaseSync(dbPath);
@@ -70,17 +102,40 @@ export class EdgeStore {
   private _wasReset = false;
   get wasReset(): boolean { return this._wasReset; }
 
-  private constructor(private readonly db: DatabaseSync) {
-    this.initSchema();
+  /**
+   * Non-null when this handle must NOT answer reads: a schema-version mismatch met on a
+   * read-mode open (the store is left intact on disk) or a corrupt DB quarantined at open.
+   * Read consumers MUST check this before querying and surface the not-ready conclusion —
+   * never an empty graph served as current fact (change: harden-index-store-lifecycle).
+   */
+  private _fault: StoreLifecycleFault | null = null;
+  get notReady(): StoreLifecycleFault | null { return this._fault; }
+
+  private constructor(private readonly db: DatabaseSync, mode: 'read' | 'analyze') {
+    this.initSchema(mode);
   }
 
-  private initSchema(): void {
-    // Version check — if schema changed, wipe and rebuild (analyze --force repopulates).
+  private initSchema(mode: 'read' | 'analyze'): void {
+    // Version check. Reading `schema_version` on an existing table is non-mutating.
     this.db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`);
     const row = this.db.prepare('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | undefined;
     if (row === undefined) {
       this.db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
     } else if (row.version !== SCHEMA_VERSION) {
+      if (mode === 'read') {
+        // ReadPathsNeverDestroyTheIndex: a read NEVER runs the destructive migration.
+        // Record the mismatch and STOP before any CREATE/INDEX statement, so the
+        // on-disk store is byte-identical — the next `analyze` (write path) rebuilds it.
+        this._fault = {
+          reason: 'schema-mismatch',
+          onDiskVersion: row.version,
+          message:
+            `graph index was built by a different OpenLore (schema v${row.version}, ` +
+            `expected v${SCHEMA_VERSION}) — run \`openlore analyze\` to rebuild it`,
+        };
+        return;
+      }
+      // analyze/write path only — rebuild-on-bump, repopulated immediately by the caller.
       this._wasReset = true;
       this.db.exec(`
         DROP TABLE IF EXISTS edges;
@@ -945,8 +1000,53 @@ export class EdgeStore {
 
   // ── Factory ───────────────────────────────────────────────────────────────────
 
+  /**
+   * Open the graph store on a READ path. NEVER mutates the store: a schema-version
+   * mismatch or a corrupt DB yields a handle whose {@link notReady} is set (the on-disk
+   * store is preserved — untouched on mismatch, quarantined to `*.corrupt-<n>` on
+   * corruption), which read consumers surface as a not-ready conclusion instead of
+   * serving an empty graph or crashing (change: harden-index-store-lifecycle).
+   */
   static open(dbPath: string): EdgeStore {
-    return new EdgeStore(openDatabase(dbPath));
+    return EdgeStore.openInternal(dbPath, 'read');
+  }
+
+  /**
+   * Open the graph store on an ANALYZE/WRITE path. A SCHEMA_VERSION bump drops and
+   * rebuilds the tables (rebuild-on-bump) and a corrupt DB is quarantined then reopened
+   * fresh — both legitimate here because the caller repopulates the store in the same
+   * operation. Only this path may destroy data.
+   */
+  static openForAnalyze(dbPath: string): EdgeStore {
+    return EdgeStore.openInternal(dbPath, 'analyze');
+  }
+
+  private static openInternal(dbPath: string, mode: 'read' | 'analyze'): EdgeStore {
+    try {
+      return new EdgeStore(openDatabase(dbPath), mode);
+    } catch (err) {
+      // A locked/busy open is transient, not corruption — surface it for the caller
+      // to retry rather than quarantining a healthy store.
+      if (!isCorruptionError(err)) throw err;
+      // CorruptGraphStoreQuarantineParity: move the unreadable file (+ WAL/SHM) aside.
+      const quarantinePath = quarantineCorruptSync(dbPath, (err as Error).message);
+      if (mode === 'analyze') {
+        // The corrupt file is aside; analyze repopulates, so open a fresh store here.
+        return new EdgeStore(openDatabase(dbPath), 'analyze');
+      }
+      // Read path: never recreate an empty on-disk store (that would be the silent
+      // empty substitute the invariant forbids). Hand back a disclosed not-ready handle
+      // over an ephemeral in-memory DB the caller will not query.
+      const es = new EdgeStore(new DatabaseSync(':memory:'), 'read');
+      es._fault = {
+        reason: 'quarantined',
+        quarantinePath,
+        message:
+          `graph index was corrupt and quarantined${quarantinePath ? ` to ${quarantinePath}` : ''} — ` +
+          `run \`openlore analyze\` to rebuild it`,
+      };
+      return es;
+    }
   }
 
   static exists(outputDir: string): boolean {

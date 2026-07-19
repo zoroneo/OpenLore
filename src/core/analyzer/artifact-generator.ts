@@ -1384,7 +1384,10 @@ export async function writeEdgesToSQLite(
   cfgs?: Array<{ functionId: string; filePath: string; cfg: import('./cfg.js').FunctionCfg }>,
 ): Promise<void> {
   const { EdgeStore } = await import('../services/edge-store.js');
-  const store = EdgeStore.open(dbPath);
+  // Analyze/write path: this is the one site allowed to drop-and-rebuild on a
+  // SCHEMA_VERSION bump (and reopen fresh past a quarantined corrupt store), because
+  // it repopulates the store immediately below (change: harden-index-store-lifecycle).
+  const store = EdgeStore.openForAnalyze(dbPath);
   try {
     store.clearAll();
 

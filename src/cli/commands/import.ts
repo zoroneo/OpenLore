@@ -157,6 +157,12 @@ export async function readBundledSignatures(analysisDir: string): Promise<FileSi
  */
 async function buildKeywordSearchIndex(rootPath: string, analysisDir: string): Promise<boolean> {
   const store = EdgeStore.open(join(analysisDir, ARTIFACT_CALL_GRAPH_DB));
+  // A not-ready store (schema-mismatched / quarantined) has nothing to index from
+  // (change: harden-index-store-lifecycle).
+  if (store.notReady) {
+    store.close();
+    return false;
+  }
   let nodes, hubIds, entryIds;
   try {
     nodes = store.getAllInternalNodes();
@@ -245,22 +251,30 @@ export async function runImport(artifact: string, opts: ImportOptions): Promise<
 
     // (4) graph-content digest == bundled attestation, and the store reconciles healthy.
     const store = EdgeStore.open(join(staging, ARTIFACT_CALL_GRAPH_DB));
-    let digestOk: boolean;
-    let reconcileHealthy: boolean;
+    let digestOk = false;
+    let reconcileHealthy = false;
+    // A bundle whose graph store won't open at this OpenLore's schema — or is corrupt —
+    // is not importable as-is; fall through to a source rebuild rather than promoting a
+    // not-ready index (change: harden-index-store-lifecycle).
+    const storeFault = store.notReady;
     try {
-      digestOk = recomputeProductionDigest(store) === bundle.manifest.attestation.digest;
-      reconcileHealthy = reconcile(bundle.manifest.attestation, {
-        schemaVersion: store.getSchemaVersion(),
-        files: store.countFiles(),
-        functions: store.countNodes(),
-        edges: store.countEdges(),
-        classes: store.countClasses(),
-      }).verdict === 'healthy';
+      if (!storeFault) {
+        digestOk = recomputeProductionDigest(store) === bundle.manifest.attestation.digest;
+        reconcileHealthy = reconcile(bundle.manifest.attestation, {
+          schemaVersion: store.getSchemaVersion(),
+          files: store.countFiles(),
+          functions: store.countNodes(),
+          edges: store.countEdges(),
+          classes: store.countClasses(),
+        }).verdict === 'healthy';
+      }
     } finally {
       store.close();
     }
 
-    if (!digestOk) {
+    if (storeFault) {
+      rebuildReason = `bundled graph index is not usable (${storeFault.reason}); rebuilding from source.`;
+    } else if (!digestOk) {
       rebuildReason = 'materialized graph digest does not match the bundled attestation (tampered).';
     } else if (!reconcileHealthy) {
       rebuildReason = 'materialized index does not reconcile against its attestation.';

@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { logger } from '../../utils/logger.js';
 import { readOpenLoreConfig } from '../../core/services/config-manager.js';
+import { EdgeStore } from '../../core/services/edge-store.js';
 import { createLLMService, ProviderName } from '../../core/services/llm-service.js';
 import {
   MIN_NODE_MAJOR_VERSION,
@@ -161,6 +162,49 @@ async function checkAnalysis(rootPath: string): Promise<CheckResult> {
       remediation: { kind: 'analyze', label: 'openlore analyze --force' },
     };
   }
+}
+
+/**
+ * Graph-store lifecycle check (change: harden-index-store-lifecycle): a read never
+ * destroys the index, so a schema-version mismatch or a quarantined (corrupt) store
+ * persists until the next analyze. Surface it here with the recovery command instead of
+ * leaving the user to wonder why graph tools return not-ready. Read-only: opens on the
+ * non-destructive read path, which cannot mutate the store.
+ */
+async function checkGraphStore(rootPath: string): Promise<CheckResult> {
+  const analysisDir = join(rootPath, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+  if (!EdgeStore.exists(analysisDir)) {
+    return { name: 'Graph store', status: 'ok', detail: 'No graph index yet (build with openlore analyze)' };
+  }
+  const fixHint = "Run 'openlore analyze' to rebuild the graph index";
+  const remediation = { kind: 'analyze', label: 'openlore analyze --force' } as const;
+  let fault;
+  try {
+    const store = EdgeStore.open(EdgeStore.dbPath(analysisDir));
+    fault = store.notReady;
+    store.close();
+  } catch (err) {
+    return {
+      name: 'Graph store',
+      status: 'warn',
+      detail: `graph index could not be opened (${err instanceof Error ? err.message : String(err)})`,
+      fix: fixHint,
+      remediation,
+    };
+  }
+  if (fault) {
+    return {
+      name: 'Graph store',
+      status: 'warn',
+      detail:
+        fault.reason === 'quarantined'
+          ? `graph index was corrupt and quarantined${fault.quarantinePath ? ` to ${fault.quarantinePath}` : ''} — rebuild needed`
+          : `graph index built by a different OpenLore (on-disk schema v${fault.onDiskVersion}) — rebuild needed`,
+      fix: fixHint,
+      remediation,
+    };
+  }
+  return { name: 'Graph store', status: 'ok', detail: 'graph index opens cleanly at the current schema' };
 }
 
 /**
@@ -514,6 +558,7 @@ Checks performed:
   • Git repository detection
   • openlore configuration (${OPENLORE_CONFIG_REL_PATH})
   • Analysis artifacts freshness
+  • Graph store lifecycle (schema mismatch / quarantined index)
   • OpenSpec directory presence
   • MCP wiring (Claude Code reads .mcp.json, not .claude/settings.json)
   • LLM connection (live request with 10s timeout)
@@ -539,6 +584,7 @@ Checks performed:
         checkGit(rootPath),
         checkConfig(rootPath),
         checkAnalysis(rootPath),
+        checkGraphStore(rootPath),
         checkParseHealth(rootPath),
         checkOpenSpecDir(rootPath),
         checkDiskSpace(rootPath),

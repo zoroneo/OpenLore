@@ -504,18 +504,19 @@ export class McpWatcher {
     if (EdgeStore.exists(this.outputPath)) {
       const store = EdgeStore.open(EdgeStore.dbPath(this.outputPath));
       try {
-        // Schema-bump guard: opening a stale-version DB wipes it (rebuild-on-bump).
-        // An incremental per-file update on a wiped store would leave a PARTIAL graph
-        // (only the changed file's nodes). Skip it — a full `analyze` must rebuild.
-        if (store.wasReset) {
+        // Not-ready guard: a schema-version mismatch or a quarantined (corrupt) store is
+        // reported without being destroyed (change: harden-index-store-lifecycle). An
+        // incremental per-file update against it would leave a PARTIAL graph (only the
+        // changed file's nodes), so skip it — a full `analyze` must rebuild.
+        if (store.notReady) {
           process.stderr.write(
-            '[mcp-watcher] graph index was reset by a schema-version upgrade — scheduling a background rebuild. ' +
+            `[mcp-watcher] graph index not ready (${store.notReady.reason}) — scheduling a background rebuild. ` +
             'Skipping incremental update to avoid a partial graph.\n'
           );
           this.scheduleBackgroundRebuild();
         }
         for (const f of files) {
-          if (store.wasReset) break;
+          if (store.notReady) break;
           const newHash = createHash('sha256').update(f.content).digest('hex');
           if (store.getFileHash(f.rel) === newHash) continue; // no-op autosave
 
@@ -635,7 +636,8 @@ export class McpWatcher {
         // Keep the index attestation's counts in lockstep with the now-mutated store so
         // the load-time verdict doesn't falsely report `degraded` on a valid incremental
         // edit (change: add-index-integrity-attestation). Best-effort; never blocks the
-        // watch path. Skipped on a wasReset store (handled above — it bails before here).
+        // watch path. Skipped on a not-ready store (the loop above breaks immediately,
+        // so changedFiles stays empty).
         if (changedFiles.length > 0) {
           await refreshAttestationCounts(this.outputPath, store).catch(() => {});
         }
@@ -1204,6 +1206,13 @@ export class McpWatcher {
     if (EdgeStore.exists(this.outputPath)) {
       const store = EdgeStore.open(EdgeStore.dbPath(this.outputPath));
       try {
+        // Not-ready guard: never mutate a schema-mismatched or quarantined store —
+        // a full `analyze` rebuild subsumes these deletions (change:
+        // harden-index-store-lifecycle).
+        if (store.notReady) {
+          this.scheduleBackgroundRebuild();
+          return;
+        }
         store.transaction(() => {
           for (const rel of rels) {
             store.deleteEdgesForFile(rel);
@@ -1219,7 +1228,9 @@ export class McpWatcher {
         // A deletion is the most likely trigger for a false `degraded` — keep the
         // attestation's counts current with the shrunken store (change:
         // add-index-integrity-attestation). Best-effort; never blocks the watch path.
-        if (!store.wasReset) {
+        // Skipped on a not-ready store (a schema-mismatched/quarantined index is
+        // rebuilt by analyze, not patched here).
+        if (!store.notReady) {
           await refreshAttestationCounts(this.outputPath, store).catch(() => {});
         }
       } catch (err) {

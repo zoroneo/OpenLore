@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -64,25 +65,30 @@ describe('EdgeStore', () => {
     });
   });
 
-  describe('schema-bump wipe (wasReset)', () => {
+  /** Write a store at an old SCHEMA_VERSION with one node — a pre-upgrade index. */
+  async function makeStaleStore(version: number): Promise<{ d: string; p: string }> {
+    const d = await makeTmpDir();
+    const p = join(d, 'cg.db');
+    const old = new DatabaseSync(p);
+    old.exec('CREATE TABLE schema_version (version INTEGER NOT NULL)');
+    old.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
+    old.exec('CREATE TABLE nodes (id TEXT PRIMARY KEY, name TEXT, file_path TEXT, is_external INTEGER NOT NULL DEFAULT 0)');
+    old.prepare("INSERT INTO nodes (id, name, file_path) VALUES ('a::foo','foo','a')").run();
+    old.close();
+    return { d, p };
+  }
+
+  describe('schema-bump rebuild on the analyze/write path (wasReset)', () => {
     it('a current-version store reports wasReset === false', () => {
       expect(store.wasReset).toBe(false);
     });
 
-    it('opening a stale-version DB wipes it and reports wasReset === true', async () => {
-      const d = await makeTmpDir();
-      const p = join(d, 'cg.db');
-      // Simulate a pre-upgrade store: an old SCHEMA_VERSION with a node already in it.
-      const old = new DatabaseSync(p);
-      old.exec('CREATE TABLE schema_version (version INTEGER NOT NULL)');
-      old.prepare('INSERT INTO schema_version (version) VALUES (1)').run();
-      old.exec('CREATE TABLE nodes (id TEXT PRIMARY KEY, name TEXT, file_path TEXT, is_external INTEGER NOT NULL DEFAULT 0)');
-      old.prepare("INSERT INTO nodes (id, name, file_path) VALUES ('a::foo','foo','a')").run();
-      old.close();
-
-      const es = EdgeStore.open(p);
+    it('openForAnalyze on a stale-version DB wipes it and reports wasReset === true', async () => {
+      const { d, p } = await makeStaleStore(1);
+      const es = EdgeStore.openForAnalyze(p);
       try {
         expect(es.wasReset).toBe(true);      // detected the stale version
+        expect(es.notReady).toBeNull();      // the write path repopulates — not a read fault
         expect(es.countNodes()).toBe(0);     // and wiped the data (rebuild-on-bump)
       } finally {
         es.close();
@@ -104,7 +110,7 @@ describe('EdgeStore', () => {
       old.prepare("INSERT INTO nodes (id, name, file_path) VALUES ('src/a.ts::legacy','legacy','src/a.ts')").run();
       old.close();
 
-      const es = EdgeStore.open(p);
+      const es = EdgeStore.openForAnalyze(p);
       try {
         expect(es.wasReset).toBe(true);
         expect(es.countNodes()).toBe(0); // legacy row gone, no migration attempted
@@ -118,6 +124,109 @@ describe('EdgeStore', () => {
         expect(es.getNodeByStableId('sid:foo(x: number)')?.id).toBe('src/a.ts::foo');
       } finally {
         es.close();
+        await rm(d, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('read paths never destroy the index (harden-index-store-lifecycle)', () => {
+    it('open() on a current-version store is healthy (notReady === null)', () => {
+      expect(store.notReady).toBeNull();
+    });
+
+    it('open() on a stale-version DB reports schema-mismatch and destroys no data (no DROP, no re-stamp)', async () => {
+      const { d, p } = await makeStaleStore(1);
+      const es = EdgeStore.open(p);
+      try {
+        expect(es.notReady).not.toBeNull();
+        expect(es.notReady?.reason).toBe('schema-mismatch');
+        expect(es.notReady?.onDiskVersion).toBe(1);
+        expect(es.notReady?.message).toMatch(/openlore analyze/);
+        expect(es.wasReset).toBe(false); // a read never wipes
+      } finally {
+        es.close();
+      }
+      // The read ran no destructive migration: the stale data row survives and the
+      // on-disk schema version is NOT re-stamped to current — so the next analyze
+      // still detects the mismatch and rebuilds. (SQLite flips the WAL header bit on
+      // any open; that is not data destruction, which is the invariant that matters.)
+      const raw = new DatabaseSync(p);
+      try {
+        expect((raw.prepare('SELECT COUNT(*) c FROM nodes').get() as { c: number }).c).toBe(1);
+        expect((raw.prepare('SELECT version FROM schema_version LIMIT 1').get() as { version: number }).version).toBe(1);
+      } finally {
+        raw.close();
+        await rm(d, { recursive: true, force: true });
+      }
+    });
+
+    it('a subsequent openForAnalyze still rebuilds the stale store (analyze heals it)', async () => {
+      const { d, p } = await makeStaleStore(1);
+      // A read left it not-ready…
+      const r = EdgeStore.open(p);
+      expect(r.notReady?.reason).toBe('schema-mismatch');
+      r.close();
+      // …and analyze rebuilds it, because the read preserved the mismatch on disk.
+      const w = EdgeStore.openForAnalyze(p);
+      try {
+        expect(w.wasReset).toBe(true);
+        expect(w.notReady).toBeNull();
+        expect(w.countNodes()).toBe(0);
+      } finally {
+        w.close();
+        await rm(d, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('corrupt-store quarantine at open (CorruptGraphStoreQuarantineParity)', () => {
+    it('open() quarantines a corrupt DB to *.corrupt-0 and returns not-ready — no crash, no silent empty', async () => {
+      const d = await makeTmpDir();
+      const p = join(d, 'cg.db');
+      // A file that is not a valid SQLite database.
+      writeFileSync(p, 'this is not a sqlite database at all — truncated garbage');
+      try {
+        const es = EdgeStore.open(p);
+        expect(es.notReady?.reason).toBe('quarantined');
+        expect(es.notReady?.quarantinePath).toBe(`${p}.corrupt-0`);
+        expect(es.notReady?.message).toMatch(/openlore analyze/);
+        es.close();
+        // The corrupt bytes are preserved aside, and NO empty store was recreated at `p`.
+        expect(existsSync(`${p}.corrupt-0`)).toBe(true);
+        expect(existsSync(p)).toBe(false);
+      } finally {
+        await rm(d, { recursive: true, force: true });
+      }
+    });
+
+    it('a second corrupt open takes the next free suffix — no bytes lost', async () => {
+      const d = await makeTmpDir();
+      const p = join(d, 'cg.db');
+      try {
+        writeFileSync(p, 'garbage one');
+        EdgeStore.open(p).close();          // → cg.db.corrupt-0
+        writeFileSync(p, 'garbage two');
+        EdgeStore.open(p).close();          // → cg.db.corrupt-1
+        expect(existsSync(`${p}.corrupt-0`)).toBe(true);
+        expect(existsSync(`${p}.corrupt-1`)).toBe(true);
+        expect(readFileSync(`${p}.corrupt-0`, 'utf-8')).toBe('garbage one');
+        expect(readFileSync(`${p}.corrupt-1`, 'utf-8')).toBe('garbage two');
+      } finally {
+        await rm(d, { recursive: true, force: true });
+      }
+    });
+
+    it('openForAnalyze quarantines a corrupt DB then opens a fresh store to repopulate', async () => {
+      const d = await makeTmpDir();
+      const p = join(d, 'cg.db');
+      writeFileSync(p, 'not a database');
+      try {
+        const es = EdgeStore.openForAnalyze(p);
+        expect(es.notReady).toBeNull();     // analyze gets a usable, empty store to fill
+        expect(es.countNodes()).toBe(0);
+        es.close();
+        expect(existsSync(`${p}.corrupt-0`)).toBe(true); // corrupt bytes preserved aside
+      } finally {
         await rm(d, { recursive: true, force: true });
       }
     });

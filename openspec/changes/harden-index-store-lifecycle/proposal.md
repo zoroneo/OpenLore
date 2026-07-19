@@ -1,10 +1,13 @@
 # Harden the graph-store lifecycle: read paths never destroy the index; corruption is quarantined
 
-> Status: PROPOSED (2026-07-03, e2e audit). Opening the SQLite graph store for a READ currently
-> executes `DROP TABLE` on a schema-version mismatch — an upgrade followed by any query silently
-> destroys the index — and a corrupt DB file throws uncaught with no quarantine. Brings
-> `EdgeStore` up to the lifecycle discipline the decision store already has
-> (`CorruptStoreQuarantineNotSilentEmpty`, `architecture/spec.md`).
+> Status: IMPLEMENTED (2026-07-18, PR harden-index-store-lifecycle). Opening the SQLite graph store
+> for a READ previously executed `DROP TABLE` on a schema-version mismatch — an upgrade followed by
+> any query silently destroyed the index — and a corrupt DB file threw uncaught with no quarantine.
+> Now `EdgeStore.open()` is non-destructive (schema mismatch → typed not-ready, on-disk store left
+> intact; corrupt DB → quarantined to `*.corrupt-<n>`), `EdgeStore.openForAnalyze()` owns the
+> rebuild-on-bump write path, and `openlore doctor` discloses the state — bringing `EdgeStore` up to
+> the lifecycle discipline the decision store already has (`CorruptStoreQuarantineNotSilentEmpty`,
+> `architecture/spec.md`).
 
 ## The gap
 

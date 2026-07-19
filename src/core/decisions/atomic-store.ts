@@ -24,6 +24,7 @@
  */
 
 import { open, rename, stat, unlink, mkdir, access, readFile, link } from 'node:fs/promises';
+import { linkSync, unlinkSync, renameSync, existsSync } from 'node:fs';
 import { dirname, basename, join } from 'node:path';
 import { logger } from '../../utils/logger.js';
 
@@ -236,5 +237,85 @@ export async function quarantineCorrupt(path: string, reason: string): Promise<s
         `(${(err as Error).message}). Starting from an empty store.`,
     );
     return null;
+  }
+}
+
+/**
+ * Synchronous sibling of {@link quarantineCorrupt}, for callers whose store engine is
+ * itself synchronous (the SQLite graph store opens via `node:sqlite`'s `DatabaseSync`,
+ * so its open path cannot await). Same discipline, same on-disk shape: move the
+ * unreadable file aside to `${path}.corrupt-<n>` (first free integer suffix, derived
+ * from on-disk state — never wall-clock), claimed atomically via a hard link that
+ * fails when the destination exists, so two concurrent loaders never overwrite each
+ * other's quarantine and lose preserved bytes. Also moves the WAL/SHM siblings when
+ * present. Returns the quarantine path, or `null` when the move was unnecessary or
+ * impossible (caller still degrades honestly, never silently empty).
+ */
+export function quarantineCorruptSync(path: string, reason: string): string | null {
+  try {
+    for (let n = 0; ; n++) {
+      const dest = `${path}.corrupt-${n}`;
+      try {
+        // Atomic claim: link succeeds only if `dest` does not yet exist, so a
+        // racing loader that took this `n` is never overwritten.
+        linkSync(path, dest);
+        unlinkSync(path); // link + unlink = move-without-clobber
+        moveSiblingsSync(path, dest);
+        logger.warning(
+          `store quarantine: ${path} failed to open (${reason}) — moved to ${dest}. ` +
+            `Persisted data was NOT silently dropped; inspect or restore the quarantined file.`,
+        );
+        return dest;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'EEXIST') continue; // a prior quarantine took this n — try the next
+        if (code === 'ENOENT') {
+          // `path` is already gone — a concurrent loader quarantined it first, so the
+          // bytes are preserved under its own suffix. Not a loss.
+          logger.warning(
+            `store quarantine: ${path} was already moved aside by a concurrent loader (${reason}).`,
+          );
+          return null;
+        }
+        if (code === 'EPERM' || code === 'ENOSYS' || code === 'EXDEV' || code === 'EMLINK') {
+          // Hard links unsupported on this filesystem — fall back to a plain rename
+          // to the first free suffix (loses the atomic-claim guarantee, but such
+          // filesystems are rare and concurrent corrupt-loads rarer still).
+          let m = 0;
+          while (existsSync(`${path}.corrupt-${m}`)) m++;
+          const dest2 = `${path}.corrupt-${m}`;
+          renameSync(path, dest2);
+          moveSiblingsSync(path, dest2);
+          logger.warning(
+            `store quarantine: ${path} failed to open (${reason}) — moved to ${dest2}. ` +
+              `Persisted data was NOT silently dropped; inspect or restore the quarantined file.`,
+          );
+          return dest2;
+        }
+        throw err;
+      }
+    }
+  } catch (err) {
+    logger.warning(
+      `store quarantine: ${path} failed to open (${reason}) and could not be moved aside ` +
+        `(${(err as Error).message}). Starting from an empty store.`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Best-effort move of a SQLite store's WAL/SHM sidecars alongside the quarantined main
+ * file, so a later reopen of `path` cannot resurrect a torn write-ahead log against a
+ * fresh database. Failures are swallowed — the sidecars are recoverable state, and the
+ * main file is already safely aside.
+ */
+function moveSiblingsSync(path: string, dest: string): void {
+  for (const suffix of ['-wal', '-shm']) {
+    try {
+      if (existsSync(`${path}${suffix}`)) renameSync(`${path}${suffix}`, `${dest}${suffix}`);
+    } catch {
+      /* sidecar move is best-effort */
+    }
   }
 }
