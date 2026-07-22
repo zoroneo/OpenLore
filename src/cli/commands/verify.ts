@@ -415,6 +415,8 @@ A score >= threshold indicates specs are production-ready.
         logger.blank();
       }
 
+      // Load file→domain mapping before selecting candidates (for domain display)
+      await engine.loadFileDomainMap();
       // Get candidates first to show selection
       const candidates = engine.selectCandidates(depGraph);
 

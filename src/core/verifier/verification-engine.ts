@@ -297,7 +297,7 @@ export class SpecVerificationEngine {
    * Load file→domain mapping from .openlore/analysis/mapping.json.
    * Falls back silently if the file doesn't exist (e.g. before first analysis run).
    */
-  private async loadFileDomainMap(): Promise<void> {
+  async loadFileDomainMap(): Promise<void> {
     this.fileDomainMap = new Map();
     const mappingPath = join(this.options.rootPath, '.openlore', 'analysis', 'mapping.json');
     try {
@@ -416,7 +416,7 @@ export class SpecVerificationEngine {
     // 2. Path-based matching against known spec domains
     const knownDomains = this.specs.map(s => s.domain);
     const structural = new Set(['src', 'lib', 'app', 'core', 'utils', 'helpers', 'common', 'shared']);
-    const rawParts = filePath.split('/');
+    const rawParts = filePath.replace(/\\/g, '/').split('/');
     const segments = rawParts.map((p, i) =>
       i === rawParts.length - 1 ? p.replace(/\.[^.]+$/, '').toLowerCase() : p.toLowerCase()
     );
@@ -513,11 +513,11 @@ export class SpecVerificationEngine {
    * This replaces the brittle Jaccard keyword-overlap used for purposeMatch.
    */
   private async getPrediction(candidate: VerificationCandidate, fileContent?: string): Promise<FilePrediction> {
-    // Prefer the candidate's own domain spec; fall back to full context if not found.
     const domainSpec = this.specs.find(s => s.domain === candidate.domain);
+    const MAX_SPEC_CHARS = 24_000;
     const specsContent = domainSpec
-      ? `=== ${domainSpec.domain} (${domainSpec.path}) ===\n${domainSpec.content}`
-      : this.buildSpecsContext(24_000);
+      ? `=== ${domainSpec.domain} (${domainSpec.path}) ===\n${domainSpec.content.length > MAX_SPEC_CHARS ? domainSpec.content.slice(0, MAX_SPEC_CHARS) + '\n[spec truncated]' : domainSpec.content}`
+      : this.buildSpecsContext(MAX_SPEC_CHARS);
 
     // Include a trimmed excerpt of the actual file so the LLM can score spec accuracy
     const fileExcerpt = fileContent
