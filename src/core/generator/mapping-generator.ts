@@ -9,6 +9,7 @@
 
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import {
   SIMILARITY_CONTAINMENT_SCORE,
   SIMILARITY_TOKEN_OVERLAP_WEIGHT,
@@ -174,6 +175,32 @@ export class MappingGenerator {
         existing.push(ref);
         exportIndex.set(exp.name, existing);
       }
+    }
+
+    // Supplement exportIndex with C# functions from the call-graph SQLite database.
+    // The depGraph.exports list is empty for C# files (import-parser only handles JS/TS
+    // `export` keyword), but the code graph's function index has them all.
+    try {
+      const dbPath = join(this.rootPath, '.openlore', 'analysis', 'call-graph.db');
+      const db = new DatabaseSync(dbPath);
+      const csNodes = db.prepare(
+        "SELECT name, file_path, fan_in FROM nodes WHERE file_path LIKE ? AND fan_in > 0"
+      ).all('%.cs') as { name: string | null; file_path: string | null; fan_in: number | null }[];
+      for (const n of csNodes) {
+        if (!n.name || !n.file_path) continue;
+        const ref: FunctionRef = {
+          name: n.name,
+          file: n.file_path,
+          line: 1,
+          kind: 'method',
+          confidence: 'semantic',
+        };
+        const existing = exportIndex.get(n.name) ?? [];
+        existing.push(ref);
+        exportIndex.set(n.name, existing);
+      }
+    } catch {
+      // SQLite/call-graph not available — fall back to depGraph exports only
     }
 
     const mappings: RequirementMapping[] = [];
